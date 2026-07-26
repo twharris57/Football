@@ -6,55 +6,36 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 
 ## Active
 
-- **Rookie draft big board + web dashboard** (branch: `feature/bye-handcuff-flags`,
-  PR #2 open against `main`) — full writeup in `docs/rookie-draft-big-board.md`
-  (logic/methodology) and `docs/dynasty-draft-web-app.md` (Streamlit + Docker).
-  Since Phase 0 merged (PR #1), this branch added: bye-week conflicts,
-  RB handcuffs (NFL depth-chart-derived), weekly dedicated-slot gap
-  detection, a QB/TE valuation correction computed from real 2024 season
-  stats (resolves the explainability/scoring-mismatch gap noted below —
-  no longer an open item), an optimal-lineup ("Lineup") view, and a
-  complete rewrite of pick ranking from raw trade value to season-average
-  **marginal** starting-lineup value (bye-adjusted), with backup
-  alternates per round. The old separate "Strategy" tab was removed after
-  it turned out to disagree with the round-by-round plan on what to pick
-  next — merged into one consistent algorithm.
-  Remaining before this is fully "done": merge PR #2, deploy to the
-  Synology NAS, and — the real test — use it through the actual live
-  draft (this Sunday) to see whether the recommendations hold up in the
-  moment. Revisit this item afterward; it may still be worth a few
-  post-draft observations even once merged.
-
-  **Before Sunday's draft** (found in a pre-draft review, 2026-07-26):
-  - 🔴 **Drop recommendation ignores open roster/taxi capacity** —
-    `recommend_drop()` always forces a drop for every candidate in
-    `multi_round_plan`/`rank_by_marginal_value`, even when
-    `roster_capacity()` shows open active or taxi slots. The taxi squad is
-    deliberately generous (5 slots, 3 years) specifically so rookies can be
-    stashed without a roster crunch, so this both understates early-pick
-    marginal value and can recommend cutting a real asset that didn't need
-    to go. Highest-priority fix — affects every row of the Draft Plan tab.
-    Thread `roster_capacity` (and ideally taxi-eligibility — see Future
-    Ideas) into the drop decision so a drop is only forced when there's
-    genuinely no open slot for the position being added.
-  - 🟠 **No retry/backoff or error handling around live API calls** —
-    `sleeper_api._get()` raises on any non-2xx/connection error;
-    `rookie_draft.py`'s interactive refresh loop has no try/except, so one
-    Sleeper hiccup mid-draft (plausible — everyone hits the API at once on
-    draft day) kills the whole CLI session, not just one refresh. Streamlit
-    catches at the top level but still has no retry. Wrap the CLI loop's
-    `gather_state()` call in try/except-and-reprompt; add a retry-backed
-    `requests.Session` to both API clients.
-  - 🟠 **No automated tests on the core ranking algorithm** —
-    `assign_starters`, `season_average_starter_value`,
-    `rank_by_marginal_value` are non-trivial custom logic about to be
-    trusted live for real roster decisions, with nothing to catch a
-    regression (including from the capacity fix above) before the draft
-    rather than during it. Even 3-4 targeted `pytest` cases (known roster →
-    known `assign_starters` output; drop-capacity behavior) would be worth
-    the time.
-  - 🟡 **No "picks until your turn" indicator** — small addition to the
-    Draft Plan tab, meaningfully improves usability on a phone mid-draft.
+- **Pre-draft hardening** (branch: `feature/pre-draft-hardening`, off `main`
+  after PR #1 + PR #2 both merged) — addresses all four items from the
+  2026-07-26 pre-draft review:
+  - ✅ **Capacity-aware drop logic** — `rank_by_marginal_value()` was
+    calling `recommend_drop()` unconditionally for every candidate, even
+    with open roster/taxi capacity, understating marginal value and
+    risking an unnecessary cut. New `roster_total_capacity()` (active
+    roster slots + taxi slots) gates it: a drop is only simulated once the
+    roster is genuinely full. Regression-covered in
+    `tests/test_dynasty_core.py::TestCapacityAwareDrop`.
+  - ✅ **API retry/backoff + CLI error handling** — `sleeper_api.py` and
+    `fantasycalc_api.py` now use a `requests.Session` with a `Retry`
+    adapter (3 retries, backoff, GET-only); the CLI's interactive loop
+    wraps `gather_state()` in try/except with a retry/quit prompt instead
+    of crashing on one hiccup. Verified by simulating a `ConnectionError`
+    on the first call and confirming the loop recovers.
+  - ✅ **Automated test coverage** — `tests/test_dynasty_core.py` (new,
+    pytest) covers `assign_starters`, the capacity-aware drop logic,
+    `season_average_starter_value`'s bye-week handling, and
+    `roster_weekly_gaps`. `.github/workflows/ci.yml` (new) runs it on
+    every PR to `main`.
+  - ✅ **Picks-until-your-turn indicator** — `picks_until_turn()`, shown
+    in both the CLI and Streamlit on-the-clock line.
+  Full writeup in `docs/rookie-draft-big-board.md` (logic) and
+  `docs/dynasty-draft-web-app.md` (resilience/CI). Remaining before the
+  overall dashboard effort is "done": deploy to the Synology NAS and — the
+  real test — use it through the actual live draft (this Sunday). The
+  *next* feature branch will explore a better valuation algorithm (see
+  Future Ideas: full per-player scoring recompute) rather than more
+  pre-draft fixes — this branch is meant to be the stability checkpoint.
 
 ## Future Ideas
 
@@ -80,17 +61,17 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   probably be enough to start; no need for a news/transactions feed on day
   one). Ties into injury-status awareness too, since a starter's injury is
   often exactly what opens the depth-chart move worth reacting to.
-- **API resilience (retry/backoff)** — belongs as a permanent fix, not just a
-  pre-draft patch (see Active, above); `sleeper_api.py`/`fantasycalc_api.py`
-  currently do a bare `requests.get` with no retry on either.
-- **Automated test coverage** — `dynasty_core.py`'s ranking/lineup logic has
-  no tests today (see Active, above, for the minimum pre-draft slice);
-  worth building out properly once the draft-week time pressure is off.
-- **Taxi-squad eligibility modeling** — `roster_capacity`'s taxi slot count
-  doesn't check Sleeper's accrued-experience taxi-eligibility rule, so a
-  drop/no-drop decision (see Active, above) could still assume taxi room a
-  specific player isn't actually eligible for. Fold in alongside the
-  capacity fix rather than as a separate pass.
+- **Broader test coverage** — `tests/test_dynasty_core.py` covers the
+  core ranking/lineup logic (see Active, above, for what's in), but
+  `sleeper_api.py`/`fantasycalc_api.py` (the retry/session logic itself),
+  the CLI's error-handling loop, and most of `dynasty_core.py`'s smaller
+  helpers (bye weeks, handcuffs, roster needs) still have none. Worth
+  building out once draft-week time pressure is off.
+- **Taxi-squad eligibility modeling** — `roster_total_capacity()` assumes
+  every candidate is taxi-eligible, true for this draft's rookies but not
+  a general accrued-experience eligibility check against Sleeper's actual
+  taxi rule. Fold in whenever this needs to handle non-rookie candidates
+  (e.g. the free-agent evaluator idea above) rather than as a separate pass.
 - **Full per-player scoring recompute** — replace the QB/TE position-level
   correction (see Valuation approach below) with real per-player fantasy
   points computed from `nfl_data_py` raw stats under this league's exact

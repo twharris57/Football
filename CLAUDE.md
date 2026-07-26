@@ -109,10 +109,15 @@ python rookie_draft.py --once  # one snapshot, no prompt
 streamlit run streamlit_app.py # dynasty rookie draft big board, web dashboard
 
 docker compose up --build      # local: build and run the dashboard in Docker
+
+pytest tests/ -v                # dynasty_core.py's ranking/lineup logic (runs in CI on every PR)
 ```
 
-No test suite exists yet. See `testing.md` for conventions to apply once tests
-are added.
+Test coverage is intentionally narrow so far: `tests/test_dynasty_core.py` covers
+`assign_starters`, the capacity-aware drop logic, `season_average_starter_value`'s
+bye-week handling, and `roster_weekly_gaps`, all against synthetic data (no real
+API calls). The confidence-pool scripts and the Sleeper/FantasyCalc clients
+themselves still have none. See `testing.md` for general conventions.
 
 ## Available Skills
 

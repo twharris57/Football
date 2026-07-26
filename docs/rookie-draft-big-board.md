@@ -75,10 +75,23 @@ who wouldn't even crack the starting lineup.
 `recommend_drop()` feeds the drop side: lowest-value **bench** player,
 preferred over starters (via the same `assign_starters` assignment) — a
 marginal starter isn't recommended for cut over a similarly valued deep
-bench piece.
+bench piece. A drop is only forced at all when the roster is at total
+capacity (`roster_total_capacity()`: active roster slots + taxi slots) —
+a pre-draft review caught this as a real bug: `rank_by_marginal_value()`
+used to call `recommend_drop()` unconditionally for every candidate, even
+with open roster/taxi room, which understated marginal value for any pick
+that didn't actually need to cost a roster spot. Covered by
+`tests/test_dynasty_core.py` (`TestCapacityAwareDrop`) as a regression
+guard. Rookies are assumed taxi-eligible for this check (true for every
+candidate in this draft); a general accrued-experience eligibility model
+is deferred (see `.claude/PROJECT_PLAN.md`).
 
 ## Features
 
+- **Picks until your turn** (`picks_until_turn()`) — how many picks by
+  anyone happen before the user's next one; `0` means it's their turn now,
+  `None` means no picks remain. Small, but meaningfully improves usability
+  on a phone mid-draft.
 - **Rookie big board** — the whole rookie class, not just what's left.
   Drafted players stay listed (`drafted_round`/`drafted_by`) instead of
   disappearing; `rank` is value order across the whole class.
