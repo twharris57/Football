@@ -35,16 +35,25 @@ not a deployed service.
   a placeholder API key.
 - `football.ipynb` mirrors `football.py`'s logic as a notebook for interactive
   exploration.
-- `web_guidelines.md` and `docker_guidelines.md` are imported for completeness
-  but don't currently apply yet — no web frontend exists (a web UI for the
-  dynasty tools is planned, see `.claude/PROJECT_PLAN.md`) and no containerization.
 - **Dynasty league tools** (Sleeper): `sleeper_api.py` is a thin client for
   Sleeper's public read-only API, with local disk caching for the ~14MB
   players reference dataset (`.cache/`, gitignored, 12h TTL). `fantasycalc_api.py`
   wraps FantasyCalc's public dynasty trade-value rankings — the project's only
-  valuation source, joined to Sleeper players via `sleeperId`. `rookie_draft.py`
-  is the first tool built on these: a rookie draft big board with an
-  interactive refresh loop for live use during the draft.
+  valuation source, joined to Sleeper players via `sleeperId`. `dynasty_core.py`
+  holds the shared logic (pick ownership, big board, roster needs, `gather_state`)
+  used by both `rookie_draft.py` (CLI, interactive refresh loop) and
+  `streamlit_app.py` (web dashboard, sidebar refresh buttons) — one code path,
+  two presentation layers.
+- **Web + Docker**: `web_guidelines.md` now applies to `streamlit_app.py`, and
+  `docker_guidelines.md` applies to the `Dockerfile`/compose setup below.
+  `python:3.12-slim` is used instead of the guideline's alpine default — a
+  deliberate exception, since `nfl_data_py`'s `fastparquet`/`cramjam`
+  dependency often lacks prebuilt musl wheels (same call made in the sibling
+  `Finance-Dashboards` project). GitHub Actions (`.github/workflows/docker-publish.yml`)
+  builds and pushes the image to GHCR (`ghcr.io/twharris57/football-dynasty-draft`)
+  on every push to `main`; the Synology NAS deployment (`docker-compose.deploy.yml`)
+  only ever pulls that prebuilt image, it never builds on-device. Local dev
+  (`docker-compose.yml`) still builds from source.
 
 ## Key Constraints
 
@@ -67,8 +76,15 @@ team_metadata_batch.py   Prototype: team altitude/temperature/style enrichment v
 football.ipynb           Notebook version of football.py for interactive experimentation
 sleeper_api.py           Sleeper API client + local players-dataset cache
 fantasycalc_api.py       FantasyCalc dynasty trade-value client
-rookie_draft.py          Rookie draft big board (dynasty league), with live refresh loop
-requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, ...)
+dynasty_core.py          Shared dynasty logic (pick ownership, big board, roster needs)
+rookie_draft.py          Rookie draft big board CLI, with interactive refresh loop
+streamlit_app.py         Rookie draft big board web dashboard (same logic as the CLI)
+Dockerfile               Image for streamlit_app.py (python:3.12-slim, non-root)
+docker-compose.yml       Local dev: builds the image from source
+docker-compose.deploy.yml  NAS deploy: pulls the prebuilt GHCR image, never builds on-device
+.env.example             Template for docker-compose.deploy.yml's HOST_PORT
+.github/workflows/       CI: docker-publish.yml builds+pushes to GHCR on push to main
+requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, streamlit, ...)
 .claude/                 Claude Code conventions, commands, and PROJECT_PLAN.md
 docs/                    Design docs for completed features
 ```
@@ -85,6 +101,10 @@ python football_enhanced.py   # weighted picker
 
 python rookie_draft.py         # dynasty rookie draft big board, interactive refresh loop
 python rookie_draft.py --once  # one snapshot, no prompt
+
+streamlit run streamlit_app.py # dynasty rookie draft big board, web dashboard
+
+docker compose up --build      # local: build and run the dashboard in Docker
 ```
 
 No test suite exists yet. See `testing.md` for conventions to apply once tests

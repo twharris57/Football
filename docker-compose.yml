@@ -1,0 +1,15 @@
+# Local development: builds the image from source. For NAS deployment
+# (pulls the prebuilt GHCR image instead), see docker-compose.deploy.yml.
+services:
+  dynasty-draft:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - players_cache:/app/.cache
+    restart: unless-stopped
+
+volumes:
+  players_cache:

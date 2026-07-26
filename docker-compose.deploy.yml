@@ -1,0 +1,23 @@
+# NAS deployment: pulls the prebuilt image published by
+# .github/workflows/docker-publish.yml on every push to main. Does not build
+# on the NAS. Place this file + a .env (copied from .env.example) in a
+# project folder on the NAS, then:
+#
+#   docker compose -f docker-compose.deploy.yml up -d
+#
+# To pick up a later image update:
+#
+#   docker compose -f docker-compose.deploy.yml pull && \
+#     docker compose -f docker-compose.deploy.yml up -d
+services:
+  dynasty-draft:
+    image: ghcr.io/twharris57/football-dynasty-draft:latest
+    pull_policy: always
+    ports:
+      - "${HOST_PORT:-8501}:8501"
+    volumes:
+      - players_cache:/app/.cache
+    restart: unless-stopped
+
+volumes:
+  players_cache:
