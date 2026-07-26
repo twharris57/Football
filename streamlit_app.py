@@ -64,17 +64,36 @@ if state["your_picks"].empty:
 else:
     st.dataframe(state["your_picks"], hide_index=True, width="stretch")
 
+st.subheader("Roster capacity")
+cap = state["roster_capacity"]
+cap_col1, cap_col2 = st.columns(2)
+cap_col1.metric("Active roster", f"{cap['active_filled']}/{cap['active_total']}", f"{cap['active_open']} open")
+cap_col2.metric("Taxi squad", f"{cap['taxi_filled']}/{cap['taxi_total']}", f"{cap['taxi_open']} open")
+if cap["active_open"] <= 0 and cap["taxi_open"] <= 0:
+    st.warning("No open roster or taxi slots — drafting a rookie means dropping someone first.")
+
 st.subheader("Your roster needs")
 if state["roster_needs"].empty:
     st.write("(empty roster)")
 else:
     st.dataframe(state["roster_needs"], width="stretch")
+needs = state["need_positions"]
+if needs:
+    st.info(f"Flagged needs: {', '.join(sorted(needs))} — the big board below marks rookies at these positions.")
+else:
+    st.info("No positions are flagged as a need right now — best available value is the main signal.")
 
 if not state["recent_picks"].empty:
     st.subheader("Recently drafted")
     st.dataframe(state["recent_picks"], hide_index=True, width="stretch")
 
 st.subheader("Available rookies (big board)")
+st.caption(
+    "**tier** is FantasyCalc's global dynasty tier across *all* players, not rookie-specific — "
+    "gaps in the sequence are veterans/other rookies not shown here, lower is better. "
+    "**rank** is this player's order within available rookies only. "
+    "**fits_need** flags a currently-thin position on your roster."
+)
 board = state["big_board"]
 if board.empty:
     st.write("(no rookies available)")

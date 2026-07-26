@@ -37,14 +37,30 @@ def print_report(state: dict[str, Any]) -> None:
     print("--- Your picks ---")
     print(state["your_picks"].to_string(index=False) if not state["your_picks"].empty else "(none)")
 
+    cap = state["roster_capacity"]
+    print(
+        f"\n--- Roster capacity ---\n"
+        f"Active roster: {cap['active_filled']}/{cap['active_total']} filled "
+        f"({cap['active_open']} open)\n"
+        f"Taxi squad:    {cap['taxi_filled']}/{cap['taxi_total']} filled "
+        f"({cap['taxi_open']} open)"
+    )
+
     print("\n--- Your roster needs ---")
     print(state["roster_needs"].to_string() if not state["roster_needs"].empty else "(empty roster)")
+    needs = state["need_positions"]
+    print(f"Flagged needs: {', '.join(sorted(needs))}" if needs else "No positions flagged as a need right now.")
 
     if not state["recent_picks"].empty:
         print("\n--- Recently drafted ---")
         print(state["recent_picks"].to_string(index=False))
 
-    print("\n--- Available rookies (big board) ---")
+    print(
+        "\n--- Available rookies (big board) ---\n"
+        "tier = FantasyCalc's global dynasty tier across ALL players, not rookie-specific "
+        "(gaps are veterans/other rookies not shown here). rank = order within this rookie-only "
+        "list. fits_need = position is currently flagged as a roster need."
+    )
     board = state["big_board"]
     if board.empty:
         print("(no rookies available)")

@@ -93,8 +93,19 @@ def rookie_pool(players: dict[str, dict], season: str) -> dict[str, dict]:
     }
 
 
-def build_big_board(available: dict[str, dict], fc_values: list[dict]) -> pd.DataFrame:
-    """Rank available rookies by dynasty value into tiers, for display."""
+def build_big_board(
+    available: dict[str, dict], fc_values: list[dict], need_positions: frozenset[str] = frozenset()
+) -> pd.DataFrame:
+    """Rank available rookies by dynasty value into tiers, for display.
+
+    `tier` is FantasyCalc's global tier across *all* dynasty-relevant
+    players, not rookie-specific — gaps in the tier sequence here are
+    veterans/other rookies not in this filtered view. `rank` is this
+    player's order within this rookie-only list (1 = best available rookie).
+    `fits_need` flags whether the player's position is currently a roster
+    need (see `roster_needs_summary`) — a rough prioritization signal, not a
+    single "correct" pick.
+    """
     fc_by_sleeper_id = {
         entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
     }
@@ -106,6 +117,7 @@ def build_big_board(available: dict[str, dict], fc_values: list[dict]) -> pd.Dat
             {
                 "name": info.get("full_name"),
                 "pos": info.get("position"),
+                "fits_need": info.get("position") in need_positions,
                 "team": info.get("team") or "FA",
                 "college": info.get("college"),
                 "age": info.get("age"),
@@ -121,6 +133,7 @@ def build_big_board(available: dict[str, dict], fc_values: list[dict]) -> pd.Dat
     board = board.sort_values("value", ascending=False, na_position="last").reset_index(drop=True)
     unranked_tier = int(board["tier"].max() + 1) if board["tier"].notna().any() else 1
     board["tier"] = board["tier"].fillna(unranked_tier).astype(int)
+    board.insert(0, "rank", board.index + 1)
     return board
 
 
@@ -151,6 +164,38 @@ def roster_needs_summary(roster: dict, players: dict[str, dict]) -> pd.DataFrame
     summary = summary.reindex(FANTASY_POSITIONS).dropna(how="all")
     summary["need"] = summary["young_core"] < YOUNG_CORE_NEED_THRESHOLD
     return summary.round(1)
+
+
+def need_positions(roster_needs: pd.DataFrame) -> frozenset[str]:
+    """Return the set of positions currently flagged as a roster need."""
+    if roster_needs.empty:
+        return frozenset()
+    return frozenset(roster_needs.index[roster_needs["need"]])
+
+
+def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
+    """Return active-roster and taxi-squad slot usage for the given roster.
+
+    Reserve/IR slots are deliberately not modeled here — how they interact
+    with the active-roster count isn't reliably derivable from the Sleeper
+    API response alone, and an unclear rule is worse than not showing it.
+    """
+    all_player_ids = roster.get("players") or []
+    taxi_ids = roster.get("taxi") or []
+
+    active_total = len(league["roster_positions"])
+    active_filled = len(all_player_ids) - len(taxi_ids)
+    taxi_total = league["settings"].get("taxi_slots", 0)
+    taxi_filled = len(taxi_ids)
+
+    return {
+        "active_total": active_total,
+        "active_filled": active_filled,
+        "active_open": active_total - active_filled,
+        "taxi_total": taxi_total,
+        "taxi_filled": taxi_filled,
+        "taxi_open": taxi_total - taxi_filled,
+    }
 
 
 def format_your_picks(
@@ -202,6 +247,9 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
     rookies = rookie_pool(players, league["season"])
     available = {pid: info for pid, info in rookies.items() if pid not in unavailable}
 
+    roster_needs = roster_needs_summary(user_roster, players)
+    needs = need_positions(roster_needs)
+
     recent_rows = []
     for pick in sorted(draft_picks, key=lambda p: p["pick_no"])[-5:]:
         info = players.get(pick["player_id"], {})
@@ -219,8 +267,10 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
         "ownership": ownership,
         "current_pick_no": current_pick_no,
         "your_picks": format_your_picks(ownership, user_roster_id, current_pick_no, team_names),
-        "roster_needs": roster_needs_summary(user_roster, players),
+        "roster_needs": roster_needs,
+        "need_positions": needs,
+        "roster_capacity": roster_capacity(user_roster, league),
         "recent_picks": pd.DataFrame(recent_rows),
-        "big_board": build_big_board(available, fc_values),
+        "big_board": build_big_board(available, fc_values, needs),
         "team_names": team_names,
     }
