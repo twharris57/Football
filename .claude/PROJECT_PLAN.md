@@ -6,6 +6,92 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 
 ## Active
 
+- **Pre-draft hardening for Sunday's live draft (2026-08-02)** — findings from a
+  multi-agent code review (2026-07-26) of `feature/valuation-recompute`,
+  covering valuation logic, backend correctness/performance, test coverage,
+  deployment readiness, and draft-day UX. Prioritized by what actually blocks
+  or risks Sunday vs. what can wait.
+
+  **Must fix before Sunday:**
+  1. Synology deploy hasn't happened at all yet (not a stale-image problem —
+     just not done). `docker-publish.yml` only builds on push to `main`, so
+     this branch's per-player scoring work won't exist in any NAS image until
+     merged. Before Sunday: merge to `main`, confirm the GHCR build completes,
+     deploy to the NAS, and verify the running container's footer git SHA
+     matches (check already documented in `docs/dynasty-draft-web-app.md`).
+     Pre-warm the cache with one forced refresh ahead of draft day, not live —
+     a cold cache means the multi-season `nfl_data_py` pull happens on first
+     load. The CLI (`rookie_draft.py`, no Docker) remains the safer fallback
+     regardless of how the deploy goes. (Since there's no existing NAS
+     deployment, the `players_cache` → `nfl_data_cache` volume rename in
+     `docker-compose.deploy.yml` is a non-issue — nothing to orphan.)
+  2. Decouple "Force full refresh" from the scoring-multiplier recompute
+     (`streamlit_app.py:49` → `dynasty_core.py:987` (players) and `:997-1003`
+     (multipliers) → `player_scoring.py:278-300`; re-checked 2026-07-26,
+     still current after the same-day league-rule-assumption audit — line
+     numbers shifted slightly from the original finding but the issue is
+     unchanged). One button currently busts both the Sleeper players cache
+     and the multiplier cache, and the latter re-imports 3 seasons of weekly
+     + play-by-play data — a 1-2 minute synchronous pull that could freeze
+     the app right when the user is on the clock, for data that's static all
+     season and never needs a mid-draft recompute. Deferred to a future
+     feature branch along with the rest of this list — not fixed here.
+  3. Clamp the per-player scoring ratio in `player_scoring.py:264-273` —
+     currently `real_points / baseline_points` with no floor/ceiling. A
+     qualifying-volume player with a low/negative baseline-points season
+     (heavy INTs, low yardage) can produce an extreme ratio that feeds
+     `adj_value` -> `season_average_starter_value`, contaminating the
+     marginal-value baseline for the whole draft plan. Reject/fall back to
+     the position average outside a sane band (e.g. ~[0.5, 2.0]) or below a
+     minimum `baseline_points` floor.
+  4. Fix the Streamlit cache-key bug in `load_state` (`streamlit_app.py:48-56`)
+     — keyed on the raw force-refresh button boolean, not a durable
+     `session_state` flag, so the rerun immediately after a force-refresh
+     click (e.g. opening an expander) misses cache and silently re-fetches
+     both APIs.
+  5. Verify `bye_week_by_team(2026)` (`dynasty_core.py:396-413`) returns all
+     32 teams before draft day — it silently drops any team that doesn't
+     resolve to exactly one missing week, understating value everywhere
+     downstream with no visible symptom.
+
+  **Worth doing this season (not blocking Sunday):**
+  - Catch `ValueError`/`TypeError` from a bad league_id or typo'd username in
+    `rookie_draft.py`'s refresh loop (only `requests.RequestException` is
+    caught today; Streamlit already handles this).
+  - Surface a UI warning when byes/handcuffs silently fall back to `{}` on
+    fetch failure (`dynasty_core.py:993-1002`) — currently indistinguishable
+    from "no conflicts found."
+  - Add caching/TTL to `fantasycalc_api.get_dynasty_values` — currently
+    uncached, so even a plain "Refresh" click re-hits it, contradicting the
+    "Refresh is cheap" framing.
+  - Cache `bye_week_by_team`/`handcuff_map` per session instead of refetching
+    from `nfl_data_py` on every refresh click, not just force-refresh.
+  - Add an end-to-end test for `multi_round_plan` (`dynasty_core.py:785-928`)
+    — the actual "what to pick" output has zero direct test coverage today,
+    even though its sub-pieces (`assign_starters`, drop logic) are tested.
+  - Collapse the Draft Plan tab's methodology caption into a closed
+    `st.expander` — currently pushes the plan table below the fold on a
+    phone, on every refresh.
+  - Visually distinguish `status=completed` vs. `status=upcoming` rows in the
+    plan table (color/style, not just text) — a fast scroll under draft-day
+    pressure could conflate a guaranteed pick with a simulated one.
+  - Confirm the league's real `scoring_settings` has no per-game yardage
+    bonuses (`bonus_pass_yd_300` etc.) that `_stat_points` doesn't check for
+    — likely moot, worth a one-time dump to confirm.
+
+  **Next-year ideas (not worth the time now):**
+  - Handcuff proxy (depth-chart rank 2) has real false-positive risk in
+    modern RB committees — informational field only, not worth revisiting
+    pre-draft.
+  - Dedupe/log on `gsis_id` collisions in the ID-crosswalk join
+    (`player_scoring.py:230-232`, `dynasty_core.py:487-488`).
+  - `sleeper_api`/`fantasycalc_api` retry and cache-TTL unit tests — folds
+    into the existing "Broader test coverage" idea below.
+  - Split the generic "Couldn't reach Sleeper/FantasyCalc" error message to
+    name which service actually failed.
+  - Exclude a candidate from its own drop-simulation in `recommend_drop`
+    (theoretically possible, vanishingly unlikely to surface as a top pick).
+
 - **Valuation algorithm improvements** (branch: `feature/valuation-improvements`)
   — sequenced deliberately, not independent workstreams:
   1. ✅ **E — refresh the QB/TE multiplier's data basis.** Was derived from
@@ -76,8 +162,9 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 - **Rookie draft dashboard — final verification.** Built and merged (PR #1,
   #2, #3); full writeup in `docs/rookie-draft-big-board.md` and
   `docs/dynasty-draft-web-app.md`. Only remaining before calling it fully
-  done: deploy to the Synology NAS and use it through the actual live
-  draft.
+  done: deploy to the Synology NAS (not yet done at all) and use it through
+  the actual live draft — see the Synology deploy item under "Pre-draft
+  hardening" above for what needs to happen first.
 
 ## Future Ideas
 
