@@ -28,7 +28,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "streamlit",
-            "args": ["run", "streamlit_app.py"],
+            "args": ["run", "streamlit_app.py", "--server.headless=true"],
             "cwd": "${workspaceFolder}",
             "justMyCode": false,
             "console": "integratedTerminal"
