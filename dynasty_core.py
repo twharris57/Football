@@ -16,6 +16,7 @@ import nfl_data_py as nfl
 import pandas as pd
 
 import fantasycalc_api as fantasycalc
+import player_scoring
 import sleeper_api as sleeper
 
 logger = logging.getLogger(__name__)
@@ -137,21 +138,37 @@ def roster_fantasy_players(roster: dict, players: dict[str, dict]) -> Iterator[t
             yield player_id, info
 
 
-def adjusted_value(position: str, value: float | None) -> float | None:
-    """Apply the QB/TE scoring-mismatch correction to a raw FantasyCalc value."""
-    if value is None:
-        return None
-    return value * POSITION_VALUE_MULTIPLIER.get(position, 1.0)
+def _resolve_multiplier(sleeper_id: str, position: str, multipliers: dict[str, Any]) -> float:
+    """Personalized multiplier (see player_scoring.py) if this player has enough real NFL
+    history to trust one; else that position's average from the same pooled data; else the
+    hardcoded POSITION_VALUE_MULTIPLIER, used only if the whole nfl_data_py enrichment failed
+    for this refresh (see gather_state)."""
+    per_player = multipliers.get("per_player", {})
+    position_average = multipliers.get("position_average", {})
+    return per_player.get(sleeper_id, position_average.get(position, POSITION_VALUE_MULTIPLIER.get(position, 1.0)))
 
 
-def fc_value_by_sleeper_id(fc_values: list[dict]) -> dict[str, dict]:
+def fc_value_by_sleeper_id(fc_values: list[dict], multipliers: dict[str, Any] | None = None) -> dict[str, dict]:
     """Build a sleeperId -> FantasyCalc entry lookup once, for reuse across many calls.
 
     The marginal-value ranking below calls into value-lookup logic thousands
     of times per refresh (every candidate x every week, across rounds) -
     rebuilding this ~475-entry dict on each of those calls would be wasteful.
+    Each entry gets its real-scoring-corrected `adj_value` precomputed here
+    (see `_resolve_multiplier`/player_scoring.py) so every downstream caller,
+    which already threads this dict through, gets it for free.
     """
-    return {entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")}
+    multipliers = multipliers or {}
+    result: dict[str, dict] = {}
+    for entry in fc_values:
+        sleeper_id = entry["player"].get("sleeperId")
+        if not sleeper_id:
+            continue
+        position = entry["player"].get("position")
+        value = entry.get("value")
+        multiplier = _resolve_multiplier(sleeper_id, position, multipliers)
+        result[sleeper_id] = {**entry, "adj_value": value * multiplier if value is not None else None}
+    return result
 
 
 def build_big_board(
@@ -204,7 +221,7 @@ def build_big_board(
                 "college": info.get("college"),
                 "age": info.get("age"),
                 "value": value,
-                "adj_value": adjusted_value(position, value),
+                "adj_value": fc_entry.get("adj_value") if fc_entry else None,
                 "tier": fc_entry.get("maybeTier") if fc_entry else None,
             }
         )
@@ -327,7 +344,7 @@ def roster_value_analysis(
                 "years_exp": info.get("years_exp"),
                 "bye": byes.get(info.get("team")),
                 "value": value,
-                "adj_value": adjusted_value(position, value),
+                "adj_value": fc_entry.get("adj_value") if fc_entry else None,
             }
         )
 
@@ -515,8 +532,7 @@ def player_value_rows(player_ids: list[str], players: dict[str, dict], fc_by_sle
         if position not in FANTASY_POSITIONS:
             continue
         fc_entry = fc_by_sleeper_id.get(player_id)
-        value = fc_entry["value"] if fc_entry else None
-        rows.append({"player_id": player_id, "pos": position, "adj_value": adjusted_value(position, value)})
+        rows.append({"player_id": player_id, "pos": position, "adj_value": fc_entry.get("adj_value") if fc_entry else None})
     return rows
 
 
@@ -947,7 +963,7 @@ def format_your_picks(
     return pd.DataFrame(rows)
 
 
-def gather_state(league_id: str, username: str, force_refresh_players: bool) -> dict[str, Any]:
+def gather_state(league_id: str, username: str, force_full_refresh: bool) -> dict[str, Any]:
     """Pull one full snapshot of league + draft state and compute the big board."""
     league = sleeper.get_league(league_id)
     rosters = sleeper.get_rosters(league_id)
@@ -955,17 +971,25 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
     draft = sleeper.get_draft(league["draft_id"])
     draft_picks = sleeper.get_draft_picks(league["draft_id"])
     traded_picks = sleeper.get_traded_picks(league_id)
-    players = sleeper.get_players(force_refresh=force_refresh_players)
+    players = sleeper.get_players(force_refresh=force_full_refresh)
 
     num_qbs = league["roster_positions"].count("QB") + league["roster_positions"].count("SUPER_FLEX")
     num_teams = league["settings"]["num_teams"]
     ppr = league["scoring_settings"].get("rec", 0)
     fc_values = fantasycalc.get_dynasty_values(num_qbs=num_qbs, num_teams=num_teams, ppr=ppr)
-    fc_by_sleeper_id = fc_value_by_sleeper_id(fc_values)
 
     # Enrichment from nfl_data_py: optional, must not break the core draft
     # board if the feed is unavailable or its schema drifts (it already has
     # once - the 2026 depth chart columns differ from prior seasons).
+    try:
+        multipliers = player_scoring.get_multipliers(
+            league["scoring_settings"], league["season"], force_refresh=force_full_refresh
+        )
+    except Exception:
+        logger.warning("Failed to compute real-scoring multipliers; falling back to position defaults", exc_info=True)
+        multipliers = {}
+    fc_by_sleeper_id = fc_value_by_sleeper_id(fc_values, multipliers)
+
     try:
         byes = bye_week_by_team(league["season"])
     except Exception:

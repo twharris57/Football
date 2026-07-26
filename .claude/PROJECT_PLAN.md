@@ -15,15 +15,35 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
      + `recent_complete_seasons_weekly_data()`). Stays useful regardless of
      how B turns out, since rookies will always need this fallback (see
      step 2).
-  2. **B — full per-player scoring recompute for players with real NFL
-     history.** Compute actual fantasy points from `nfl_data_py` raw stats
-     under this league's exact `scoring_settings` (6pt passing, TE
-     premium, long-TD/first-down bonuses — all of it, no approximation).
-     Replaces the position-level multiplier entirely for those players.
-     Can't reach incoming rookies (no NFL stats yet) — they keep using
-     FantasyCalc + the multiplier. Open design question: how to blend
-     "recomputed real points" for veterans with "market dynasty value" for
-     rookies onto one comparable scale for `rank_by_marginal_value`.
+  2. ✅ **B — full per-player scoring recompute for players with real NFL
+     history.** Replaced the position-level multiplier with a per-player
+     one (see `player_scoring.py`): for anyone with a qualifying season in
+     the last 3 years (same volume bars as E, extended to RB ≥100 carries
+     / WR ≥50 targets), this league's exact `scoring_settings` is applied
+     to raw weekly stats — 6pt passing TDs, this league's real (non-
+     standard) `pass_yd` rate, the -3 INT penalty (a previously-undocumented
+     gap — the assumed baseline is -2), TE premium, `rush_fd`/`rec_fd`
+     first-down bonuses, and long-play bonuses (`*_40p`/`*_50p`, pulled from
+     play-by-play data since weekly aggregates don't preserve play length)
+     — against FantasyCalc's assumed baseline model (an explicit, documented
+     assumption in `player_scoring.BASELINE_SCORING`, since FantasyCalc
+     doesn't publish its own formula: standard 4pt passing TD, -2 INT, full
+     PPR, 6pt rush/rec TD, no TE premium, no first-down/long-play bonuses —
+     **the biggest remaining source of uncertainty in this whole
+     correction**, since it can't be verified against FantasyCalc directly).
+     Below the qualifying bar (or for rookies, with no NFL history at all),
+     falls back to a position average computed from that same pooled
+     sample — `POSITION_VALUE_MULTIPLIER`'s hardcoded QB/TE values are now
+     a last-resort fallback only, used if this whole enrichment fails.
+     **Resolved the open blending question** by not introducing a second
+     value scale at all: every ranking function already reads FantasyCalc's
+     value through one function (`fc_value_by_sleeper_id`), which now bakes
+     the per-player (or position-average) multiplier into `adj_value`
+     directly — rookies and veterans stay on the same unit everywhere.
+     Cached to disk (`.cache/scoring_multipliers.json`, no TTL — the
+     underlying seasons are historical/complete and don't change on a
+     clock) and tied to the existing "force full refresh" action: a plain
+     refresh reuses the cache, force-refresh recomputes from scratch.
   3. **A — finer position/play-style multiplier buckets, rescoped to
      rookies only.** Deliberately sequenced after B, not before — a
      veteran-inclusive version of this would mostly be thrown away once B
@@ -110,21 +130,25 @@ Player/rookie value starts from FantasyCalc's public dynasty rankings
 own. FantasyCalc's API only lets us tune for superflex (`numQbs=2`), league
 size (`numTeams=12`), and PPR (`ppr=1.0`); it has no parameter for this
 league's other non-standard scoring settings, so its raw rankings are a
-generic superflex-PPR model, not this league's actual scoring. As of PR #2,
-the two largest gaps are corrected (see `docs/rookie-draft-big-board.md`
-for the full methodology):
+generic superflex-PPR model, not this league's actual scoring. As of step B,
+the correction is applied per-player wherever real NFL history exists (see
+`docs/rookie-draft-big-board.md` for the original methodology, and
+`player_scoring.py` for the current one):
 
-- ✅ **6-point passing touchdowns** (`pass_td: 6.0`) — corrected via
-  `POSITION_VALUE_MULTIPLIER["QB"]` (1.175×, pooled across the 3 most
-  recent complete NFL seasons — see `scripts/derive_position_multipliers.py`).
-- ✅ **TE premium** (`bonus_rec_te: 0.5`) — corrected via
-  `POSITION_VALUE_MULTIPLIER["TE"]` (1.202×, same methodology).
-- ⏳ **Still uncorrected**: bonus points for long touchdowns (40+/50+ yard,
-  rush/pass/rec) and a first-down bonus (`rush_fd`/`rec_fd: 0.5`) — smaller
-  effects than the two above, not yet isolated the way QB/TE were. A real
-  per-player recompute from raw stats (see Active, above) would replace
-  this whole correction with something exact instead of a position-level
-  multiplier.
+- ✅ **All of it, per-player** (step B, done) — 6pt passing TDs, this
+  league's real `pass_yd` rate, the -3 INT penalty, TE premium,
+  `rush_fd`/`rec_fd` first-down bonuses, and `*_40p`/`*_50p` long-play
+  bonuses are all corrected for any player with a qualifying real NFL
+  season in the last 3 years, via a personalized ratio (see
+  `player_scoring.py`) instead of one flat number per position. Rookies
+  and low-volume veterans fall back to a position average computed from
+  that same pooled sample.
+- ⏳ **Still uncertain**: FantasyCalc's own assumed baseline scoring model
+  isn't published anywhere, so `player_scoring.BASELINE_SCORING`'s
+  standard-scoring assumption (4pt passing TD, -2 INT, standard yardage
+  rates, no TE premium/first-down/long-play bonuses) can't be verified
+  against FantasyCalc directly — this is the largest remaining source of
+  error in the correction, not a specific known scoring category.
 - Not a scoring setting, but relevant to roster/pick strategy: taxi squad is
   unusually generous (5 slots, 3 years) vs. typical dynasty leagues — more
   room to stash rookies without a roster crunch.
@@ -134,5 +158,5 @@ picks are ranked by season-average **marginal starting-lineup value**, which
 inherently accounts for positional scarcity without needing a separate
 needs-flag override. See `docs/rookie-draft-big-board.md`.
 
-Closing the "still uncorrected" gap above is now the Active
-**Valuation algorithm improvements** work (see Active, above).
+Remaining valuation work (steps A and D) is tracked under the Active
+**Valuation algorithm improvements** item, above.

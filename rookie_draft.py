@@ -161,10 +161,10 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="print one snapshot and exit")
     args = parser.parse_args()
 
-    force_refresh_players = False
+    force_full_refresh = False
     while True:
         try:
-            state = dynasty_core.gather_state(args.league_id, args.username, force_refresh_players)
+            state = dynasty_core.gather_state(args.league_id, args.username, force_full_refresh)
         except requests.RequestException as exc:
             # A hiccup here shouldn't kill the whole session - everyone hits
             # Sleeper/FantasyCalc at once on draft day, so a transient error
@@ -177,18 +177,18 @@ def main() -> None:
                 break
             continue
 
-        force_refresh_players = False
+        force_full_refresh = False
         print_report(state)
 
         if args.once:
             break
 
-        choice = input("\n[Enter] refresh picks  |  f = full refresh (players+values)  |  q = quit: ")
+        choice = input("\n[Enter] refresh picks  |  f = full refresh (players+values+scoring)  |  q = quit: ")
         choice = choice.strip().lower()
         if choice == "q":
             break
         if choice == "f":
-            force_refresh_players = True
+            force_full_refresh = True
 
 
 if __name__ == "__main__":

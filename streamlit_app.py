@@ -46,14 +46,14 @@ if "refresh_token" not in st.session_state:
     st.session_state.refresh_token = 0
 
 refresh = st.sidebar.button("Refresh")
-force_full = st.sidebar.button("Force full refresh (players + values)")
+force_full = st.sidebar.button("Force full refresh (players + values + scoring)")
 if refresh or force_full:
     st.session_state.refresh_token += 1
 
 
 @st.cache_data(show_spinner="Loading draft state...")
-def load_state(league_id: str, username: str, force_refresh_players: bool, _token: int) -> dict:
-    return dynasty_core.gather_state(league_id, username, force_refresh_players)
+def load_state(league_id: str, username: str, force_full_refresh: bool, _token: int) -> dict:
+    return dynasty_core.gather_state(league_id, username, force_full_refresh)
 
 
 st.title("Dynasty Rookie Draft")

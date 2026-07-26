@@ -12,32 +12,40 @@ across a season. Consumed by both `rookie_draft.py` (CLI) and `streamlit_app.py`
 |---|---|
 | Sleeper API (`sleeper_api.py`) | League settings/scoring, rosters, users, draft state, live picks, traded picks, and the full player reference dataset (cached to disk, 12h TTL — it's ~14MB) |
 | FantasyCalc (`fantasycalc_api.py`) | Dynasty trade values — the only valuation source; this project has no model of its own for absolute player value |
-| `nfl_data_py` | NFL schedules (bye weeks) and depth charts (handcuffs) — both public, free, and already a project dependency |
+| `nfl_data_py` | NFL schedules (bye weeks), depth charts (handcuffs), and weekly/play-by-play stats (per-player real-scoring recompute, see `player_scoring.py`) — all public, free, and already a project dependency |
 
-## Valuation: market baseline + a targeted correction, not a full model
+## Valuation: market baseline + a per-player correction, not a full model
 
 FantasyCalc's API only exposes three knobs: superflex (`numQbs`), league size,
-and PPR. It has no parameter for this league's two biggest scoring departures
-from a generic model:
+and PPR. It has no parameter for the rest of this league's non-standard
+scoring — 6-point passing touchdowns, a non-standard passing-yardage rate, a
+-3 (not the usual -2) interception penalty, a TE reception premium, and
+first-down/long-play bonuses.
 
-- **6-point passing touchdowns** instead of the far more common 4-point.
-- **TE premium**: +0.5 per reception for tight ends, on top of full PPR.
+`player_scoring.py` corrects for all of it, per player, wherever real NFL
+history exists: for anyone with a qualifying season in the last 3 years (same
+"startable volume" spirit as the original QB/TE-only version below, extended
+to RB/WR), it recomputes that player's own points under this league's exact
+`scoring_settings` (using raw weekly stats, plus play-by-play data for the
+yardage-gated long-play bonuses weekly aggregates can't capture) and divides
+by their points under FantasyCalc's assumed baseline model (an explicit,
+documented assumption — FantasyCalc doesn't publish its own formula). Below
+the qualifying bar, or for rookies with no NFL history at all, a position
+average computed from that same pooled sample is used instead —
+`POSITION_VALUE_MULTIPLIER` is now a last-resort constant, used only if this
+whole enrichment fails for a refresh. Results are cached to disk (no
+TTL — the underlying seasons are historical and don't change on a clock) and
+recomputed only on a "force full refresh."
 
-`POSITION_VALUE_MULTIPLIER` (`QB: 1.164`, `TE: 1.204`) corrects for exactly
-these two gaps. The numbers are **computed, not guessed**: pulled from real
-2024 season stats (the most recent complete season `nfl_data_py` has
-published — 2025 isn't out yet), as the ratio of total fantasy points under
-this league's real rule vs. FantasyCalc's assumed baseline, holding every
-other scoring setting constant, for startable-volume players (QB: ≥200
-attempts, 39 qualifying; TE: ≥30 targets, 45 qualifying). `adjusted_value()`
-applies it; the raw FantasyCalc `value` is kept alongside everywhere for
-comparison, not overwritten.
-
-**Not corrected**, and stated as such wherever it's relevant: smaller bonuses
-for long touchdowns (40+/50+ yard) and first downs (`rush_fd`/`rec_fd`) —
-present in this league's scoring but not isolated the way the two big ones
-were. A real per-player recompute from raw stats (a further-out project idea,
-not built) would replace this whole correction with something exact.
+The original version of this correction (superseded, kept here for context on
+how the project arrived at the current approach) used one flat multiplier per
+position instead of a per-player one, and covered only the two largest gaps
+(6pt passing TDs, TE premium) — pulled from a single season's stats
+(`POSITION_VALUE_MULTIPLIER`'s `QB: 1.164`/`TE: 1.204`, from 2024 alone, then
+`1.175`/`1.202` once pooled across 3 seasons), applied via a now-removed
+`adjusted_value()` function. The raw FantasyCalc `value` is still kept
+alongside the corrected `adj_value` everywhere for comparison, not
+overwritten.
 
 ## Ranking: marginal lineup value, not raw trade value
 
