@@ -10,14 +10,21 @@ players.json cache) — the web equivalent of the CLI's Enter-vs-`f` prompt.
 
 from __future__ import annotations
 
+import os
+
 import requests
 import streamlit as st
 
 import dynasty_core
 
+APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
+
 st.set_page_config(page_title="Dynasty Rookie Draft", layout="centered")
 
-st.sidebar.header("League")
+if "league_name" not in st.session_state:
+    st.session_state.league_name = "League"
+
+st.sidebar.header(st.session_state.league_name)
 league_id = st.sidebar.text_input("League ID", value=dynasty_core.DEFAULT_LEAGUE_ID)
 username = st.sidebar.text_input("Username", value=dynasty_core.DEFAULT_USERNAME)
 
@@ -47,6 +54,7 @@ except ValueError as exc:
     st.stop()
 
 league = state["league"]
+st.session_state.league_name = league["name"]
 st.caption(f"{league['name']} - {league['season']} Rookie Draft ({league['status']})")
 
 total_picks = len(state["ownership"])
@@ -211,3 +219,6 @@ with roster_tab:
         st.write("(none of your RBs are current NFL starters)")
     else:
         st.dataframe(handcuffs, hide_index=True, width="stretch")
+
+st.divider()
+st.caption(f"Dynasty Rookie Draft · build {APP_VERSION}")

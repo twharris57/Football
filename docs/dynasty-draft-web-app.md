@@ -21,6 +21,33 @@ Plan after the two turned out to disagree with each other on what to pick
 next — two answers to the same question was a real bug, not a feature; there
 is now exactly one ranking method, used everywhere.
 
+### Sidebar league name and version footer
+
+The sidebar section header shows the actual loaded league name instead of a
+generic "League" label — but since Streamlit renders the sidebar before
+`gather_state()` has run (the league ID input itself determines what to
+fetch), there's a genuine chicken-and-egg problem. Solved via
+`st.session_state.league_name`, seeded to `"League"` and updated once state
+loads successfully: the very first render of a session shows the generic
+label, and it settles to the real name from the next rerun onward (verified
+directly via `AppTest` — one `.run()` still shows `"League"`, a second
+`.run()` shows the real name). No extra network call, no attempt to force a
+same-render update that Streamlit's execution model doesn't support.
+
+A footer (`Dynasty Rookie Draft · build {APP_VERSION}`) shows the short git
+SHA the running image was built from, read from a `GIT_SHA` environment
+variable. This exists specifically to verify a NAS deployment actually
+picked up a new image rather than silently continuing to run a stale one —
+compare the footer against the commit that should be live. The `Dockerfile`
+declares `ARG GIT_SHA=dev` / `ENV GIT_SHA=$GIT_SHA`; `docker-publish.yml`
+passes `--build-arg GIT_SHA=${{ github.sha }}` so the footer matches the
+same commit the image is tagged with in GHCR. Local `docker compose build`
+(no build-arg passed) and plain `streamlit run` both fall back to `dev`,
+which is itself a useful signal — if a NAS deployment ever showed `dev`, that
+would mean the image wasn't actually built by CI. Verified directly: built
+the image with `--build-arg GIT_SHA=abc1234` and confirmed the container's
+environment carries it through.
+
 ### Refresh model
 
 Streamlit reruns the whole script top-to-bottom on any widget interaction, so
