@@ -8,11 +8,12 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 
 - **Valuation algorithm improvements** (branch: `feature/valuation-improvements`)
   — sequenced deliberately, not independent workstreams:
-  1. **E — refresh the QB/TE multiplier's data basis.** Currently derived
-     from 2024 only (39 qualifying QBs, 45 TEs — a fairly small,
-     single-season sample). Average across a few seasons to reduce
-     single-season noise; no architecture change. Stays useful regardless
-     of how B turns out, since rookies will always need this fallback (see
+  1. ✅ **E — refresh the QB/TE multiplier's data basis.** Was derived from
+     2024 only (39 qualifying QBs, 45 TEs — a fairly small, single-season
+     sample); now pooled across the 3 most recent complete seasons (108
+     QB player-seasons, 135 TE, via `scripts/derive_position_multipliers.py`
+     + `recent_complete_seasons_weekly_data()`). Stays useful regardless of
+     how B turns out, since rookies will always need this fallback (see
      step 2).
   2. **B — full per-player scoring recompute for players with real NFL
      history.** Compute actual fantasy points from `nfl_data_py` raw stats
@@ -37,6 +38,20 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   Not deadline-driven the way the pre-draft work was — this is about
   improving accuracy for ongoing dynasty decisions (trades, future
   drafts), not a hard cutoff.
+
+  **Longer-term idea (noted, not started):** `scripts/derive_position_multipliers.py`
+  still has to be run by hand and its printed numbers manually copied into
+  `POSITION_VALUE_MULTIPLIER`. The easy fix already done is making the
+  *season selection* itself current-year-driven (`recent_complete_seasons_weekly_data()`
+  looks back from the league's real current season, so it doesn't need
+  editing next year). The harder remaining piece — fully automating this
+  so it re-derives and applies itself with no manual step at all — is
+  deliberately deferred: it would need a decision on *when* to trigger a
+  re-derive (season rollover? a scheduled job?) and probably a sanity-check
+  guard before auto-applying a new multiplier (e.g. reject a swing beyond
+  some threshold vs. the current value), so a bad data pull can't silently
+  skew live rankings. Worth a proper look once B (per-player recompute)
+  lands, since B may shrink how much this multiplier still matters.
 
 - **Rookie draft dashboard — final verification.** Built and merged (PR #1,
   #2, #3); full writeup in `docs/rookie-draft-big-board.md` and
@@ -100,9 +115,10 @@ the two largest gaps are corrected (see `docs/rookie-draft-big-board.md`
 for the full methodology):
 
 - ✅ **6-point passing touchdowns** (`pass_td: 6.0`) — corrected via
-  `POSITION_VALUE_MULTIPLIER["QB"]` (1.164×, computed from real 2024 stats).
+  `POSITION_VALUE_MULTIPLIER["QB"]` (1.175×, pooled across the 3 most
+  recent complete NFL seasons — see `scripts/derive_position_multipliers.py`).
 - ✅ **TE premium** (`bonus_rec_te: 0.5`) — corrected via
-  `POSITION_VALUE_MULTIPLIER["TE"]` (1.204×, same methodology).
+  `POSITION_VALUE_MULTIPLIER["TE"]` (1.202×, same methodology).
 - ⏳ **Still uncorrected**: bonus points for long touchdowns (40+/50+ yard,
   rush/pass/rec) and a first-down bonus (`rush_fd`/`rec_fd: 0.5`) — smaller
   effects than the two above, not yet isolated the way QB/TE were. A real
