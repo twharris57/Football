@@ -58,55 +58,23 @@ else:
     clock_team = state["team_names"][on_the_clock.owner_roster_id]
     st.info(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}")
 
-strategy_tab, plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(
-    ["Strategy", "Draft Plan", "Lineup", "Draft Board", "Your Roster"]
-)
-
-with strategy_tab:
-    st.caption(
-        "Heuristic synthesis of the signals in the other tabs (need fit, handcuff, age-aware "
-        "drop note) into one recommended action — not a new model, not a guarantee. Values "
-        f"behind this apply the QB/TE scoring correction (QB ×{dynasty_core.POSITION_VALUE_MULTIPLIER['QB']}, "
-        f"TE ×{dynasty_core.POSITION_VALUE_MULTIPLIER['TE']}) but not the smaller long-TD/first-down bonus gaps."
-    )
-    strategy = state["strategy"]
-    top_pick = strategy["top_pick"]
-    if top_pick:
-        st.subheader("Recommended pick")
-        st.success(
-            f"**{top_pick['name']}** ({top_pick['pos']}, rank {top_pick['rank']}, tier {top_pick['tier']}) "
-            f"— {top_pick['reason']}"
-        )
-        if not strategy["also_consider"].empty:
-            st.caption("Also consider:")
-            st.dataframe(
-                strategy["also_consider"][["rank", "name", "pos", "adj_value", "tier"]],
-                hide_index=True,
-                width="stretch",
-            )
-    else:
-        st.write("(no rookies available)")
-
-    if not strategy["drop_candidates"].empty:
-        st.subheader("Consider dropping")
-        st.caption("To make roster room for the pick above.")
-        st.dataframe(
-            strategy["drop_candidates"][["name", "pos", "age", "adj_value", "note"]],
-            hide_index=True,
-            width="stretch",
-        )
+plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(["Draft Plan", "Lineup", "Draft Board", "Your Roster"])
 
 with plan_tab:
     st.caption(
-        "Your remaining picks this draft, simulated round by round. Assumes no other team's "
-        "picks happen in between — 'if these were your only picks, back to back, on the board "
-        "right now.' Refresh after any pick lands (yours or anyone else's) for an updated plan "
-        "against the real board."
+        "Every pick you own this draft. Values apply this league's QB/TE scoring correction "
+        f"(QB ×{dynasty_core.POSITION_VALUE_MULTIPLIER['QB']}, TE ×{dynasty_core.POSITION_VALUE_MULTIPLIER['TE']}) "
+        "but not the smaller long-TD/first-down bonus gaps. **status=completed** rows show the "
+        "REAL pick Sleeper recorded; **status=upcoming** rows are simulated (best value, "
+        "preferring a flagged need), assuming no other team's picks happen in between — 'if "
+        "these were your only remaining picks, back to back, on the board right now.' "
+        "**drop_name** is a live suggestion even for completed rounds — Sleeper has no record "
+        "of whether it was actually dropped. Refresh after any pick lands for an updated plan."
     )
     plan = state["multi_round_plan"]
     rounds = plan["rounds"]
     if rounds.empty:
-        st.write("(no upcoming picks)")
+        st.write("(no picks owned this draft)")
     else:
         st.dataframe(rounds, hide_index=True, width="stretch")
         if rounds["drop_is_starter"].any():
@@ -146,12 +114,15 @@ with draft_tab:
         st.subheader("Recently drafted")
         st.dataframe(state["recent_picks"], hide_index=True, width="stretch")
 
-    st.subheader("Available rookies (big board)")
+    st.subheader("Rookie big board")
     st.caption(
-        "**value** is FantasyCalc's raw number; **adj_value** applies this league's QB/TE scoring "
-        "correction (see the Strategy tab) and is what determines sort order and **rank**. "
-        "**tier** is FantasyCalc's own global tier across *all* players, not rookie-specific and "
-        "not adjusted — gaps in the sequence are veterans/other rookies not shown here. "
+        "The whole rookie class — drafted players stay listed instead of disappearing, "
+        "annotated via **drafted_round**/**drafted_by** (blank if still undrafted). **rank** is "
+        "value order across the whole class, drafted and undrafted together. **value** is "
+        "FantasyCalc's raw number; **adj_value** applies this league's QB/TE scoring correction "
+        "(see the Draft Plan tab) and is what determines sort order and **rank**. **tier** is "
+        "FantasyCalc's own global tier across *all* players, not rookie-specific and not "
+        "adjusted — gaps in the sequence are veterans/other rookies not shown here. "
         "**fits_need** flags a currently-thin position on your roster. "
         "**handcuff_to** means this rookie backs up one of your own RB starters."
     )

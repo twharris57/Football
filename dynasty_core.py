@@ -124,41 +124,54 @@ def adjusted_value(position: str, value: float | None) -> float | None:
 
 
 def build_big_board(
-    available: dict[str, dict],
+    rookie_pool_: dict[str, dict],
     fc_values: list[dict],
     need_positions: frozenset[str] = frozenset(),
     handcuff_targets: dict[str, str] | None = None,
+    draft_attribution: dict[str, tuple[int, str]] | None = None,
 ) -> pd.DataFrame:
-    """Rank available rookies by dynasty value into tiers, for display.
+    """Rank the rookie class by dynasty value into tiers, for display.
+
+    `rookie_pool_` is the whole class (see `rookie_pool`), not just
+    undrafted players — once picked, a player stays on the board rather
+    than disappearing, annotated via `draft_attribution`
+    (player_id -> (round, team_name)) so the board still shows who took
+    whom. `rank` is a continuous value order across the whole class
+    (drafted and undrafted together), not just "your priority order" — use
+    `drafted_round`/`drafted_by` (both empty if still undrafted) to see
+    what's actually still on the board.
 
     `value` is FantasyCalc's raw number; `adj_value` applies the QB/TE
     scoring-mismatch correction (see POSITION_VALUE_MULTIPLIER) and is what
     determines sort order and `rank`. `tier` is FantasyCalc's own global
     tier across *all* dynasty-relevant players, not rookie-specific and not
     adjusted — gaps in the tier sequence here are veterans/other rookies not
-    in this filtered view. `rank` is this player's order within this
-    rookie-only list by adj_value (1 = best available rookie). `fits_need`
-    flags whether the player's position is currently a roster need (see
-    `roster_needs_summary`) — a rough prioritization signal, not a single
-    "correct" pick. `handcuff_to` names the roster's own RB starter this
-    rookie would handcuff, if any (see `handcuff_map`).
+    in this filtered view. `fits_need` flags whether the player's position
+    is currently a roster need (see `roster_needs_summary`) — a rough
+    prioritization signal, not a single "correct" pick. `handcuff_to` names
+    the roster's own RB starter this rookie would handcuff, if any (see
+    `handcuff_map`).
     """
     fc_by_sleeper_id = {
         entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
     }
     handcuff_targets = handcuff_targets or {}
+    draft_attribution = draft_attribution or {}
 
     rows = []
-    for player_id, info in available.items():
+    for player_id, info in rookie_pool_.items():
         fc_entry = fc_by_sleeper_id.get(player_id)
         position = info.get("position")
         value = fc_entry["value"] if fc_entry else None
+        drafted_round, drafted_by = draft_attribution.get(player_id, (None, ""))
         rows.append(
             {
                 "name": info.get("full_name"),
                 "pos": position,
                 "fits_need": position in need_positions,
                 "handcuff_to": handcuff_targets.get(player_id, ""),
+                "drafted_round": drafted_round,
+                "drafted_by": drafted_by,
                 "team": info.get("team") or "FA",
                 "college": info.get("college"),
                 "age": info.get("age"),
@@ -172,6 +185,7 @@ def build_big_board(
     if board.empty:
         return board
 
+    board["drafted_round"] = board["drafted_round"].astype("Int64")
     board = board.sort_values("adj_value", ascending=False, na_position="last").reset_index(drop=True)
     unranked_tier = int(board["tier"].max() + 1) if board["tier"].notna().any() else 1
     board["tier"] = board["tier"].fillna(unranked_tier).astype(int)
@@ -562,6 +576,29 @@ def recommend_drop(
     }
 
 
+def pick_best_available(rows: list[dict], need_positions: frozenset[str]) -> dict | None:
+    """Pick the best available row by adj_value, preferring a flagged-need position if any exist."""
+    if not rows:
+        return None
+    need_fits = [r for r in rows if r["pos"] in need_positions]
+    pool = need_fits if need_fits else rows
+    return max(pool, key=lambda r: r["adj_value"] if r["adj_value"] is not None else -1)
+
+
+def hypothetical_needs_and_handcuffs(
+    player_ids: list[str], players: dict[str, dict], handcuffs: dict[str, str]
+) -> tuple[frozenset[str], dict[str, str]]:
+    """Recompute need_positions and handcuff targets for a hypothetical (simulated) roster."""
+    needs = need_positions(roster_needs_summary({"players": player_ids}, players))
+    rb_ids = {pid for pid in player_ids if players.get(pid, {}).get("position") == "RB"}
+    handcuff_targets = {
+        backup_id: players.get(starter_id, {}).get("full_name", "")
+        for starter_id, backup_id in handcuffs.items()
+        if starter_id in rb_ids
+    }
+    return needs, handcuff_targets
+
+
 def multi_round_plan(
     ownership: list[DraftPickSlot],
     user_roster_id: int,
@@ -572,39 +609,62 @@ def multi_round_plan(
     user_roster: dict,
     league: dict,
     byes: dict[str, int],
+    handcuffs: dict[str, str],
+    real_picks_by_overall: dict[int, str],
 ) -> dict[str, Any]:
-    """Simulate the user's own remaining picks this draft, round by round.
+    """Plan for every pick the user owns this draft — what was picked and what to drop, why.
 
-    For each upcoming pick (in round order): recommends the best available
-    rookie by adj_value, and a corresponding drop (bench preferred over
-    starters, via assign_starters/recommend_drop), then updates the
-    hypothetical roster before simulating the next pick. Does NOT simulate
-    the other ~11 teams' picks that happen in between — this assumes "if
-    these were your only picks, back to back, on the board as it looks
-    right now," not a full mock draft. It's recomputed fresh on every
-    refresh, so it stays realistic as the real draft actually progresses.
+    Rounds already played (`overall_pick < current_pick_no`) show the REAL
+    player Sleeper recorded for that pick, not a stale recommendation, so
+    advancing rounds never hides what actually happened last round. Upcoming
+    rounds are simulated: best available value, preferring a currently
+    flagged need if one exists — needs and handcuff targets are recomputed
+    each round against the evolving hypothetical roster, not fixed to the
+    roster's current state. Does NOT simulate the other ~11 teams' picks
+    that happen in between real rounds — assumes "if these were your only
+    remaining picks, back to back, on the board as it looks right now."
+    Recomputed fresh on every refresh, so it stays accurate as the real
+    draft progresses.
+
+    A drop is still recommended for already-played rounds too (using the
+    running hypothetical roster) since Sleeper has no record of whether a
+    suggested drop was actually made — it's a live suggestion, not a
+    confirmed transaction, and is labeled that way in the UI.
 
     Also compares the resulting hypothetical roster's weekly gaps against
     the current roster's (see roster_weekly_gaps), flagging any week where
     this plan would introduce or worsen a dedicated-slot gap.
     """
-    own_upcoming = sorted(
-        (p for p in ownership if p.owner_roster_id == user_roster_id and p.overall_pick >= current_pick_no),
-        key=lambda p: p.overall_pick,
-    )
+    own_picks = sorted((p for p in ownership if p.owner_roster_id == user_roster_id), key=lambda p: p.overall_pick)
 
     available_ids = set(available.keys())
     hypothetical_ids = list(user_roster.get("players") or [])
     just_picked: set[str] = set()
 
     rounds = []
-    for pick in own_upcoming:
-        rows = player_value_rows(list(available_ids), players, fc_values)
-        if not rows:
-            break
-        best = max(rows, key=lambda r: r["adj_value"] if r["adj_value"] is not None else -1)
-        picked_id = best["player_id"]
+    for pick in own_picks:
+        is_completed = pick.overall_pick < current_pick_no
+        real_pick_id = real_picks_by_overall.get(pick.overall_pick)
+        needs, handcuff_targets = hypothetical_needs_and_handcuffs(hypothetical_ids, players, handcuffs)
+
+        if is_completed and real_pick_id:
+            picked_id = real_pick_id
+            reason = "already picked"
+        else:
+            rows = player_value_rows(list(available_ids), players, fc_values)
+            best = pick_best_available(rows, needs)
+            if best is None:
+                break
+            picked_id = best["player_id"]
+            reasons = [f"fills a flagged need at {best['pos']}"] if best["pos"] in needs else ["best value available"]
+            handcuff_to = handcuff_targets.get(picked_id)
+            if handcuff_to:
+                reasons.append(f"also handcuffs your own {handcuff_to}")
+            reason = "; ".join(reasons)
+
         picked_info = players.get(picked_id, {})
+        picked_rows = player_value_rows([picked_id], players, fc_values)
+        picked_value = picked_rows[0]["adj_value"] if picked_rows else None
 
         drop = recommend_drop(hypothetical_ids, players, fc_values, league, exclude_ids=frozenset(just_picked))
 
@@ -612,9 +672,11 @@ def multi_round_plan(
             {
                 "round": pick.round,
                 "overall_pick": pick.overall_pick,
+                "status": "completed" if is_completed else "upcoming",
                 "pick_name": picked_info.get("full_name"),
                 "pick_pos": picked_info.get("position"),
-                "pick_adj_value": best["adj_value"],
+                "pick_adj_value": picked_value,
+                "reason": reason,
                 "drop_name": drop["name"] if drop else None,
                 "drop_pos": drop["pos"] if drop else None,
                 "drop_is_starter": drop["is_starter"] if drop else None,
@@ -636,47 +698,6 @@ def multi_round_plan(
     alerts = merged[(merged["gap_projected"] != "") & (merged["gap_projected"] != merged["gap_current"])]
 
     return {"rounds": pd.DataFrame(rounds), "weekly_gap_alerts": alerts.reset_index(drop=True)}
-
-
-def draft_strategy_recommendation(big_board: pd.DataFrame, roster_value: pd.DataFrame) -> dict[str, Any]:
-    """Synthesize a top pick recommendation and drop candidates, with reasons.
-
-    A heuristic synthesis of signals already computed elsewhere (fits_need,
-    handcuff_to, adj_value, the age-aware drop note) into one recommended
-    action — not a new valuation model, and not a claim of certainty. Both
-    inputs already carry the QB/TE scoring correction via adj_value.
-    """
-    recommendation: dict[str, Any] = {"top_pick": None, "also_consider": pd.DataFrame(), "drop_candidates": pd.DataFrame()}
-
-    if not big_board.empty:
-        need_fits = big_board[big_board["fits_need"]]
-        pool = need_fits if not need_fits.empty else big_board
-        top = pool.iloc[0]
-
-        reasons = []
-        if top["fits_need"]:
-            reasons.append(f"fills a flagged need at {top['pos']}")
-        else:
-            reasons.append("no positions are currently flagged as a need, so this is simply the best value available")
-        if top["handcuff_to"]:
-            reasons.append(f"also handcuffs your own {top['handcuff_to']}")
-
-        recommendation["top_pick"] = {
-            "name": top["name"],
-            "pos": top["pos"],
-            "rank": int(top["rank"]),
-            "tier": int(top["tier"]),
-            "reason": "; ".join(reasons),
-        }
-        recommendation["also_consider"] = big_board[big_board["name"] != top["name"]].head(3)
-
-    if not roster_value.empty:
-        drop_candidates = roster_value[roster_value["note"].str.contains("drop candidate", na=False)]
-        if drop_candidates.empty:
-            drop_candidates = roster_value.head(1)
-        recommendation["drop_candidates"] = drop_candidates
-
-    return recommendation
 
 
 def format_your_picks(
@@ -749,6 +770,19 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
     rookies = rookie_pool(players, league["season"])
     available = {pid: info for pid, info in rookies.items() if pid not in unavailable}
 
+    # The board itself shows the whole class, drafted or not (see build_big_board) -
+    # only excludes rookies rostered outside this draft entirely (e.g. a pre-draft
+    # waiver add), not ones taken here, which stay visible with attribution.
+    pre_draft_rostered = rostered_player_ids(rosters) - picked_player_ids
+    board_pool = {pid: info for pid, info in rookies.items() if pid not in pre_draft_rostered}
+    draft_attribution = {
+        p["player_id"]: (p["round"], team_names.get(p["roster_id"])) for p in draft_picks if p.get("player_id")
+    }
+
+    real_picks_by_overall = {
+        p["pick_no"]: p["player_id"] for p in draft_picks if p.get("roster_id") == user_roster_id and p.get("player_id")
+    }
+
     roster_needs = roster_needs_summary(user_roster, players)
     needs = need_positions(roster_needs)
 
@@ -764,7 +798,7 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
             }
         )
 
-    big_board = build_big_board(available, fc_values, needs, handcuff_targets)
+    big_board = build_big_board(board_pool, fc_values, needs, handcuff_targets, draft_attribution)
     roster_value = roster_value_analysis(user_roster, players, fc_values, byes)
     lineup_starters, lineup_bench = lineup_breakdown(user_roster, players, fc_values, league)
 
@@ -784,9 +818,18 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
         "lineup_bench": lineup_bench,
         "recent_picks": pd.DataFrame(recent_rows),
         "big_board": big_board,
-        "strategy": draft_strategy_recommendation(big_board, roster_value),
         "multi_round_plan": multi_round_plan(
-            ownership, user_roster_id, current_pick_no, available, players, fc_values, user_roster, league, byes
+            ownership,
+            user_roster_id,
+            current_pick_no,
+            available,
+            players,
+            fc_values,
+            user_roster,
+            league,
+            byes,
+            handcuffs,
+            real_picks_by_overall,
         ),
         "team_names": team_names,
     }

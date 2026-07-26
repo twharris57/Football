@@ -35,37 +35,18 @@ def print_report(state: dict[str, Any]) -> None:
         print(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}\n")
 
     print(
-        "--- Recommended strategy ---\n"
-        "Heuristic synthesis of the signals below (need fit, handcuff, age-aware drop note), "
-        "not a new model. Values behind this use the QB/TE scoring correction "
+        "--- Draft plan (every pick you own this draft) ---\n"
+        "Values use the QB/TE scoring correction "
         f"(QB x{dynasty_core.POSITION_VALUE_MULTIPLIER['QB']}, TE x{dynasty_core.POSITION_VALUE_MULTIPLIER['TE']}, "
-        "see dynasty_core.py) but not the smaller long-TD/first-down bonus gaps."
-    )
-    strategy = state["strategy"]
-    top_pick = strategy["top_pick"]
-    if top_pick:
-        print(
-            f"Top pick: {top_pick['name']} ({top_pick['pos']}, rank {top_pick['rank']}, tier {top_pick['tier']}) "
-            f"- {top_pick['reason']}"
-        )
-        if not strategy["also_consider"].empty:
-            print("Also consider:")
-            print(strategy["also_consider"][["rank", "name", "pos", "adj_value", "tier"]].to_string(index=False))
-    else:
-        print("Top pick: (no rookies available)")
-    if not strategy["drop_candidates"].empty:
-        print("Consider dropping (to make roster room):")
-        print(strategy["drop_candidates"][["name", "pos", "age", "adj_value", "note"]].to_string(index=False))
-
-    print(
-        "\n--- Draft plan (your remaining picks this draft) ---\n"
-        "Assumes no other team's picks happen in between - 'if these were your only picks, "
-        "back to back, on the board right now.' Refresh after any pick lands (yours or "
-        "anyone else's) to get an updated plan against the real board."
+        "see dynasty_core.py) but not the smaller long-TD/first-down bonus gaps. status=completed rows show the "
+        "REAL pick Sleeper recorded; status=upcoming rows are simulated (best value, preferring a flagged need), "
+        "assuming no other team's picks happen in between - 'if these were your only remaining picks, back to "
+        "back, on the board right now.' drop_name is a live suggestion even for completed rounds - Sleeper has "
+        "no record of whether it was actually dropped. Refresh after any pick lands for an updated plan."
     )
     plan = state["multi_round_plan"]
     if plan["rounds"].empty:
-        print("(no upcoming picks)")
+        print("(no picks owned this draft)")
     else:
         print(plan["rounds"].to_string(index=False))
         if plan["rounds"]["drop_is_starter"].any():
@@ -134,11 +115,12 @@ def print_report(state: dict[str, Any]) -> None:
         print(state["recent_picks"].to_string(index=False))
 
     print(
-        "\n--- Available rookies (big board) ---\n"
+        "\n--- Rookie big board (whole class - drafted players stay listed) ---\n"
         "tier = FantasyCalc's global dynasty tier across ALL players, not rookie-specific "
-        "(gaps are veterans/other rookies not shown here). rank = order within this rookie-only "
-        "list. fits_need = position is currently flagged as a roster need. handcuff_to = this "
-        "rookie backs up one of your own RB starters, if any."
+        "(gaps are veterans/other rookies not shown here). rank = value order across the WHOLE "
+        "class, drafted and undrafted together. fits_need = position is currently flagged as a "
+        "roster need. handcuff_to = this rookie backs up one of your own RB starters, if any. "
+        "drafted_round/drafted_by = blank if still undrafted."
     )
     board = state["big_board"]
     if board.empty:
