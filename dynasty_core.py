@@ -31,18 +31,26 @@ LOW_VALUE_AGING_AGE = 27
 # Position-level correction for FantasyCalc's known scoring mismatch (see
 # PROJECT_PLAN.md): FantasyCalc's values assume 4pt passing TDs and no TE
 # premium, not this league's real 6pt passing TDs / +0.5-per-reception TE
-# premium. Computed from real 2024 season data (the most recent complete
-# season nfl_data_py has published — 2025 isn't available yet) as the ratio
-# of total fantasy points, under this league's real rule vs FantasyCalc's
-# assumed baseline rule, holding every other scoring setting constant, for
-# startable-volume players (QB: >=200 attempts, 39 qualifying; TE: >=30
-# targets, 45 qualifying). This corrects only the two largest, most clearly
+# premium. Computed as the ratio of total fantasy points, under this
+# league's real rule vs FantasyCalc's assumed baseline rule, holding every
+# other scoring setting constant, for startable-volume players (QB: >=200
+# attempts; TE: >=30 targets), pooled across the 3 most recent complete
+# NFL seasons (2022-2024 as of this derivation — see
+# recent_complete_seasons_weekly_data()) rather than a single season, to
+# reduce single-season noise (108 qualifying QB player-seasons, 135 TE,
+# vs. 39/45 from 2024 alone). Re-derive with
+# `python scripts/derive_position_multipliers.py` whenever a fresher
+# season becomes available — that script uses the same lookback-from-
+# current-season logic, so it doesn't need editing to stay current, only
+# re-running (see PROJECT_PLAN.md for the longer-term plan to automate
+# this fully). This corrects only the two largest, most clearly
 # attributable gaps — it does NOT correct for the smaller long-TD/first-down
 # bonus gaps also noted in PROJECT_PLAN.md. A real per-player recompute
-# (Phase 4) would replace this; this is the deliberately lightweight version.
+# (see PROJECT_PLAN.md's Active valuation work) would replace this; this is
+# the deliberately lightweight version.
 POSITION_VALUE_MULTIPLIER = {
-    "QB": 1.164,
-    "TE": 1.204,
+    "QB": 1.175,
+    "TE": 1.202,
 }
 
 
@@ -342,6 +350,30 @@ def roster_value_analysis(
 
     roster_df["note"] = [note(lv, age) for lv, age in zip(is_low_value, roster_df["age"])]
     return roster_df
+
+
+def recent_complete_seasons_weekly_data(current_season: str, lookback: int = 3) -> pd.DataFrame:
+    """Fetch weekly player stats for the most recent `lookback` NFL seasons with real data published.
+
+    nfl_data_py's underlying data lags real-world time independent of a
+    league's own season label — a league season of "2026" doesn't mean
+    2025 stats are published yet (confirmed directly: they weren't, as of
+    when this was written). Probes backward from `current_season - 1` one
+    year at a time, so this keeps working next year without a code change,
+    rather than a hardcoded season list that goes stale. Used to
+    (re-)derive POSITION_VALUE_MULTIPLIER (see
+    scripts/derive_position_multipliers.py); will also back the eventual
+    full per-player scoring recompute (see PROJECT_PLAN.md).
+    """
+    candidate = int(current_season) - 1
+    frames = []
+    while len(frames) < lookback and candidate > 2000:
+        try:
+            frames.append(nfl.import_weekly_data([candidate]))
+        except Exception:
+            logger.info("nfl_data_py has no weekly data for %s yet, trying %s", candidate, candidate - 1)
+        candidate -= 1
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 def bye_week_by_team(season: str) -> dict[str, int]:
