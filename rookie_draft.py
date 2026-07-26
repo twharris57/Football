@@ -14,10 +14,23 @@ import argparse
 import logging
 from typing import Any
 
+import pandas as pd
+import requests
+
 import dynasty_core
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
+
+
+def render_df(df: pd.DataFrame, empty_message: str, *, index: bool = False) -> str:
+    """Return df as a plain-text table, or empty_message if it's empty.
+
+    The repeated print shape across every section below - most tables use
+    a meaningless default index (index=False); roster_needs is grouped by
+    position, where the index is the point, so it opts into index=True.
+    """
+    return df.to_string(index=index) if not df.empty else empty_message
 
 
 def print_report(state: dict[str, Any]) -> None:
@@ -32,7 +45,14 @@ def print_report(state: dict[str, Any]) -> None:
     else:
         on_the_clock = next(p for p in state["ownership"] if p.overall_pick == current_pick_no)
         clock_team = state["team_names"][on_the_clock.owner_roster_id]
-        print(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}\n")
+        until_turn = state["picks_until_turn"]
+        if until_turn is None:
+            turn_note = " (no picks left this draft)"
+        elif until_turn == 0:
+            turn_note = " (your turn!)"
+        else:
+            turn_note = f" ({until_turn} pick{'s' if until_turn != 1 else ''} until your turn)"
+        print(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}{turn_note}\n")
 
     print(
         "--- Draft plan (every pick you own this draft) ---\n"
@@ -47,10 +67,8 @@ def print_report(state: dict[str, Any]) -> None:
         "no record of whether it was actually dropped. Refresh after any pick lands for an updated plan."
     )
     plan = state["multi_round_plan"]
-    if plan["rounds"].empty:
-        print("(no picks owned this draft)")
-    else:
-        print(plan["rounds"].to_string(index=False))
+    print(render_df(plan["rounds"], "(no picks owned this draft)"))
+    if not plan["rounds"].empty:
         if plan["rounds"]["drop_is_starter"].any():
             print("NOTE: at least one recommended drop is a current starter - see drop_is_starter above.")
 
@@ -69,10 +87,10 @@ def print_report(state: dict[str, Any]) -> None:
     print("\n--- Lineup (optimal current starters, value-only snapshot) ---")
     print(state["lineup_starters"].to_string(index=False))
     print("Bench (top 5 by value):")
-    print(state["lineup_bench"].head(5).to_string(index=False) if not state["lineup_bench"].empty else "(empty)")
+    print(render_df(state["lineup_bench"].head(5), "(empty)"))
 
     print("\n--- Your picks ---")
-    print(state["your_picks"].to_string(index=False) if not state["your_picks"].empty else "(none)")
+    print(render_df(state["your_picks"], "(none)"))
 
     cap = state["roster_capacity"]
     print(
@@ -84,7 +102,7 @@ def print_report(state: dict[str, Any]) -> None:
     )
 
     print("\n--- Your roster needs ---")
-    print(state["roster_needs"].to_string() if not state["roster_needs"].empty else "(empty roster)")
+    print(render_df(state["roster_needs"], "(empty roster)", index=True))
     needs = state["need_positions"]
     print(f"Flagged needs: {', '.join(sorted(needs))}" if needs else "No positions flagged as a need right now.")
 
@@ -94,11 +112,10 @@ def print_report(state: dict[str, Any]) -> None:
         "comparison). 'note' weighs age: low value + young is still a rebuild asset, "
         "low value + aging is a real drop candidate."
     )
-    print(state["roster_value"].to_string(index=False) if not state["roster_value"].empty else "(empty roster)")
+    print(render_df(state["roster_value"], "(empty roster)"))
 
     print("\n--- Bye week conflicts (2+ players at a position sharing a bye) ---")
-    conflicts = state["roster_bye_conflicts"]
-    print(conflicts.to_string(index=False) if not conflicts.empty else "(none)")
+    print(render_df(state["roster_bye_conflicts"], "(none)"))
 
     print(
         "\n--- Weekly gaps (dedicated QB/RB/WR/TE slots only, not FLEX/SUPER_FLEX) ---\n"
@@ -109,15 +126,12 @@ def print_report(state: dict[str, Any]) -> None:
     weekly_gaps = state["roster_weekly_gaps"]
     print(weekly_gaps.to_string(index=False))
     gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
-    print(
-        "Weeks with a gap:\n" + gap_weeks.to_string(index=False)
-        if not gap_weeks.empty
-        else "No weeks have a dedicated-slot gap."
-    )
+    if not gap_weeks.empty:
+        print("Weeks with a gap:")
+    print(render_df(gap_weeks, "No weeks have a dedicated-slot gap."))
 
     print("\n--- Handcuff status (your rostered RB starters) ---")
-    handcuffs = state["roster_handcuffs"]
-    print(handcuffs.to_string(index=False) if not handcuffs.empty else "(none of your RBs are NFL starters)")
+    print(render_df(state["roster_handcuffs"], "(none of your RBs are NFL starters)"))
 
     if not state["recent_picks"].empty:
         print("\n--- Recently drafted ---")
@@ -149,7 +163,20 @@ def main() -> None:
 
     force_refresh_players = False
     while True:
-        state = dynasty_core.gather_state(args.league_id, args.username, force_refresh_players)
+        try:
+            state = dynasty_core.gather_state(args.league_id, args.username, force_refresh_players)
+        except requests.RequestException as exc:
+            # A hiccup here shouldn't kill the whole session - everyone hits
+            # Sleeper/FantasyCalc at once on draft day, so a transient error
+            # is expected, not exceptional. Let the user retry or bail.
+            print(f"\nCouldn't reach Sleeper/FantasyCalc: {exc}")
+            if args.once:
+                raise
+            choice = input("[Enter] retry  |  q = quit: ").strip().lower()
+            if choice == "q":
+                break
+            continue
+
         force_refresh_players = False
         print_report(state)
 

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +24,33 @@ PLAYERS_CACHE_PATH = CACHE_DIR / "players.json"
 PLAYERS_CACHE_TTL_SECONDS = 12 * 60 * 60
 
 
+def _build_session() -> requests.Session:
+    """A session that retries transient failures (connection errors, 5xx, 429).
+
+    Draft day means everyone hits this API at once — a bare `requests.get`
+    with no retry turns one transient hiccup into a hard failure for
+    whoever hit it, mid-draft. Only GET is used here, so retrying is safe
+    (no risk of double-submitting a write).
+    """
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=("GET",),
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_session = _build_session()
+
+
 def _get(path: str) -> Any:
     """Fetch and parse a JSON response from the Sleeper API."""
-    response = requests.get(f"{BASE_URL}{path}", timeout=30)
+    response = _session.get(f"{BASE_URL}{path}", timeout=30)
     response.raise_for_status()
     return response.json()
 

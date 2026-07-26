@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 import nfl_data_py as nfl
 import pandas as pd
@@ -116,6 +116,19 @@ def rookie_pool(players: dict[str, dict], season: str) -> dict[str, dict]:
     }
 
 
+def roster_fantasy_players(roster: dict, players: dict[str, dict]) -> Iterator[tuple[str, dict]]:
+    """Yield (player_id, info) for each of the roster's players at a fantasy-relevant position.
+
+    The shared first step of every roster-analysis function below — what
+    counts as "fantasy-relevant" (FANTASY_POSITIONS) is defined once here
+    instead of re-checked in each one.
+    """
+    for player_id in roster.get("players") or []:
+        info = players.get(player_id, {})
+        if info.get("position") in FANTASY_POSITIONS:
+            yield player_id, info
+
+
 def adjusted_value(position: str, value: float | None) -> float | None:
     """Apply the QB/TE scoring-mismatch correction to a raw FantasyCalc value."""
     if value is None:
@@ -207,13 +220,10 @@ def roster_needs_summary(roster: dict, players: dict[str, dict]) -> pd.DataFrame
     have YOUNG_CORE_MAX_YOE years of experience or less — a rough signal for
     where a rebuild still needs young talent, not a full needs model.
     """
-    rows = []
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
-        position = info.get("position")
-        if position not in FANTASY_POSITIONS:
-            continue
-        rows.append({"pos": position, "age": info.get("age"), "years_exp": info.get("years_exp")})
+    rows = [
+        {"pos": info.get("position"), "age": info.get("age"), "years_exp": info.get("years_exp")}
+        for _player_id, info in roster_fantasy_players(roster, players)
+    ]
 
     roster_df = pd.DataFrame(rows)
     if roster_df.empty:
@@ -261,6 +271,22 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
     }
 
 
+def roster_total_capacity(league: dict) -> int:
+    """Return the combined active-roster + taxi-squad slot count.
+
+    Used to decide whether adding a player genuinely requires a drop, for
+    simulated/hypothetical rosters — those are tracked as a flat player-id
+    list (see multi_round_plan) with no active-vs-taxi split, so this is
+    the "is there room *anywhere*" signal rather than a precise slot type.
+    Reserve/IR isn't included, matching roster_capacity's own limitation
+    (not reliably derivable from the Sleeper API response alone). Rookies
+    are assumed taxi-eligible (true for every candidate in this draft,
+    since they're all entering their first season) — a general
+    accrued-experience eligibility check is deferred (see PROJECT_PLAN.md).
+    """
+    return len(league["roster_positions"]) + league["settings"].get("taxi_slots", 0)
+
+
 def roster_value_analysis(
     roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], byes: dict[str, int] | None = None
 ) -> pd.DataFrame:
@@ -281,11 +307,8 @@ def roster_value_analysis(
     byes = byes or {}
 
     rows = []
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
+    for player_id, info in roster_fantasy_players(roster, players):
         position = info.get("position")
-        if position not in FANTASY_POSITIONS:
-            continue
         fc_entry = fc_by_sleeper_id.get(player_id)
         value = fc_entry["value"] if fc_entry else None
         rows.append(
@@ -344,13 +367,11 @@ def bye_week_by_team(season: str) -> dict[str, int]:
 def roster_bye_conflicts(roster: dict, players: dict[str, dict], byes: dict[str, int]) -> pd.DataFrame:
     """Flag position groups on the roster with 2+ players sharing the same bye week."""
     rows = []
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
-        position = info.get("position")
+    for player_id, info in roster_fantasy_players(roster, players):
         team = info.get("team")
-        if position not in FANTASY_POSITIONS or team not in byes:
+        if team not in byes:
             continue
-        rows.append({"pos": position, "bye": byes[team], "name": info.get("full_name"), "team": team})
+        rows.append({"pos": info.get("position"), "bye": byes[team], "name": info.get("full_name"), "team": team})
 
     bye_df = pd.DataFrame(rows)
     if bye_df.empty:
@@ -380,11 +401,8 @@ def roster_weekly_gaps(roster: dict, players: dict[str, dict], byes: dict[str, i
 
     position_bye_weeks: dict[str, list[int]] = {pos: [] for pos in FANTASY_POSITIONS}
     position_totals: dict[str, int] = dict.fromkeys(FANTASY_POSITIONS, 0)
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
-        position = info.get("position")
-        if position not in FANTASY_POSITIONS:
-            continue
+    for player_id, info in roster_fantasy_players(roster, players):
+        position = info["position"]
         position_totals[position] += 1
         bye = byes.get(info.get("team"))
         if bye is not None:
@@ -436,8 +454,7 @@ def roster_handcuff_status(roster: dict, players: dict[str, dict], handcuffs: di
     """For each rostered RB who is an NFL starter, show whether their handcuff is also rostered."""
     roster_ids = set(roster.get("players") or [])
     rows = []
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
+    for player_id, info in roster_fantasy_players(roster, players):
         if info.get("position") != "RB":
             continue
         backup_id = handcuffs.get(player_id)
@@ -636,13 +653,18 @@ def rank_by_marginal_value(
 ) -> list[dict]:
     """Rank candidates by season-average marginal starting-lineup value, not raw trade value.
 
-    For each candidate: simulate adding them (and making the resulting
-    recommended drop), and measure how much the roster's season-average
-    starting value (see season_average_starter_value) goes up. A modestly
-    valued player at a genuinely weak position can beat a highly valued
-    player who wouldn't even crack the starting lineup — this ranks by
-    projected lineup impact, not market price. Bye weeks are already
-    folded into the season average, not handled as a separate adjustment.
+    For each candidate: simulate adding them (and, only if the roster is
+    already at total capacity, making the resulting recommended drop), and
+    measure how much the roster's season-average starting value (see
+    season_average_starter_value) goes up. A drop is never forced just
+    because a candidate was evaluated — a player added to genuinely open
+    roster/taxi room (see roster_total_capacity) doesn't cost anything, so
+    no drop is simulated and the marginal value isn't understated by an
+    unnecessary cut. A modestly valued player at a genuinely weak position
+    can beat a highly valued player who wouldn't even crack the starting
+    lineup — this ranks by projected lineup impact, not market price. Bye
+    weeks are already folded into the season average, not handled as a
+    separate adjustment.
 
     `exclude_from_drop` protects specific players (e.g. picked in an
     earlier round of the same multi-round plan) from being recommended for
@@ -653,18 +675,38 @@ def rank_by_marginal_value(
     if not candidate_ids:
         return []
 
+    total_capacity = roster_total_capacity(league)
     baseline = season_average_starter_value(hypothetical_ids, players, fc_by_sleeper_id, byes, league)
 
     results = []
     for candidate_id in candidate_ids:
         with_candidate = hypothetical_ids + [candidate_id]
-        drop = recommend_drop(with_candidate, players, fc_by_sleeper_id, league, exclude_ids=exclude_from_drop)
+        if len(with_candidate) > total_capacity:
+            drop = recommend_drop(with_candidate, players, fc_by_sleeper_id, league, exclude_ids=exclude_from_drop)
+        else:
+            drop = None
         roster_after = [pid for pid in with_candidate if drop is None or pid != drop["player_id"]]
         after = season_average_starter_value(roster_after, players, fc_by_sleeper_id, byes, league)
         results.append({"player_id": candidate_id, "marginal_value": after - baseline, "drop": drop})
 
     results.sort(key=lambda r: r["marginal_value"], reverse=True)
     return results[:top_n]
+
+
+def gap_delta(
+    before_roster: dict, after_roster: dict, players: dict[str, dict], byes: dict[str, int], league: dict
+) -> pd.DataFrame:
+    """Weeks where after_roster has a dedicated-slot gap that before_roster didn't (or a different one).
+
+    Shared by multi_round_plan (full-plan impact vs. the current real
+    roster) and alternate_gap_note (single-alternate impact vs. the
+    hypothetical roster entering that round) - same before/after
+    weekly-gap comparison, just different roster inputs.
+    """
+    before = roster_weekly_gaps(before_roster, players, byes, league)
+    after = roster_weekly_gaps(after_roster, players, byes, league)
+    merged = before[["week", "gap"]].merge(after[["week", "gap"]], on="week", suffixes=("_before", "_after"))
+    return merged[(merged["gap_after"] != "") & (merged["gap_after"] != merged["gap_before"])]
 
 
 def alternate_gap_note(
@@ -685,10 +727,7 @@ def alternate_gap_note(
     """
     with_candidate = hypothetical_ids + [candidate_id]
     roster_after = [pid for pid in with_candidate if drop is None or pid != drop["player_id"]]
-    before = roster_weekly_gaps({"players": hypothetical_ids}, players, byes, league)
-    after = roster_weekly_gaps({"players": roster_after}, players, byes, league)
-    merged = before[["week", "gap"]].merge(after[["week", "gap"]], on="week", suffixes=("_before", "_after"))
-    worsened = merged[(merged["gap_after"] != "") & (merged["gap_after"] != merged["gap_before"])]
+    worsened = gap_delta({"players": hypothetical_ids}, {"players": roster_after}, players, byes, league)
     if worsened.empty:
         return ""
     weeks = ", ".join(str(w) for w in worsened["week"])
@@ -832,18 +871,26 @@ def multi_round_plan(
         just_picked.add(picked_id)
 
     hypothetical_roster = {"players": hypothetical_ids}
-    projected_gaps = roster_weekly_gaps(hypothetical_roster, players, byes, league)
-    current_gaps = roster_weekly_gaps(user_roster, players, byes, league)
-    merged = current_gaps[["week", "gap"]].merge(
-        projected_gaps[["week", "gap"]], on="week", suffixes=("_current", "_projected")
-    )
-    alerts = merged[(merged["gap_projected"] != "") & (merged["gap_projected"] != merged["gap_current"])]
+    alerts = gap_delta(user_roster, hypothetical_roster, players, byes, league)
 
     return {
         "rounds": pd.DataFrame(rounds),
         "alternates_by_pick": alternates_by_pick,
         "weekly_gap_alerts": alerts.reset_index(drop=True),
     }
+
+
+def picks_until_turn(ownership: list[DraftPickSlot], user_roster_id: int, current_pick_no: int) -> int | None:
+    """Return how many picks (by anyone) happen before the user's next pick.
+
+    0 means it's the user's turn right now. None means the user has no
+    more picks left in this draft.
+    """
+    next_pick = next(
+        (p for p in ownership if p.owner_roster_id == user_roster_id and p.overall_pick >= current_pick_no),
+        None,
+    )
+    return next_pick.overall_pick - current_pick_no if next_pick else None
 
 
 def format_your_picks(
@@ -953,6 +1000,7 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
         "league": league,
         "ownership": ownership,
         "current_pick_no": current_pick_no,
+        "picks_until_turn": picks_until_turn(ownership, user_roster_id, current_pick_no),
         "your_picks": format_your_picks(ownership, user_roster_id, current_pick_no, team_names),
         "roster_needs": roster_needs,
         "need_positions": needs,

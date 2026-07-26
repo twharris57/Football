@@ -98,6 +98,25 @@ new one:
   time — matches `docker_guidelines.md`'s "named volumes for data that
   should persist" directly.
 
+### API resilience and test coverage
+
+`sleeper_api.py` and `fantasycalc_api.py` each use a `requests.Session` with
+a mounted `Retry` adapter (3 retries, exponential backoff, retrying only
+GET and only on connection errors/429/5xx) instead of a bare `requests.get`
+— a pre-draft review flagged that one transient hiccup used to be a hard
+failure, and draft day means everyone hits these APIs at once. The CLI's
+interactive loop also wraps `gather_state()` in a try/except now: a failure
+prints an error and offers retry/quit instead of crashing the whole
+session. Verified directly by simulating a `ConnectionError` on the first
+`gather_state()` call and confirming the loop recovers on retry rather than
+propagating.
+
+`.github/workflows/ci.yml` (new) runs `tests/test_dynasty_core.py` on every
+PR to `main` — the ranking/lineup logic didn't have any automated coverage
+before this, flagged as a real gap given it's non-trivial custom logic
+about to be trusted for real roster decisions. See
+`docs/rookie-draft-big-board.md` for what's actually covered.
+
 ### Verified before merge (not just written and hoped)
 
 - `docker compose build && up` locally: image builds, container reports
