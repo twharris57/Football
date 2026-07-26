@@ -36,16 +36,27 @@ not a deployed service.
 - `football.ipynb` mirrors `football.py`'s logic as a notebook for interactive
   exploration.
 - `web_guidelines.md` and `docker_guidelines.md` are imported for completeness
-  but don't currently apply — there's no web frontend or containerization yet.
+  but don't currently apply yet — no web frontend exists (a web UI for the
+  dynasty tools is planned, see `.claude/PROJECT_PLAN.md`) and no containerization.
+- **Dynasty league tools** (Sleeper): `sleeper_api.py` is a thin client for
+  Sleeper's public read-only API, with local disk caching for the ~14MB
+  players reference dataset (`.cache/`, gitignored, 12h TTL). `fantasycalc_api.py`
+  wraps FantasyCalc's public dynasty trade-value rankings — the project's only
+  valuation source, joined to Sleeper players via `sleeperId`. `rookie_draft.py`
+  is the first tool built on these: a rookie draft big board with an
+  interactive refresh loop for live use during the draft.
 
 ## Key Constraints
 
 - Year/week/gamedays are hardcoded per script and must be edited by hand each
-  week — there's no CLI argument parsing yet.
+  week — there's no CLI argument parsing yet (confidence pool scripts only;
+  the dynasty tools do take CLI args).
 - Fully dependent on `nfl_data_py`'s upstream data availability (schedules,
   odds, injuries); no offline fallback or caching.
 - `team_metadata_batch.py` needs a real OpenWeatherMap API key to function and
   is currently non-functional / not integrated into the picking flow.
+- Dynasty tools depend on two external, unauthenticated public APIs (Sleeper,
+  FantasyCalc) with no SLA — no retry/backoff logic exists yet.
 
 ## Project Structure
 
@@ -54,8 +65,12 @@ football.py              Simple standalone confidence-pool picker (moneyline ran
 football_enhanced.py     Weighted multi-signal picker framework (only Vegas odds active so far)
 team_metadata_batch.py   Prototype: team altitude/temperature/style enrichment via OpenWeatherMap (unintegrated)
 football.ipynb           Notebook version of football.py for interactive experimentation
+sleeper_api.py           Sleeper API client + local players-dataset cache
+fantasycalc_api.py       FantasyCalc dynasty trade-value client
+rookie_draft.py          Rookie draft big board (dynasty league), with live refresh loop
 requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, ...)
-.claude/                 Claude Code conventions and commands
+.claude/                 Claude Code conventions, commands, and PROJECT_PLAN.md
+docs/                    Design docs for completed features
 ```
 
 ## Development Commands
@@ -67,6 +82,9 @@ pip install -r requirements.txt
 
 python football.py            # simple picker
 python football_enhanced.py   # weighted picker
+
+python rookie_draft.py         # dynasty rookie draft big board, interactive refresh loop
+python rookie_draft.py --once  # one snapshot, no prompt
 ```
 
 No test suite exists yet. See `testing.md` for conventions to apply once tests
@@ -91,6 +109,19 @@ are added.
 - **Toss-up**: a game with `|home_moneyline| < 150` — close to even money,
   where the odds alone don't strongly separate the two teams, so injury
   reports are checked as a tiebreaker.
+- **Dynasty rebuild strategy**: the user's approach since year one is to
+  accumulate young talent and accept being near the bottom of the league
+  short-term, aiming to be competitive within ~2-3 years. This should bias
+  any recommendation logic (rookie value, trade sense) toward long-term
+  asset value over immediate win-now moves. See `.claude/PROJECT_PLAN.md`
+  for the current state of dynasty tooling.
+- **Rookie draft big board**: ranks this season's incoming rookie class by
+  dynasty trade value (FantasyCalc, since this project has no valuation
+  model of its own), grouped into FantasyCalc's tiers, filtered to players
+  not yet rostered or drafted. Cross-referenced against a rough roster-needs
+  heuristic (`young_core` count per position — players at ≤2 years
+  experience — flagged as a `need` if below a threshold), not a full
+  needs model.
 
 ## Agent Behavior
 
