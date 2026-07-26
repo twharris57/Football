@@ -215,12 +215,14 @@ with roster_tab:
     st.subheader("Bye week impact")
     st.caption(
         "One collapsible section per week with an active-roster player on bye — collapsed shows "
-        "who's out, who fills in, and the lineup-value delta vs. a full-strength week; expand for "
-        "the full breakdown. ✅ marks a week that's already happened — this project has no live "
-        "in-week stats yet, so the delta shown is still this same projection, not real results. "
-        "📅 marks a week still ahead, projected from today's roster (it'll shift if the roster "
-        "changes before then). A small delta means the bench covers it fine; a large one is worth "
-        "looking for bye-week coverage via trade."
+        "only starters actually bumped out and who fills in, plus the lineup-value delta vs. a "
+        "full-strength week; a bye'd bench player who wasn't starting anyway doesn't clutter the "
+        "collapsed view (it's still there, expanded, since it doesn't move the delta). ✅ marks a "
+        "week that's already happened — this project has no live in-week stats yet, so the delta "
+        "shown is still this same projection, not real results. 📅 marks a week still ahead, "
+        "projected from today's roster (it'll shift if the roster changes before then). A small "
+        "delta means the bench covers it fine; a large one is worth looking for bye-week coverage "
+        "via trade."
     )
     bye_impact = state["roster_bye_conflicts"]
     if bye_impact.empty:
@@ -233,7 +235,7 @@ with roster_tab:
             is_actual = row["week"] < current_week
             cue = "✅" if is_actual else "📅"
             label = (
-                f"{cue} Week {row['week']}: {row['players_out']} → {row['fillers']} · "
+                f"{cue} Week {row['week']}: {row['starters_out']} → {row['fillers']} · "
                 f"{row['lineup_delta']:+.1f}"
             )
             with st.expander(label):
@@ -247,9 +249,10 @@ with roster_tab:
                         "**Still ahead** — projected from today's roster; will shift if the "
                         "roster changes before this week."
                     )
-                st.write(f"**Out:** {row['players_out']}")
+                st.write(f"**Starters out:** {row['starters_out']}")
                 st.write(f"**Fillers:** {row['fillers']}")
                 st.write(f"**Lineup delta:** {row['lineup_delta']:+.1f} vs. a full-strength week (everyone available).")
+                st.write(f"**Also on bye (bench, no lineup impact):** {row['bench_out']}")
 
     st.subheader("Weekly gaps")
     st.caption(

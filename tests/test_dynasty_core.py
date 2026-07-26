@@ -204,7 +204,7 @@ class TestRosterByeConflicts:
 
         assert list(conflicts["week"]) == [3]
         row = conflicts.iloc[0]
-        assert "Starter QB" in row["players_out"]
+        assert "Starter QB" in row["starters_out"]
         assert "Bench QB" in row["fillers"]
         assert row["lineup_delta"] == pytest.approx(-50.0)
 
@@ -226,6 +226,27 @@ class TestRosterByeConflicts:
         row = conflicts.iloc[0]
         assert row["fillers"] == "(none - bench absorbs it)"
         assert row["lineup_delta"] == pytest.approx(-100.0)
+
+    def test_bench_only_bye_shows_no_starters_out_and_zero_delta(self):
+        # A bench player's bye shouldn't show up as a "starter out" - it
+        # doesn't cost any lineup value, so it belongs in bench_out, not
+        # the at-a-glance starters_out/fillers pair.
+        roster = {"players": ["starter_qb", "bench_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_qb": make_player("QB", team="AAA", full_name="Starter QB"),
+            "bench_wr": make_player("WR", team="BBB", full_name="Bench WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("starter_qb", 100), fc_entry("bench_wr", 20)])
+        byes = {"BBB": 4}
+        league = {"roster_positions": ["QB"]}
+
+        conflicts = dc.roster_bye_conflicts(roster, players, fc_by_id, byes, league)
+
+        assert list(conflicts["week"]) == [4]
+        row = conflicts.iloc[0]
+        assert row["starters_out"] == "(none - only bench players out)"
+        assert "Bench WR" in row["bench_out"]
+        assert row["lineup_delta"] == pytest.approx(0.0)
 
 
 class TestRosterWeeklyGaps:

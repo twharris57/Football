@@ -466,6 +466,13 @@ def roster_bye_conflicts(
     value machinery, which don't yet exclude taxi/reserve - see
     PROJECT_PLAN.md), since a taxi or IR player can't actually be started to
     cover a bye on Sleeper.
+
+    `starters_out`/`fillers` are the at-a-glance pair (a bye'd player who was
+    actually starting, and who replaces them) - `bench_out` is a separate
+    column for bench players who happen to be on bye too but weren't
+    starting anyway, so they don't affect `lineup_delta`. Meant to keep a
+    collapsed UI view (see streamlit_app.py) to just the two columns that
+    matter, with `bench_out` available for an expanded "show the rest" view.
     """
     taxi_ids = set(roster.get("taxi") or [])
     reserve_ids = set(roster.get("reserve") or [])
@@ -490,6 +497,9 @@ def roster_bye_conflicts(
         out_ids = [pid for pid, bye in bye_by_player.items() if bye == week]
         if not out_ids:
             continue
+        starters_out_ids = [pid for pid in out_ids if pid in full_starter_ids]
+        bench_out_ids = [pid for pid in out_ids if pid not in full_starter_ids]
+
         week_rows = [r for r in rows if bye_by_player[r["player_id"]] != week]
         week_assignments = assign_starters(week_rows, league["roster_positions"])
         week_starter_ids = {pid for _, pid in week_assignments if pid}
@@ -499,9 +509,16 @@ def roster_bye_conflicts(
         weekly_rows.append(
             {
                 "week": week,
-                "players_out": ", ".join(sorted(describe(pid) for pid in out_ids)),
+                # Collapsed-view content: only starters actually bumped out and who
+                # replaces them - bench players on bye who weren't starting anyway
+                # don't belong in an at-a-glance view (see bench_out for the rest).
+                "starters_out": ", ".join(sorted(describe(pid) for pid in starters_out_ids))
+                or "(none - only bench players out)",
                 "fillers": ", ".join(sorted(describe(pid) for pid in filler_ids)) or "(none - bench absorbs it)",
                 "lineup_delta": round(week_value - full_value, 1),
+                # Expanded-view-only detail: rostered players on bye who weren't
+                # in the full-strength lineup anyway, so they don't move the delta.
+                "bench_out": ", ".join(sorted(describe(pid) for pid in bench_out_ids)) or "(none)",
             }
         )
 

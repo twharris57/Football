@@ -150,20 +150,25 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   6. ✅ **Bye Week Conflicts now shows real lineup-strength impact, not just
      who's out.** `roster_bye_conflicts` used to only flag which players at a
      position share a bye; now one row per week with an active-roster player
-     out, showing `players_out`, `fillers` (who steps into the starting
-     lineup as a result), and `lineup_delta` (that week's optimal starting
-     value vs. a full-strength week) — reusing the same per-week
-     `assign_starters` machinery as `season_average_starter_value`. A -500
-     week and a -5000 week now read very differently, as intended.
+     out, showing `starters_out`/`fillers` (who was actually bumped and who
+     steps in), `lineup_delta` (that week's optimal starting value vs. a
+     full-strength week), and a separate `bench_out` for bye'd players who
+     weren't starting anyway (so they don't clutter the at-a-glance pair,
+     but stay visible in the expanded view) — reusing the same per-week
+     `assign_starters` machinery as `season_average_starter_value`. Sorted
+     by week ascending (was briefly sorted by delta magnitude - user
+     feedback: week order reads better). A -500 week and a -5000 week now
+     read very differently, as intended.
      Streamlit presentation (added same session, user follow-up): also
      restructured into one collapsible section per week, same pattern as
-     item 2's round table — collapsed shows out/fillers/delta, expanded adds
-     a plain-language breakdown. ✅/📅 distinguishes a week that's already
-     happened from one still ahead, using `league["settings"]["leg"]`
-     (Sleeper's current-week counter — not used anywhere else in this
-     project yet) — a week already past still shows this same roster-based
-     projection, not a real result, since there's no live in-week stats feed
-     yet; the UI says so explicitly rather than implying otherwise.
+     item 2's round table — collapsed shows starters_out/fillers/delta only,
+     expanded adds bench_out and a plain-language breakdown. ✅/📅
+     distinguishes a week that's already happened from one still ahead,
+     using `league["settings"]["leg"]` (Sleeper's current-week counter — not
+     used anywhere else in this project yet) — a week already past still
+     shows this same roster-based projection, not a real result, since
+     there's no live in-week stats feed yet; the UI says so explicitly
+     rather than implying otherwise.
 
      **New finding while building this, not fixed here:** `lineup_breakdown`,
      `season_average_starter_value`, and `rank_by_marginal_value` all feed
