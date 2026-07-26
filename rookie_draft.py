@@ -51,6 +51,14 @@ def print_report(state: dict[str, Any]) -> None:
     needs = state["need_positions"]
     print(f"Flagged needs: {', '.join(sorted(needs))}" if needs else "No positions flagged as a need right now.")
 
+    print(
+        "\n--- Roster value analysis (lowest value first) ---\n"
+        "Same FantasyCalc values as the big board, so the same scoring-mismatch caveat "
+        "applies (QB/TE likely undervalued here). 'note' weighs age: low value + young is "
+        "still a rebuild asset, low value + aging is a real drop candidate."
+    )
+    print(state["roster_value"].to_string(index=False) if not state["roster_value"].empty else "(empty roster)")
+
     if not state["recent_picks"].empty:
         print("\n--- Recently drafted ---")
         print(state["recent_picks"].to_string(index=False))

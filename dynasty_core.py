@@ -21,6 +21,8 @@ DEFAULT_USERNAME = "twharris57"
 FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
 YOUNG_CORE_MAX_YOE = 2
 YOUNG_CORE_NEED_THRESHOLD = 2
+LOW_VALUE_YOUNG_AGE = 24
+LOW_VALUE_AGING_AGE = 27
 
 
 @dataclass(frozen=True)
@@ -198,6 +200,63 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
     }
 
 
+def roster_value_analysis(roster: dict, players: dict[str, dict], fc_values: list[dict]) -> pd.DataFrame:
+    """Rank the roster by dynasty value (lowest first) to surface drop candidates.
+
+    Uses the same FantasyCalc values as the rookie big board — this league's
+    known scoring mismatch applies here too (see PROJECT_PLAN.md): QB/TE are
+    likely undervalued relative to this league's real 6pt-passing/TE-premium
+    rules, so a "low value" QB/TE deserves more skepticism than the number
+    alone suggests.
+
+    The bottom quartile (min 3 players) of the roster's own value distribution
+    is flagged low-value. Within that group, `note` distinguishes aging
+    players (real drop candidates) from young ones (still rebuild assets,
+    worth holding for optionality per this team's stated strategy) rather
+    than treating "low value" as "drop" outright.
+    """
+    fc_by_sleeper_id = {
+        entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
+    }
+
+    rows = []
+    for player_id in roster.get("players") or []:
+        info = players.get(player_id, {})
+        position = info.get("position")
+        if position not in FANTASY_POSITIONS:
+            continue
+        fc_entry = fc_by_sleeper_id.get(player_id)
+        rows.append(
+            {
+                "name": info.get("full_name"),
+                "pos": position,
+                "age": info.get("age"),
+                "years_exp": info.get("years_exp"),
+                "value": fc_entry["value"] if fc_entry else None,
+            }
+        )
+
+    roster_df = pd.DataFrame(rows)
+    if roster_df.empty:
+        return roster_df
+
+    roster_df = roster_df.sort_values("value", ascending=True, na_position="first").reset_index(drop=True)
+    low_value_cutoff = max(3, len(roster_df) // 4)
+    is_low_value = roster_df.index < low_value_cutoff
+
+    def note(low_value: bool, age: float | None) -> str:
+        if not low_value:
+            return ""
+        if age is not None and age < LOW_VALUE_YOUNG_AGE:
+            return "Low value, young — rebuild upside, hold"
+        if age is not None and age >= LOW_VALUE_AGING_AGE:
+            return "Low value, aging — drop candidate"
+        return "Low value — monitor"
+
+    roster_df["note"] = [note(lv, age) for lv, age in zip(is_low_value, roster_df["age"])]
+    return roster_df
+
+
 def format_your_picks(
     ownership: list[DraftPickSlot], user_roster_id: int, current_pick_no: int, team_names: dict[int, str]
 ) -> pd.DataFrame:
@@ -270,6 +329,7 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
         "roster_needs": roster_needs,
         "need_positions": needs,
         "roster_capacity": roster_capacity(user_roster, league),
+        "roster_value": roster_value_analysis(user_roster, players, fc_values),
         "recent_picks": pd.DataFrame(recent_rows),
         "big_board": build_big_board(available, fc_values, needs),
         "team_names": team_names,
