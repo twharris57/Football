@@ -27,7 +27,14 @@ FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
 YOUNG_CORE_MAX_YOE = 2
 YOUNG_CORE_NEED_THRESHOLD = 2
 LOW_VALUE_YOUNG_AGE = 24
-LOW_VALUE_AGING_AGE = 27
+
+# Dynasty aging curves differ meaningfully by position - RBs decline earliest,
+# QBs latest (and often keep starting well into their mid-30s in a passing
+# league like this one) - so a single flat "aging" cutoff either flags RBs
+# too late or QBs/TEs too early. Judgment calls, not derived from any league
+# rule; revisit by feel, same as the other rebuild-strategy heuristics below.
+LOW_VALUE_AGING_AGE = {"RB": 27, "WR": 29, "TE": 30, "QB": 33}
+DEFAULT_LOW_VALUE_AGING_AGE = 29
 
 # Position-level correction for FantasyCalc's known scoring mismatch (see
 # PROJECT_PLAN.md): FantasyCalc's values assume 4pt passing TDs and no TE
@@ -285,19 +292,23 @@ def need_positions(roster_needs: pd.DataFrame) -> frozenset[str]:
 
 
 def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
-    """Return active-roster and taxi-squad slot usage for the given roster.
+    """Return active-roster, taxi-squad, and IR/reserve slot usage for the given roster.
 
-    Reserve/IR slots are deliberately not modeled here — how they interact
-    with the active-roster count isn't reliably derivable from the Sleeper
-    API response alone, and an unclear rule is worse than not showing it.
+    `roster["reserve"]` (a plain player_id list, same shape as `roster["taxi"]`)
+    is reliably derivable after all — confirmed directly against the live
+    league, including rosters with IR players populated — so it's counted
+    here and excluded from `active_filled`, same as taxi.
     """
     all_player_ids = roster.get("players") or []
     taxi_ids = roster.get("taxi") or []
+    reserve_ids = roster.get("reserve") or []
 
     active_total = len(league["roster_positions"])
-    active_filled = len(all_player_ids) - len(taxi_ids)
+    active_filled = len(all_player_ids) - len(taxi_ids) - len(reserve_ids)
     taxi_total = league["settings"].get("taxi_slots", 0)
     taxi_filled = len(taxi_ids)
+    reserve_total = league["settings"].get("reserve_slots", 0)
+    reserve_filled = len(reserve_ids)
 
     return {
         "active_total": active_total,
@@ -306,6 +317,9 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
         "taxi_total": taxi_total,
         "taxi_filled": taxi_filled,
         "taxi_open": taxi_total - taxi_filled,
+        "reserve_total": reserve_total,
+        "reserve_filled": reserve_filled,
+        "reserve_open": reserve_total - reserve_filled,
     }
 
 
@@ -316,9 +330,11 @@ def roster_total_capacity(league: dict) -> int:
     simulated/hypothetical rosters — those are tracked as a flat player-id
     list (see multi_round_plan) with no active-vs-taxi split, so this is
     the "is there room *anywhere*" signal rather than a precise slot type.
-    Reserve/IR isn't included, matching roster_capacity's own limitation
-    (not reliably derivable from the Sleeper API response alone). Rookies
-    are assumed taxi-eligible (true for every candidate in this draft,
+    Reserve/IR is deliberately excluded even though it's modeled elsewhere
+    now (see roster_capacity) — it's a separate allotment for an already-
+    rostered player with a qualifying injury designation, not extra room to
+    place a newly-drafted rookie. Rookies are assumed taxi-eligible (true
+    for every candidate in this draft,
     since they're all entering their first season) — a general
     accrued-experience eligibility check is deferred (see PROJECT_PLAN.md).
     """
@@ -331,7 +347,7 @@ def roster_value_analysis(
     """Rank the roster by dynasty value (lowest first) to surface drop candidates.
 
     Uses the same FantasyCalc values as the rookie big board, with the same
-    `adj_value` QB/TE correction applied (see POSITION_VALUE_MULTIPLIER) —
+    real-scoring correction applied (see `fc_value_by_sleeper_id`) —
     ranking and the low-value cutoff below both use `adj_value`, not the raw
     `value`. `bye` is included for cross-reference against
     `roster_bye_conflicts`.
@@ -340,7 +356,9 @@ def roster_value_analysis(
     is flagged low-value. Within that group, `note` distinguishes aging
     players (real drop candidates) from young ones (still rebuild assets,
     worth holding for optionality per this team's stated strategy) rather
-    than treating "low value" as "drop" outright.
+    than treating "low value" as "drop" outright. "Aging" is position-aware
+    (see `LOW_VALUE_AGING_AGE`) — RBs decline earlier than QBs/TEs in
+    dynasty value, so one flat age cutoff would misjudge either end.
     """
     byes = byes or {}
 
@@ -369,16 +387,19 @@ def roster_value_analysis(
     low_value_cutoff = max(3, len(roster_df) // 4)
     is_low_value = roster_df.index < low_value_cutoff
 
-    def note(low_value: bool, age: float | None) -> str:
+    def note(low_value: bool, age: float | None, position: str | None) -> str:
         if not low_value:
             return ""
         if age is not None and age < LOW_VALUE_YOUNG_AGE:
             return "Low value, young — rebuild upside, hold"
-        if age is not None and age >= LOW_VALUE_AGING_AGE:
+        aging_age = LOW_VALUE_AGING_AGE.get(position, DEFAULT_LOW_VALUE_AGING_AGE)
+        if age is not None and age >= aging_age:
             return "Low value, aging — drop candidate"
         return "Low value — monitor"
 
-    roster_df["note"] = [note(lv, age) for lv, age in zip(is_low_value, roster_df["age"])]
+    roster_df["note"] = [
+        note(lv, age, pos) for lv, age, pos in zip(is_low_value, roster_df["age"], roster_df["pos"])
+    ]
     return roster_df
 
 
@@ -426,24 +447,68 @@ def bye_week_by_team(season: str) -> dict[str, int]:
     return byes
 
 
-def roster_bye_conflicts(roster: dict, players: dict[str, dict], byes: dict[str, int]) -> pd.DataFrame:
-    """Flag position groups on the roster with 2+ players sharing the same bye week."""
-    rows = []
-    for player_id, info in roster_fantasy_players(roster, players):
-        team = info.get("team")
-        if team not in byes:
+def roster_bye_conflicts(
+    roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+) -> pd.DataFrame:
+    """For each week with an active-roster player on bye, show who's out, who fills
+    in, and the resulting delta to optimal starting-lineup value.
+
+    Replaces a plain "2+ players share a bye" headcount with the number that
+    actually matters: two players sharing a bye at a deep position can be a
+    non-issue, while a single bye at a thin one can cost real lineup value -
+    a -500 week and a -5000 week are very different situations, and only the
+    delta itself tells them apart. Only active-roster players are eligible
+    for starting slots here (unlike `lineup_breakdown` and the marginal-
+    value machinery, which don't yet exclude taxi/reserve - see
+    PROJECT_PLAN.md), since a taxi or IR player can't actually be started to
+    cover a bye on Sleeper.
+    """
+    taxi_ids = set(roster.get("taxi") or [])
+    reserve_ids = set(roster.get("reserve") or [])
+    active_ids = [
+        pid for pid, _ in roster_fantasy_players(roster, players) if pid not in taxi_ids and pid not in reserve_ids
+    ]
+
+    rows = player_value_rows(active_ids, players, fc_by_sleeper_id)
+    value_by_id = {r["player_id"]: r["adj_value"] or 0 for r in rows}
+    bye_by_player = {r["player_id"]: byes.get(players.get(r["player_id"], {}).get("team")) for r in rows}
+
+    full_assignments = assign_starters(rows, league["roster_positions"])
+    full_starter_ids = {pid for _, pid in full_assignments if pid}
+    full_value = sum(value_by_id.get(pid, 0) for pid in full_starter_ids)
+
+    def describe(pid: str) -> str:
+        info = players.get(pid, {})
+        return f"{info.get('full_name')} ({info.get('position')})"
+
+    weekly_rows = []
+    for week in NFL_WEEKS:
+        out_ids = [pid for pid, bye in bye_by_player.items() if bye == week]
+        if not out_ids:
             continue
-        rows.append({"pos": info.get("position"), "bye": byes[team], "name": info.get("full_name"), "team": team})
+        week_rows = [r for r in rows if bye_by_player[r["player_id"]] != week]
+        week_assignments = assign_starters(week_rows, league["roster_positions"])
+        week_starter_ids = {pid for _, pid in week_assignments if pid}
+        week_value = sum(value_by_id.get(pid, 0) for pid in week_starter_ids)
 
-    bye_df = pd.DataFrame(rows)
-    if bye_df.empty:
-        return bye_df
+        filler_ids = week_starter_ids - full_starter_ids
+        weekly_rows.append(
+            {
+                "week": week,
+                "players_out": ", ".join(sorted(describe(pid) for pid in out_ids)),
+                "fillers": ", ".join(sorted(describe(pid) for pid in filler_ids)) or "(none - bench absorbs it)",
+                "lineup_delta": round(week_value - full_value, 1),
+            }
+        )
 
-    grouped = bye_df.groupby(["pos", "bye"])["name"].apply(lambda names: ", ".join(sorted(names)))
-    counts = bye_df.groupby(["pos", "bye"]).size()
-    conflicts = pd.DataFrame({"players": grouped, "count": counts})
-    conflicts = conflicts[conflicts["count"] >= 2].reset_index()
-    return conflicts.sort_values(["pos", "bye"]).reset_index(drop=True)
+    weekly_df = pd.DataFrame(weekly_rows)
+    if weekly_df.empty:
+        return weekly_df
+    return weekly_df.sort_values("lineup_delta").reset_index(drop=True)
 
 
 NFL_WEEKS = range(1, 19)
@@ -590,17 +655,24 @@ def assign_starters(player_rows: list[dict], roster_positions: list[str]) -> lis
 
 def lineup_breakdown(
     roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], league: dict
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (starters, bench) for the roster's optimal lineup by current value.
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Return (starters, bench, taxi, ir) for the roster's optimal lineup by current value.
 
     A snapshot assessment, not week-specific — doesn't yet account for byes
     or injuries when deciding who starts (a by-week/injury-aware version is
-    a planned refinement, not built here).
+    a planned refinement, not built here). Taxi-squad and IR/reserve players
+    are both in `roster["players"]` alongside the real bench, so they're
+    split out by cross-referencing `roster["taxi"]`/`roster["reserve"]`
+    (both plain player_id lists, same shape - confirmed directly against
+    the live league, including rosters with IR players populated) rather
+    than left lumped into "bench".
     """
     rows = player_value_rows(roster.get("players") or [], players, fc_by_sleeper_id)
     value_by_id = {r["player_id"]: r["adj_value"] for r in rows}
     assignments = assign_starters(rows, league["roster_positions"])
     starter_ids = {pid for _, pid in assignments if pid}
+    taxi_ids = set(roster.get("taxi") or [])
+    reserve_ids = set(roster.get("reserve") or [])
 
     starter_rows = []
     for slot, pid in assignments:
@@ -612,16 +684,22 @@ def lineup_breakdown(
             {"slot": slot, "name": info.get("full_name"), "pos": info.get("position"), "adj_value": value_by_id[pid]}
         )
 
-    bench_rows = [
-        {"name": players.get(r["player_id"], {}).get("full_name"), "pos": r["pos"], "adj_value": r["adj_value"]}
-        for r in rows
-        if r["player_id"] not in starter_ids
-    ]
-    bench_df = pd.DataFrame(bench_rows)
-    if not bench_df.empty:
-        bench_df = bench_df.sort_values("adj_value", ascending=False, na_position="last").reset_index(drop=True)
+    def group_df(predicate) -> pd.DataFrame:
+        rows_for_group = [
+            {"name": players.get(r["player_id"], {}).get("full_name"), "pos": r["pos"], "adj_value": r["adj_value"]}
+            for r in rows
+            if predicate(r["player_id"])
+        ]
+        group_df_ = pd.DataFrame(rows_for_group)
+        if not group_df_.empty:
+            group_df_ = group_df_.sort_values("adj_value", ascending=False, na_position="last").reset_index(drop=True)
+        return group_df_
 
-    return pd.DataFrame(starter_rows), bench_df
+    bench_df = group_df(lambda pid: pid not in starter_ids and pid not in taxi_ids and pid not in reserve_ids)
+    taxi_df = group_df(lambda pid: pid in taxi_ids)
+    reserve_df = group_df(lambda pid: pid in reserve_ids)
+
+    return pd.DataFrame(starter_rows), bench_df, taxi_df, reserve_df
 
 
 def recommend_drop(
@@ -1063,7 +1141,7 @@ def gather_state(league_id: str, username: str, force_full_refresh: bool) -> dic
 
     big_board = build_big_board(board_pool, fc_by_sleeper_id, needs, handcuff_targets, draft_attribution)
     roster_value = roster_value_analysis(user_roster, players, fc_by_sleeper_id, byes)
-    lineup_starters, lineup_bench = lineup_breakdown(user_roster, players, fc_by_sleeper_id, league)
+    lineup_starters, lineup_bench, lineup_taxi, lineup_ir = lineup_breakdown(user_roster, players, fc_by_sleeper_id, league)
 
     return {
         "league": league,
@@ -1075,11 +1153,13 @@ def gather_state(league_id: str, username: str, force_full_refresh: bool) -> dic
         "need_positions": needs,
         "roster_capacity": roster_capacity(user_roster, league),
         "roster_value": roster_value,
-        "roster_bye_conflicts": roster_bye_conflicts(user_roster, players, byes),
+        "roster_bye_conflicts": roster_bye_conflicts(user_roster, players, fc_by_sleeper_id, byes, league),
         "roster_weekly_gaps": roster_weekly_gaps(user_roster, players, byes, league),
         "roster_handcuffs": roster_handcuff_status(user_roster, players, handcuffs),
         "lineup_starters": lineup_starters,
         "lineup_bench": lineup_bench,
+        "lineup_taxi": lineup_taxi,
+        "lineup_ir": lineup_ir,
         "recent_picks": pd.DataFrame(recent_rows),
         "big_board": big_board,
         "multi_round_plan": multi_round_plan(

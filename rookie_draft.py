@@ -88,6 +88,10 @@ def print_report(state: dict[str, Any]) -> None:
     print(state["lineup_starters"].to_string(index=False))
     print("Bench (top 5 by value):")
     print(render_df(state["lineup_bench"].head(5), "(empty)"))
+    print("Taxi squad:")
+    print(render_df(state["lineup_taxi"], "(empty)"))
+    print("IR / Reserve:")
+    print(render_df(state["lineup_ir"], "(empty)"))
 
     print("\n--- Your picks ---")
     print(render_df(state["your_picks"], "(none)"))
@@ -98,7 +102,9 @@ def print_report(state: dict[str, Any]) -> None:
         f"Active roster: {cap['active_filled']}/{cap['active_total']} filled "
         f"({cap['active_open']} open)\n"
         f"Taxi squad:    {cap['taxi_filled']}/{cap['taxi_total']} filled "
-        f"({cap['taxi_open']} open)"
+        f"({cap['taxi_open']} open)\n"
+        f"IR / Reserve:  {cap['reserve_filled']}/{cap['reserve_total']} filled "
+        f"({cap['reserve_open']} open)"
     )
 
     print("\n--- Your roster needs ---")
@@ -114,7 +120,10 @@ def print_report(state: dict[str, Any]) -> None:
     )
     print(render_df(state["roster_value"], "(empty roster)"))
 
-    print("\n--- Bye week conflicts (2+ players at a position sharing a bye) ---")
+    print(
+        "\n--- Bye week impact (weeks with an active-roster player out; "
+        "lineup_delta = starting-lineup value vs. a full-strength week) ---"
+    )
     print(render_df(state["roster_bye_conflicts"], "(none)"))
 
     print(
@@ -142,7 +151,9 @@ def print_report(state: dict[str, Any]) -> None:
         "tier = FantasyCalc's global dynasty tier across ALL players, not rookie-specific "
         "(gaps are veterans/other rookies not shown here). rank = value order across the WHOLE "
         "class, drafted and undrafted together. fits_need = position is currently flagged as a "
-        "roster need. handcuff_to = this rookie backs up one of your own RB starters, if any. "
+        "roster need. handcuff_to = this rookie backs up one of your own RB starters, if any - "
+        "expect this to be sparse pre-season since nfl_data_py's player-ID crosswalk hasn't "
+        "caught up with most of this year's incoming class yet, not a bug. "
         "drafted_round/drafted_by = blank if still undrafted."
     )
     board = state["big_board"]

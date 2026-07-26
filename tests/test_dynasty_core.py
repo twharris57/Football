@@ -43,6 +43,48 @@ class TestComputePickOwnership:
         assert [p.original_roster_id for p in picks] == [1, 2, 1, 2]
 
 
+class TestRosterCapacity:
+    """IR/reserve players must not count against active-roster capacity, same as taxi."""
+
+    def test_reserve_players_are_excluded_from_active_filled(self):
+        league = {
+            "roster_positions": ["QB", "RB", "WR", "BN", "BN"],
+            "settings": {"taxi_slots": 1, "reserve_slots": 2},
+        }
+        roster = {"players": ["p1", "p2", "p3", "p4", "p5"], "taxi": ["p5"], "reserve": ["p3", "p4"]}
+
+        cap = dc.roster_capacity(roster, league)
+
+        # 5 rostered - 1 taxi - 2 reserve = 2 genuinely on the active roster.
+        assert cap["active_filled"] == 2
+        assert cap["active_open"] == 3
+        assert cap["reserve_filled"] == 2
+        assert cap["reserve_open"] == 0
+
+
+class TestLineupBreakdown:
+    """Taxi and IR/reserve players should be split out, not lumped into bench."""
+
+    def test_taxi_and_reserve_players_are_split_from_bench(self):
+        players = {
+            "starter": make_player("QB"),
+            "bench1": make_player("RB"),
+            "taxi1": make_player("WR"),
+            "ir1": make_player("TE"),
+        }
+        roster = {"players": list(players.keys()), "taxi": ["taxi1"], "reserve": ["ir1"]}
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry(pid, 100, position=info["position"]) for pid, info in players.items()]
+        )
+        league = {"roster_positions": ["QB", "BN"]}
+
+        _starters, bench, taxi, ir = dc.lineup_breakdown(roster, players, fc_by_id, league)
+
+        assert list(bench["name"]) == [players["bench1"]["full_name"]]
+        assert list(taxi["name"]) == [players["taxi1"]["full_name"]]
+        assert list(ir["name"]) == [players["ir1"]["full_name"]]
+
+
 class TestAssignStarters:
     """assign_starters: most-restrictive-slot-first, provably optimal for nested eligibility."""
 
@@ -143,6 +185,47 @@ class TestSeasonAverageStarterValue:
 
         # Contributes 100 in 17 of 18 weeks, 0 in the bye week.
         assert avg == pytest.approx((100 * 17) / 18)
+
+
+class TestRosterByeConflicts:
+    """One row per week with an active-roster player out, showing who fills in and the value delta."""
+
+    def test_bench_filler_and_delta_shown_for_the_bye_week_only(self):
+        roster = {"players": ["starter_qb", "bench_qb"], "taxi": [], "reserve": []}
+        players = {
+            "starter_qb": make_player("QB", team="AAA", full_name="Starter QB"),
+            "bench_qb": make_player("QB", team="BBB", full_name="Bench QB"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("starter_qb", 100), fc_entry("bench_qb", 50)])
+        byes = {"AAA": 3}
+        league = {"roster_positions": ["QB"]}
+
+        conflicts = dc.roster_bye_conflicts(roster, players, fc_by_id, byes, league)
+
+        assert list(conflicts["week"]) == [3]
+        row = conflicts.iloc[0]
+        assert "Starter QB" in row["players_out"]
+        assert "Bench QB" in row["fillers"]
+        assert row["lineup_delta"] == pytest.approx(-50.0)
+
+    def test_taxi_and_reserve_players_are_not_eligible_fillers(self):
+        # A high-value taxi player must not be "assigned" to cover a bye -
+        # Sleeper doesn't allow starting a taxi/IR player.
+        roster = {"players": ["starter_qb", "taxi_qb"], "taxi": ["taxi_qb"], "reserve": []}
+        players = {
+            "starter_qb": make_player("QB", team="AAA", full_name="Starter QB"),
+            "taxi_qb": make_player("QB", team="BBB", full_name="Taxi QB"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("starter_qb", 100), fc_entry("taxi_qb", 500)])
+        byes = {"AAA": 3}
+        league = {"roster_positions": ["QB"]}
+
+        conflicts = dc.roster_bye_conflicts(roster, players, fc_by_id, byes, league)
+
+        assert list(conflicts["week"]) == [3]
+        row = conflicts.iloc[0]
+        assert row["fillers"] == "(none - bench absorbs it)"
+        assert row["lineup_delta"] == pytest.approx(-100.0)
 
 
 class TestRosterWeeklyGaps:

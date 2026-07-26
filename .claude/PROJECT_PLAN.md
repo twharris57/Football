@@ -96,54 +96,88 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   PR #5 (2026-07-26), across the Streamlit dashboard's Draft Plan/Lineup/Draft
   Board/Your Roster tabs. Not blocking, not sequenced yet — pick these up in
   whatever order makes sense once started.
-  1. **Consolidate "Backup options" into one table.** Each round's expander
-     (`streamlit_app.py:115`, fed by `plan["alternates_by_pick"]` from
-     `multi_round_plan()`) only ever holds up to 2 rows (`top_n=2` for
-     alternates) — a whole expander-per-round is overkill for that little
-     content. Replace with a single consolidated table of additional-pick
-     options across all rounds (e.g. an `overall_pick`/`round` column instead
-     of a heading per round).
-  2. **Restructure the round table into per-pick collapsible sections.**
-     Currently one flat table (`streamlit_app.py:105-124`, `plan["rounds"]`).
-     Split into one collapsible section per pick: collapsed view shows the
-     recommended pick + drop with visual cues (color/icon — exact treatment
-     TBD), expanded view holds the full reasoning/backup options/gap-impact
-     detail. Bigger UI change than the others here — worth a short design
-     pass (what "visual cues" means concretely, how `status=completed` vs.
-     `upcoming` reads in the collapsed state) before coding.
-  3. **Lineup tab needs IR and Taxi sections.** Currently only Starters/Bench
-     (`streamlit_app.py:126-135`, from `lineup_breakdown()`). Neither IR nor
-     taxi-squad rostered players are shown anywhere in this tab today — taxi
-     players are counted (`roster_capacity`) but never listed by name here;
-     IR isn't modeled anywhere yet (see `roster_capacity`'s own documented
-     reserve/IR limitation, `dynasty_core.py:274-280`).
-  4. **`handcuff_to` is always empty on the rookie big board — investigate.**
-     (`dynasty_core.py:1022-1026` builds `handcuff_targets` from
-     `handcuff_map()`'s real-NFL depth-chart backups; `build_big_board` flags
-     a rookie candidate if their `player_id` is a value in that dict.)
-     Working hypothesis, unverified: `handcuff_map()` reflects *current* NFL
-     depth charts, which likely don't list incoming rookies as anyone's
-     backup yet this early pre-draft/pre-training-camp — so structurally
-     nothing would ever match, independent of any join bug. Needs checking
-     against a known real handcuff situation once depth charts populate
-     further into the offseason, before assuming the ID crosswalk is broken.
-  5. **Roster Value's "aging" cutoff should account for position.**
-     `LOW_VALUE_AGING_AGE = 27` (`dynasty_core.py:30`) is one flat threshold
-     for every position — RB decline is well-documented as earlier (mid-20s)
-     than QB/TE, who often start much later. Needs per-position aging curves,
-     not one number. Related idea, same area: pull more per-player detail
-     from Sleeper's player feed over time (currently only name/position/team/
-     age/college/years_exp are read — `sleeper_api.get_players()` returns
-     much more per player that isn't surfaced anywhere yet).
-  6. **Bye Week Conflicts should show real lineup-strength impact, not just
-     who's out.** Currently (`roster_bye_conflicts`, `dynasty_core.py:429`)
-     only flags which players at a position share a bye — doesn't show who'd
-     fill in for them or what that costs. Add the projected replacement(s)
-     for that week and the resulting delta to lineup strength (reusing the
-     same per-week `season_average_starter_value` machinery already built for
-     the draft plan) — a -500 week and a -5000 week are very different
-     situations, and only the second is a real signal to go find bye-week
-     coverage via trade.
+  1. ✅ **"Backup options" folded into per-pick sections, not a separate
+     table.** Resolved together with item 2, below, once the round table
+     became one collapsible section per pick — each pick's own backup
+     options (if any) now render inside its own expanded view, so a
+     separate consolidated table would have been redundant.
+  2. ✅ **Round table restructured into per-pick collapsible sections.**
+     `streamlit_app.py`'s Draft Plan tab is now one `st.expander` per pick
+     instead of one flat table. Design specifics confirmed with the user:
+     collapsed view shows pick + drop + marginal value (e.g. "🔜 Round 1,
+     pick 2: DRAFT Jeremiyah Love (RB) · DROP Jordan Whittington (WR) ·
+     +5732"); ✅/🔜 icon distinguishes a completed (real) pick from an
+     upcoming (simulated) one; a ⚠️ suffix flags a suggested drop that's a
+     current starter. Expanded view holds the full reasoning text and any
+     backup options table.
+  3. ✅ **Lineup tab now has IR and Taxi sections.** `lineup_breakdown()`
+     returns (starters, bench, taxi, ir), cross-referencing
+     `roster["taxi"]`/`roster["reserve"]` instead of lumping both into
+     "bench". Found and fixed a real bug along the way: `roster_capacity()`
+     claimed reserve/IR "isn't reliably derivable from the Sleeper API" —
+     false, verified directly (`roster["reserve"]` is a plain player_id
+     list, same shape as `roster["taxi"]`, populated for several other
+     rosters in the league). It was previously omitted from
+     `active_filled`'s subtraction, so any roster with IR players had its
+     active-roster capacity *overstated* (fewer open slots shown than
+     actually available) — fixed, with a regression test.
+     `roster_total_capacity()` still excludes reserve/IR on purpose (it's
+     for an already-rostered injured player, not room for a new one).
+  4. ✅ **`handcuff_to` is always empty on the rookie big board — root cause
+     found, not a code bug.** Verified directly: of this draft's 227 rookies,
+     only 11 have a `gsis_id`/`sleeper_id` mapping in `nfl.import_ids()` at
+     all, and only 2 of those 11 appear anywhere in the real RB depth chart
+     (both as backups, not starters). `handcuff_map()`'s join
+     (`dynasty_core.py:500-501`) is correct — `nfl_data_py`'s ID crosswalk
+     itself simply hasn't caught up with this year's incoming class yet, the
+     same kind of data-publication lag already documented elsewhere in this
+     project (e.g. `recent_complete_seasons_weekly_data`'s season lookback).
+     Added a caption in the Streamlit big board (`streamlit_app.py`) and a
+     note in `docs/rookie-draft-big-board.md` explaining why `handcuff_to`
+     will be sparse for rookies pre-season, so it doesn't read as broken.
+     Should fill in naturally as the crosswalk updates later in the year —
+     nothing to fix in code.
+  5. ✅ **Roster Value's "aging" cutoff now accounts for position.**
+     `LOW_VALUE_AGING_AGE` (`dynasty_core.py`) was one flat `27` for every
+     position; now a per-position dict (`RB: 27, WR: 29, TE: 30, QB: 33`,
+     with a `DEFAULT_LOW_VALUE_AGING_AGE = 29` fallback) — judgment calls,
+     not derived from any league rule, revisit by feel like the other
+     rebuild-strategy heuristics. **Not done, left for later:** pulling more
+     per-player detail from Sleeper's player feed over time — currently only
+     name/position/team/age/college/years_exp are read, and
+     `sleeper_api.get_players()` returns much more per player that isn't
+     surfaced anywhere yet.
+  6. ✅ **Bye Week Conflicts now shows real lineup-strength impact, not just
+     who's out.** `roster_bye_conflicts` used to only flag which players at a
+     position share a bye; now one row per week with an active-roster player
+     out, showing `players_out`, `fillers` (who steps into the starting
+     lineup as a result), and `lineup_delta` (that week's optimal starting
+     value vs. a full-strength week) — reusing the same per-week
+     `assign_starters` machinery as `season_average_starter_value`. A -500
+     week and a -5000 week now read very differently, as intended.
+     Streamlit presentation (added same session, user follow-up): also
+     restructured into one collapsible section per week, same pattern as
+     item 2's round table — collapsed shows out/fillers/delta, expanded adds
+     a plain-language breakdown. ✅/📅 distinguishes a week that's already
+     happened from one still ahead, using `league["settings"]["leg"]`
+     (Sleeper's current-week counter — not used anywhere else in this
+     project yet) — a week already past still shows this same roster-based
+     projection, not a real result, since there's no live in-week stats feed
+     yet; the UI says so explicitly rather than implying otherwise.
+
+     **New finding while building this, not fixed here:** `lineup_breakdown`,
+     `season_average_starter_value`, and `rank_by_marginal_value` all feed
+     `assign_starters` the *entire* `roster["players"]` list, including taxi
+     and IR/reserve players — none of whom Sleeper actually allows into the
+     starting lineup. The new bye-week code above correctly excludes them
+     (see its docstring), but the older functions don't, so a high-value
+     taxi/IR player could theoretically get "assigned" as an optimal
+     starter in those paths — hasn't visibly surfaced yet (their values
+     happen to be lower than the real bench today) but is a latent
+     correctness gap, not just a style inconsistency with the new code.
+     Worth fixing in all three, consistently, as its own task rather than
+     folded into this one — meaningfully broader blast radius than the bye-
+     week feature that surfaced it.
 
 - **Valuation algorithm improvements** (branch: `feature/valuation-improvements`)
   — sequenced deliberately, not independent workstreams:
