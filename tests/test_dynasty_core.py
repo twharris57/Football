@@ -26,6 +26,23 @@ def fc_entry(sleeper_id: str, value: float, tier: int = 1, position: str | None 
     return {"player": {"sleeperId": sleeper_id, "position": position}, "value": value, "maybeTier": tier}
 
 
+class TestComputePickOwnership:
+    """The overall-pick math assumes a linear draft; a different type must fail loudly, not silently."""
+
+    def test_raises_for_a_non_linear_draft_type(self):
+        draft = {"type": "snake", "settings": {"teams": 2, "rounds": 1}, "slot_to_roster_id": {"1": 1, "2": 2}}
+
+        with pytest.raises(ValueError, match="linear"):
+            dc.compute_pick_ownership(draft, [], "2026")
+
+    def test_linear_draft_keeps_the_same_slot_order_every_round(self):
+        draft = {"type": "linear", "settings": {"teams": 2, "rounds": 2}, "slot_to_roster_id": {"1": 1, "2": 2}}
+
+        picks = dc.compute_pick_ownership(draft, [], "2026")
+
+        assert [p.original_roster_id for p in picks] == [1, 2, 1, 2]
+
+
 class TestAssignStarters:
     """assign_starters: most-restrictive-slot-first, provably optimal for nested eligibility."""
 

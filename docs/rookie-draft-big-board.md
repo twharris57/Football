@@ -154,11 +154,29 @@ tighter.
 
 ## Known limitations (by design, not oversight)
 
-- No real per-player scoring recompute — the QB/TE correction is a targeted
-  fix for the two biggest gaps, not a full model.
 - Draft-plan simulation assumes no other team picks in between the user's
   own picks — genuinely can't be predicted.
 - `roster_weekly_gaps` doesn't model FLEX/SUPER_FLEX, only dedicated slots.
 - `roster_capacity` doesn't model reserve/IR slots.
 - Lineup and handcuff logic have no injury-status awareness.
 - Handcuffs are RB-only — the standard fantasy usage of the term.
+
+## Static assumptions — revisit if the league's rules ever change
+
+Most league-specific numbers are pulled live from Sleeper every refresh —
+`roster_positions`, `taxi_slots`, `scoring_settings`, `num_teams`, PPR,
+superflex count, draft rounds/teams — deliberately, so a commissioner
+settings change doesn't require a code change. A few things aren't pulled
+live, either because Sleeper doesn't expose them cleanly or because they're
+judgment calls rather than league rules. Listed here so changing any of them
+is a deliberate decision, not a silent bug:
+
+| Assumption | Where | What breaks if it's ever wrong | If the league changes this |
+|---|---|---|---|
+| Draft type is `"linear"` (same slot order every round) | `compute_pick_ownership` | Guarded — raises `ValueError` instead of silently computing wrong pick ownership (a snake draft reverses slot order on even rounds; not implemented, since it's never been needed) | Add snake-order support if the league ever switches |
+| Roster only uses QB/RB/WR/TE/FLEX/SUPER_FLEX slot types | `assign_starters`, `roster_weekly_gaps` | Any other Sleeper slot type (`WRRB_FLEX`, `REC_FLEX`, K, DEF, IDP) would be silently ignored — not assigned, not counted, no error | Extend `FLEX_ELIGIBLE_POSITIONS`/`SUPERFLEX_ELIGIBLE_POSITIONS` and the slot-processing loop for the new type |
+| `POSITION_VALUE_MULTIPLIER` (`QB: 1.175`, `TE: 1.202`) | `dynasty_core.py` | Last-resort fallback only (see step B, above) — stale numbers only matter if the whole `player_scoring.py` enrichment fails for a refresh | Re-run `scripts/derive_position_multipliers.py`; not urgent since it's a fallback, not the primary path |
+| `player_scoring.BASELINE_SCORING` (FantasyCalc's assumed scoring model) | `player_scoring.py` | The entire per-player correction ratio is only as good as this guess — FantasyCalc doesn't publish its real formula, so it can't be verified directly | No way to verify against FantasyCalc directly; revisit only if FantasyCalc publishes methodology notes, or the correction looks systematically off |
+| `player_scoring.QUALIFYING_VOLUME` (QB ≥200 att / RB ≥100 carries / WR ≥50 targets / TE ≥30 targets) | `player_scoring.py` | Not derived from any league rule — a manual judgment call for "enough volume to trust a personalized ratio" | Revisit only if personalized ratios look noisy for borderline players |
+| `YOUNG_CORE_MAX_YOE` / `YOUNG_CORE_NEED_THRESHOLD` / `LOW_VALUE_YOUNG_AGE` / `LOW_VALUE_AGING_AGE` | `dynasty_core.py` | Subjective heuristics behind the rebuild-strategy "need"/"low value" flags, not derived from any league setting | Adjust by feel as the roster ages into (or out of) the rebuild window |
+| `max_keepers: 1` in the league's Sleeper settings | Not modeled anywhere | Appears vestigial for a dynasty-type league (Sleeper `type: 2`) — the whole roster carries over every year, not a limited keeper count, so this setting doesn't seem to apply | Revisit only if Sleeper's dynasty/keeper interaction is ever observed to actually matter |

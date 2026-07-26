@@ -86,7 +86,20 @@ def team_name_by_roster_id(rosters: list[dict], users: list[dict]) -> dict[int, 
 
 
 def compute_pick_ownership(draft: dict, traded_picks: list[dict], season: str) -> list[DraftPickSlot]:
-    """Return every pick in this draft, in overall-pick order, with trades applied."""
+    """Return every pick in this draft, in overall-pick order, with trades applied.
+
+    Assumes a "linear" draft (same slot-to-roster order every round) -
+    this league's actual, confirmed draft type. The overall-pick math below
+    would silently compute wrong pick ownership under a snake draft (which
+    reverses slot order on even rounds) - not implemented, since it's never
+    been needed - so this fails loudly instead if that ever changes.
+    """
+    if draft.get("type") != "linear":
+        raise ValueError(
+            f"compute_pick_ownership only supports a 'linear' draft type, got {draft.get('type')!r} - "
+            "pick ownership math assumes the same slot order every round, which a snake or auction "
+            "draft would violate."
+        )
     num_teams = draft["settings"]["teams"]
     rounds = draft["settings"]["rounds"]
     slot_to_roster = {int(slot): roster_id for slot, roster_id in draft["slot_to_roster_id"].items()}
