@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 import nfl_data_py as nfl
 import pandas as pd
@@ -116,6 +116,19 @@ def rookie_pool(players: dict[str, dict], season: str) -> dict[str, dict]:
     }
 
 
+def roster_fantasy_players(roster: dict, players: dict[str, dict]) -> Iterator[tuple[str, dict]]:
+    """Yield (player_id, info) for each of the roster's players at a fantasy-relevant position.
+
+    The shared first step of every roster-analysis function below — what
+    counts as "fantasy-relevant" (FANTASY_POSITIONS) is defined once here
+    instead of re-checked in each one.
+    """
+    for player_id in roster.get("players") or []:
+        info = players.get(player_id, {})
+        if info.get("position") in FANTASY_POSITIONS:
+            yield player_id, info
+
+
 def adjusted_value(position: str, value: float | None) -> float | None:
     """Apply the QB/TE scoring-mismatch correction to a raw FantasyCalc value."""
     if value is None:
@@ -207,13 +220,10 @@ def roster_needs_summary(roster: dict, players: dict[str, dict]) -> pd.DataFrame
     have YOUNG_CORE_MAX_YOE years of experience or less — a rough signal for
     where a rebuild still needs young talent, not a full needs model.
     """
-    rows = []
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
-        position = info.get("position")
-        if position not in FANTASY_POSITIONS:
-            continue
-        rows.append({"pos": position, "age": info.get("age"), "years_exp": info.get("years_exp")})
+    rows = [
+        {"pos": info.get("position"), "age": info.get("age"), "years_exp": info.get("years_exp")}
+        for _player_id, info in roster_fantasy_players(roster, players)
+    ]
 
     roster_df = pd.DataFrame(rows)
     if roster_df.empty:
@@ -297,11 +307,8 @@ def roster_value_analysis(
     byes = byes or {}
 
     rows = []
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
+    for player_id, info in roster_fantasy_players(roster, players):
         position = info.get("position")
-        if position not in FANTASY_POSITIONS:
-            continue
         fc_entry = fc_by_sleeper_id.get(player_id)
         value = fc_entry["value"] if fc_entry else None
         rows.append(
@@ -360,13 +367,11 @@ def bye_week_by_team(season: str) -> dict[str, int]:
 def roster_bye_conflicts(roster: dict, players: dict[str, dict], byes: dict[str, int]) -> pd.DataFrame:
     """Flag position groups on the roster with 2+ players sharing the same bye week."""
     rows = []
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
-        position = info.get("position")
+    for player_id, info in roster_fantasy_players(roster, players):
         team = info.get("team")
-        if position not in FANTASY_POSITIONS or team not in byes:
+        if team not in byes:
             continue
-        rows.append({"pos": position, "bye": byes[team], "name": info.get("full_name"), "team": team})
+        rows.append({"pos": info.get("position"), "bye": byes[team], "name": info.get("full_name"), "team": team})
 
     bye_df = pd.DataFrame(rows)
     if bye_df.empty:
@@ -396,11 +401,8 @@ def roster_weekly_gaps(roster: dict, players: dict[str, dict], byes: dict[str, i
 
     position_bye_weeks: dict[str, list[int]] = {pos: [] for pos in FANTASY_POSITIONS}
     position_totals: dict[str, int] = dict.fromkeys(FANTASY_POSITIONS, 0)
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
-        position = info.get("position")
-        if position not in FANTASY_POSITIONS:
-            continue
+    for player_id, info in roster_fantasy_players(roster, players):
+        position = info["position"]
         position_totals[position] += 1
         bye = byes.get(info.get("team"))
         if bye is not None:
@@ -452,8 +454,7 @@ def roster_handcuff_status(roster: dict, players: dict[str, dict], handcuffs: di
     """For each rostered RB who is an NFL starter, show whether their handcuff is also rostered."""
     roster_ids = set(roster.get("players") or [])
     rows = []
-    for player_id in roster.get("players") or []:
-        info = players.get(player_id, {})
+    for player_id, info in roster_fantasy_players(roster, players):
         if info.get("position") != "RB":
             continue
         backup_id = handcuffs.get(player_id)
@@ -692,6 +693,22 @@ def rank_by_marginal_value(
     return results[:top_n]
 
 
+def gap_delta(
+    before_roster: dict, after_roster: dict, players: dict[str, dict], byes: dict[str, int], league: dict
+) -> pd.DataFrame:
+    """Weeks where after_roster has a dedicated-slot gap that before_roster didn't (or a different one).
+
+    Shared by multi_round_plan (full-plan impact vs. the current real
+    roster) and alternate_gap_note (single-alternate impact vs. the
+    hypothetical roster entering that round) - same before/after
+    weekly-gap comparison, just different roster inputs.
+    """
+    before = roster_weekly_gaps(before_roster, players, byes, league)
+    after = roster_weekly_gaps(after_roster, players, byes, league)
+    merged = before[["week", "gap"]].merge(after[["week", "gap"]], on="week", suffixes=("_before", "_after"))
+    return merged[(merged["gap_after"] != "") & (merged["gap_after"] != merged["gap_before"])]
+
+
 def alternate_gap_note(
     candidate_id: str,
     drop: dict | None,
@@ -710,10 +727,7 @@ def alternate_gap_note(
     """
     with_candidate = hypothetical_ids + [candidate_id]
     roster_after = [pid for pid in with_candidate if drop is None or pid != drop["player_id"]]
-    before = roster_weekly_gaps({"players": hypothetical_ids}, players, byes, league)
-    after = roster_weekly_gaps({"players": roster_after}, players, byes, league)
-    merged = before[["week", "gap"]].merge(after[["week", "gap"]], on="week", suffixes=("_before", "_after"))
-    worsened = merged[(merged["gap_after"] != "") & (merged["gap_after"] != merged["gap_before"])]
+    worsened = gap_delta({"players": hypothetical_ids}, {"players": roster_after}, players, byes, league)
     if worsened.empty:
         return ""
     weeks = ", ".join(str(w) for w in worsened["week"])
@@ -857,12 +871,7 @@ def multi_round_plan(
         just_picked.add(picked_id)
 
     hypothetical_roster = {"players": hypothetical_ids}
-    projected_gaps = roster_weekly_gaps(hypothetical_roster, players, byes, league)
-    current_gaps = roster_weekly_gaps(user_roster, players, byes, league)
-    merged = current_gaps[["week", "gap"]].merge(
-        projected_gaps[["week", "gap"]], on="week", suffixes=("_current", "_projected")
-    )
-    alerts = merged[(merged["gap_projected"] != "") & (merged["gap_projected"] != merged["gap_current"])]
+    alerts = gap_delta(user_roster, hypothetical_roster, players, byes, league)
 
     return {
         "rounds": pd.DataFrame(rounds),

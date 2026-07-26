@@ -12,12 +12,26 @@ from __future__ import annotations
 
 import os
 
+import pandas as pd
 import requests
 import streamlit as st
 
 import dynasty_core
 
 APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
+
+
+def show_df(df: pd.DataFrame, empty_message: str, *, hide_index: bool = True) -> bool:
+    """Render df, or empty_message if it's empty - the repeated shape across every tab.
+
+    Returns whether df had rows, so callers can compose extra logic (an
+    extra warning, an expander) on the non-empty path.
+    """
+    if df.empty:
+        st.write(empty_message)
+        return False
+    st.dataframe(df, hide_index=hide_index, width="stretch")
+    return True
 
 st.set_page_config(page_title="Dynasty Rookie Draft", layout="centered")
 
@@ -90,10 +104,7 @@ with plan_tab:
     )
     plan = state["multi_round_plan"]
     rounds = plan["rounds"]
-    if rounds.empty:
-        st.write("(no picks owned this draft)")
-    else:
-        st.dataframe(rounds, hide_index=True, width="stretch")
+    if show_df(rounds, "(no picks owned this draft)"):
         if rounds["drop_is_starter"].any():
             st.warning("At least one recommended drop is a current starter — see drop_is_starter above.")
 
@@ -121,18 +132,11 @@ with lineup_tab:
     st.subheader("Starters")
     st.dataframe(state["lineup_starters"], hide_index=True, width="stretch")
     st.subheader("Bench")
-    bench = state["lineup_bench"]
-    if bench.empty:
-        st.write("(empty)")
-    else:
-        st.dataframe(bench, hide_index=True, width="stretch")
+    show_df(state["lineup_bench"], "(empty)")
 
 with draft_tab:
     st.subheader("Your picks")
-    if state["your_picks"].empty:
-        st.write("(none)")
-    else:
-        st.dataframe(state["your_picks"], hide_index=True, width="stretch")
+    show_df(state["your_picks"], "(none)")
 
     if not state["recent_picks"].empty:
         st.subheader("Recently drafted")
@@ -172,10 +176,7 @@ with roster_tab:
         st.warning("No open roster or taxi slots — drafting a rookie means dropping someone first.")
 
     st.subheader("Roster needs")
-    if state["roster_needs"].empty:
-        st.write("(empty roster)")
-    else:
-        st.dataframe(state["roster_needs"], width="stretch")
+    show_df(state["roster_needs"], "(empty roster)", hide_index=False)
     needs = state["need_positions"]
     if needs:
         st.info(f"Flagged needs: {', '.join(sorted(needs))} — the big board marks rookies at these positions.")
@@ -188,19 +189,11 @@ with roster_tab:
         "**note** weighs age: low value + young is still a rebuild asset worth holding; low "
         "value + aging is a real drop candidate."
     )
-    roster_value = state["roster_value"]
-    if roster_value.empty:
-        st.write("(empty roster)")
-    else:
-        st.dataframe(roster_value, hide_index=True, width="stretch")
+    show_df(state["roster_value"], "(empty roster)")
 
     st.subheader("Bye week conflicts")
     st.caption("Positions where 2+ of your players share the same bye week.")
-    conflicts = state["roster_bye_conflicts"]
-    if conflicts.empty:
-        st.write("(none)")
-    else:
-        st.dataframe(conflicts, hide_index=True, width="stretch")
+    show_df(state["roster_bye_conflicts"], "(none)")
 
     st.subheader("Weekly gaps")
     st.caption(
@@ -211,21 +204,15 @@ with roster_tab:
     )
     weekly_gaps = state["roster_weekly_gaps"]
     gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
-    if gap_weeks.empty:
-        st.write("No weeks have a dedicated-slot gap.")
-    else:
+    if not gap_weeks.empty:
         st.warning("Weeks with a gap:")
-        st.dataframe(gap_weeks, hide_index=True, width="stretch")
+    show_df(gap_weeks, "No weeks have a dedicated-slot gap.")
     with st.expander("Show all 18 weeks"):
         st.dataframe(weekly_gaps, hide_index=True, width="stretch")
 
     st.subheader("Handcuff status")
     st.caption("Your rostered RBs who are NFL starters, and whether you also own their backup.")
-    handcuffs = state["roster_handcuffs"]
-    if handcuffs.empty:
-        st.write("(none of your RBs are current NFL starters)")
-    else:
-        st.dataframe(handcuffs, hide_index=True, width="stretch")
+    show_df(state["roster_handcuffs"], "(none of your RBs are current NFL starters)")
 
 st.divider()
 st.caption(f"Dynasty Rookie Draft · build {APP_VERSION}")
