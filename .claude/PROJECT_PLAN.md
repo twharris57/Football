@@ -6,26 +6,27 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 
 ## Active
 
-- **Rookie draft big board** (branch: `feature/rookie-draft-strategy`) —
-  `rookie_draft.py` pulls the Sleeper league (rosters, draft, traded picks,
-  players) plus FantasyCalc dynasty values, and prints a tiered board of
-  available rookies cross-referenced against roster needs, plus which picks
-  the user owns (including trades) and who's on the clock. Proof of concept
-  works end-to-end against the real league (id `1324888291937386496`),
-  including an interactive refresh loop for use live during the draft.
-  Remaining before this is "done": use it through an actual live draft to
-  see whether the needs heuristic and tiering are actually useful in the
-  moment, then write up `docs/rookie-draft-big-board.md` and clear this item.
-
-## Next
-
-- **Web UI** — once the CLI proof of concept has proven itself useful in a
-  live draft, port it to a small web app so it's usable from a phone during
-  the draft instead of a terminal. Revisit framework choice at that point.
-  Requirement: the UI must surface *why* a pick is recommended, not just a
-  ranked list — the valuation approach (see Context below) and how it
-  produced each recommendation need to be visible/explained to the user,
-  not a black box.
+- **Rookie draft big board + web dashboard** (branch: `feature/rookie-draft-strategy`,
+  PR open) — `dynasty_core.py` pulls the Sleeper league (rosters, draft,
+  traded picks, players) plus FantasyCalc dynasty values, and produces a
+  tiered board of available rookies cross-referenced against roster needs,
+  plus which picks the user owns (including trades) and who's on the clock.
+  Two front ends share that logic: `rookie_draft.py` (CLI, interactive
+  refresh loop) and `streamlit_app.py` (web dashboard, sidebar refresh
+  buttons), containerized (`Dockerfile`, `docker-compose*.yml`) and published
+  to GHCR via GitHub Actions on merge to `main`, for deployment to the
+  Synology NAS. Locally verified end-to-end against the real league (id
+  `1324888291937386496`): CLI output unchanged after the `dynasty_core.py`
+  extraction, Streamlit renders real data with no exceptions, Docker image
+  builds/runs/passes its healthcheck, and the players cache survives a
+  container restart. **Explainability requirement carried over from the
+  "Web UI" item below is not yet addressed** — the dashboard still shows
+  FantasyCalc's ranking as-is, no "why" surfaced per pick.
+  Remaining before this is "done": merge, confirm the GHCR publish + NAS
+  deploy work, use it through the actual live draft (next Sunday) to see
+  whether the needs heuristic and tiering are useful in the moment, then
+  write up `docs/rookie-draft-big-board.md` + `docs/dynasty-draft-web-app.md`
+  and clear this item.
 
 ## Future Ideas
 
