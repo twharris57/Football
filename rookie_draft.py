@@ -14,6 +14,8 @@ import argparse
 import logging
 from typing import Any
 
+import requests
+
 import dynasty_core
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -32,7 +34,14 @@ def print_report(state: dict[str, Any]) -> None:
     else:
         on_the_clock = next(p for p in state["ownership"] if p.overall_pick == current_pick_no)
         clock_team = state["team_names"][on_the_clock.owner_roster_id]
-        print(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}\n")
+        until_turn = state["picks_until_turn"]
+        if until_turn is None:
+            turn_note = " (no picks left this draft)"
+        elif until_turn == 0:
+            turn_note = " (your turn!)"
+        else:
+            turn_note = f" ({until_turn} pick{'s' if until_turn != 1 else ''} until your turn)"
+        print(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}{turn_note}\n")
 
     print(
         "--- Draft plan (every pick you own this draft) ---\n"
@@ -149,7 +158,20 @@ def main() -> None:
 
     force_refresh_players = False
     while True:
-        state = dynasty_core.gather_state(args.league_id, args.username, force_refresh_players)
+        try:
+            state = dynasty_core.gather_state(args.league_id, args.username, force_refresh_players)
+        except requests.RequestException as exc:
+            # A hiccup here shouldn't kill the whole session - everyone hits
+            # Sleeper/FantasyCalc at once on draft day, so a transient error
+            # is expected, not exceptional. Let the user retry or bail.
+            print(f"\nCouldn't reach Sleeper/FantasyCalc: {exc}")
+            if args.once:
+                raise
+            choice = input("[Enter] retry  |  q = quit: ").strip().lower()
+            if choice == "q":
+                break
+            continue
+
         force_refresh_players = False
         print_report(state)
 

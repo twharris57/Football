@@ -64,7 +64,14 @@ if current_pick_no > total_picks:
 else:
     on_the_clock = next(p for p in state["ownership"] if p.overall_pick == current_pick_no)
     clock_team = state["team_names"][on_the_clock.owner_roster_id]
-    st.info(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}")
+    until_turn = state["picks_until_turn"]
+    if until_turn is None:
+        turn_note = " (no picks left this draft)"
+    elif until_turn == 0:
+        turn_note = " — **your turn!**"
+    else:
+        turn_note = f" ({until_turn} pick{'s' if until_turn != 1 else ''} until your turn)"
+    st.info(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}{turn_note}")
 
 plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(["Draft Plan", "Lineup", "Draft Board", "Your Roster"])
 

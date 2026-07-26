@@ -261,6 +261,22 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
     }
 
 
+def roster_total_capacity(league: dict) -> int:
+    """Return the combined active-roster + taxi-squad slot count.
+
+    Used to decide whether adding a player genuinely requires a drop, for
+    simulated/hypothetical rosters — those are tracked as a flat player-id
+    list (see multi_round_plan) with no active-vs-taxi split, so this is
+    the "is there room *anywhere*" signal rather than a precise slot type.
+    Reserve/IR isn't included, matching roster_capacity's own limitation
+    (not reliably derivable from the Sleeper API response alone). Rookies
+    are assumed taxi-eligible (true for every candidate in this draft,
+    since they're all entering their first season) — a general
+    accrued-experience eligibility check is deferred (see PROJECT_PLAN.md).
+    """
+    return len(league["roster_positions"]) + league["settings"].get("taxi_slots", 0)
+
+
 def roster_value_analysis(
     roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], byes: dict[str, int] | None = None
 ) -> pd.DataFrame:
@@ -636,13 +652,18 @@ def rank_by_marginal_value(
 ) -> list[dict]:
     """Rank candidates by season-average marginal starting-lineup value, not raw trade value.
 
-    For each candidate: simulate adding them (and making the resulting
-    recommended drop), and measure how much the roster's season-average
-    starting value (see season_average_starter_value) goes up. A modestly
-    valued player at a genuinely weak position can beat a highly valued
-    player who wouldn't even crack the starting lineup — this ranks by
-    projected lineup impact, not market price. Bye weeks are already
-    folded into the season average, not handled as a separate adjustment.
+    For each candidate: simulate adding them (and, only if the roster is
+    already at total capacity, making the resulting recommended drop), and
+    measure how much the roster's season-average starting value (see
+    season_average_starter_value) goes up. A drop is never forced just
+    because a candidate was evaluated — a player added to genuinely open
+    roster/taxi room (see roster_total_capacity) doesn't cost anything, so
+    no drop is simulated and the marginal value isn't understated by an
+    unnecessary cut. A modestly valued player at a genuinely weak position
+    can beat a highly valued player who wouldn't even crack the starting
+    lineup — this ranks by projected lineup impact, not market price. Bye
+    weeks are already folded into the season average, not handled as a
+    separate adjustment.
 
     `exclude_from_drop` protects specific players (e.g. picked in an
     earlier round of the same multi-round plan) from being recommended for
@@ -653,12 +674,16 @@ def rank_by_marginal_value(
     if not candidate_ids:
         return []
 
+    total_capacity = roster_total_capacity(league)
     baseline = season_average_starter_value(hypothetical_ids, players, fc_by_sleeper_id, byes, league)
 
     results = []
     for candidate_id in candidate_ids:
         with_candidate = hypothetical_ids + [candidate_id]
-        drop = recommend_drop(with_candidate, players, fc_by_sleeper_id, league, exclude_ids=exclude_from_drop)
+        if len(with_candidate) > total_capacity:
+            drop = recommend_drop(with_candidate, players, fc_by_sleeper_id, league, exclude_ids=exclude_from_drop)
+        else:
+            drop = None
         roster_after = [pid for pid in with_candidate if drop is None or pid != drop["player_id"]]
         after = season_average_starter_value(roster_after, players, fc_by_sleeper_id, byes, league)
         results.append({"player_id": candidate_id, "marginal_value": after - baseline, "drop": drop})
@@ -846,6 +871,19 @@ def multi_round_plan(
     }
 
 
+def picks_until_turn(ownership: list[DraftPickSlot], user_roster_id: int, current_pick_no: int) -> int | None:
+    """Return how many picks (by anyone) happen before the user's next pick.
+
+    0 means it's the user's turn right now. None means the user has no
+    more picks left in this draft.
+    """
+    next_pick = next(
+        (p for p in ownership if p.owner_roster_id == user_roster_id and p.overall_pick >= current_pick_no),
+        None,
+    )
+    return next_pick.overall_pick - current_pick_no if next_pick else None
+
+
 def format_your_picks(
     ownership: list[DraftPickSlot], user_roster_id: int, current_pick_no: int, team_names: dict[int, str]
 ) -> pd.DataFrame:
@@ -953,6 +991,7 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
         "league": league,
         "ownership": ownership,
         "current_pick_no": current_pick_no,
+        "picks_until_turn": picks_until_turn(ownership, user_roster_id, current_pick_no),
         "your_picks": format_your_picks(ownership, user_roster_id, current_pick_no, team_names),
         "roster_needs": roster_needs,
         "need_positions": needs,
