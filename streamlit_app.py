@@ -62,14 +62,16 @@ plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(["Draft Plan", "Lineup", "
 
 with plan_tab:
     st.caption(
-        "Every pick you own this draft. Values apply this league's QB/TE scoring correction "
-        f"(QB ×{dynasty_core.POSITION_VALUE_MULTIPLIER['QB']}, TE ×{dynasty_core.POSITION_VALUE_MULTIPLIER['TE']}) "
-        "but not the smaller long-TD/first-down bonus gaps. **status=completed** rows show the "
-        "REAL pick Sleeper recorded; **status=upcoming** rows are simulated (best value, "
-        "preferring a flagged need), assuming no other team's picks happen in between — 'if "
-        "these were your only remaining picks, back to back, on the board right now.' "
-        "**drop_name** is a live suggestion even for completed rounds — Sleeper has no record "
-        "of whether it was actually dropped. Refresh after any pick lands for an updated plan."
+        "Picks are ranked by season-average **marginal** starting-lineup value, not raw trade "
+        "value: for each candidate, this simulates adding them (+ the resulting drop) and "
+        "measures how much your roster's season-average starting value goes up — bye weeks are "
+        "folded into that average, not handled separately. A modest player at a weak position "
+        "can beat a highly-valued one who wouldn't crack your lineup. **status=completed** rows "
+        "show the REAL pick Sleeper recorded, scored the same way retroactively; "
+        "**status=upcoming** rows are simulated, assuming no other team's picks happen in "
+        "between — 'if these were your only remaining picks, back to back, on the board right "
+        "now.' **drop_name** is a live suggestion even for completed rounds — Sleeper has no "
+        "record of whether it was actually dropped. Refresh after any pick lands for an updated plan."
     )
     plan = state["multi_round_plan"]
     rounds = plan["rounds"]
@@ -79,6 +81,13 @@ with plan_tab:
         st.dataframe(rounds, hide_index=True, width="stretch")
         if rounds["drop_is_starter"].any():
             st.warning("At least one recommended drop is a current starter — see drop_is_starter above.")
+
+        alternates_by_pick = plan["alternates_by_pick"]
+        for _, row in rounds.iterrows():
+            alternates = alternates_by_pick.get(row["overall_pick"])
+            if alternates is not None and not alternates.empty:
+                with st.expander(f"Backup options for pick {row['overall_pick']} (round {row['round']})"):
+                    st.dataframe(alternates, hide_index=True, width="stretch")
 
     st.subheader("Weekly gap impact")
     alerts = plan["weekly_gap_alerts"]

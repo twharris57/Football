@@ -36,12 +36,14 @@ def print_report(state: dict[str, Any]) -> None:
 
     print(
         "--- Draft plan (every pick you own this draft) ---\n"
-        "Values use the QB/TE scoring correction "
-        f"(QB x{dynasty_core.POSITION_VALUE_MULTIPLIER['QB']}, TE x{dynasty_core.POSITION_VALUE_MULTIPLIER['TE']}, "
-        "see dynasty_core.py) but not the smaller long-TD/first-down bonus gaps. status=completed rows show the "
-        "REAL pick Sleeper recorded; status=upcoming rows are simulated (best value, preferring a flagged need), "
-        "assuming no other team's picks happen in between - 'if these were your only remaining picks, back to "
-        "back, on the board right now.' drop_name is a live suggestion even for completed rounds - Sleeper has "
+        "Picks are ranked by season-average MARGINAL starting-lineup value, not raw trade value:\n"
+        "for each candidate, simulate adding them (+ the resulting drop) and measure how much your\n"
+        "roster's season-average starting value goes up, bye weeks included in that average - not\n"
+        "raw player value with a needs override. A modest player at a weak position can beat a highly\n"
+        "valued one who wouldn't crack your lineup. status=completed rows show the REAL pick Sleeper\n"
+        "recorded, scored the same way retroactively; status=upcoming rows are simulated, assuming no\n"
+        "other team's picks happen in between - 'if these were your only remaining picks, back to back,\n"
+        "on the board right now.' drop_name is a live suggestion even for completed rounds - Sleeper has\n"
         "no record of whether it was actually dropped. Refresh after any pick lands for an updated plan."
     )
     plan = state["multi_round_plan"]
@@ -51,6 +53,13 @@ def print_report(state: dict[str, Any]) -> None:
         print(plan["rounds"].to_string(index=False))
         if plan["rounds"]["drop_is_starter"].any():
             print("NOTE: at least one recommended drop is a current starter - see drop_is_starter above.")
+
+        alternates_by_pick = plan["alternates_by_pick"]
+        for _, row in plan["rounds"].iterrows():
+            alternates = alternates_by_pick.get(row["overall_pick"])
+            if alternates is not None and not alternates.empty:
+                print(f"  Backup options for pick {row['overall_pick']} (round {row['round']}):")
+                print(alternates.to_string(index=False))
     if not plan["weekly_gap_alerts"].empty:
         print("ALERT: this plan would introduce/worsen a weekly gap:")
         print(plan["weekly_gap_alerts"].to_string(index=False))

@@ -123,9 +123,19 @@ def adjusted_value(position: str, value: float | None) -> float | None:
     return value * POSITION_VALUE_MULTIPLIER.get(position, 1.0)
 
 
+def fc_value_by_sleeper_id(fc_values: list[dict]) -> dict[str, dict]:
+    """Build a sleeperId -> FantasyCalc entry lookup once, for reuse across many calls.
+
+    The marginal-value ranking below calls into value-lookup logic thousands
+    of times per refresh (every candidate x every week, across rounds) -
+    rebuilding this ~475-entry dict on each of those calls would be wasteful.
+    """
+    return {entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")}
+
+
 def build_big_board(
     rookie_pool_: dict[str, dict],
-    fc_values: list[dict],
+    fc_by_sleeper_id: dict[str, dict],
     need_positions: frozenset[str] = frozenset(),
     handcuff_targets: dict[str, str] | None = None,
     draft_attribution: dict[str, tuple[int, str]] | None = None,
@@ -152,9 +162,6 @@ def build_big_board(
     the roster's own RB starter this rookie would handcuff, if any (see
     `handcuff_map`).
     """
-    fc_by_sleeper_id = {
-        entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
-    }
     handcuff_targets = handcuff_targets or {}
     draft_attribution = draft_attribution or {}
 
@@ -255,7 +262,7 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
 
 
 def roster_value_analysis(
-    roster: dict, players: dict[str, dict], fc_values: list[dict], byes: dict[str, int] | None = None
+    roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], byes: dict[str, int] | None = None
 ) -> pd.DataFrame:
     """Rank the roster by dynasty value (lowest first) to surface drop candidates.
 
@@ -271,9 +278,6 @@ def roster_value_analysis(
     worth holding for optionality per this team's stated strategy) rather
     than treating "low value" as "drop" outright.
     """
-    fc_by_sleeper_id = {
-        entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
-    }
     byes = byes or {}
 
     rows = []
@@ -453,11 +457,8 @@ FLEX_ELIGIBLE_POSITIONS = frozenset({"RB", "WR", "TE"})
 SUPERFLEX_ELIGIBLE_POSITIONS = frozenset({"QB", "RB", "WR", "TE"})
 
 
-def player_value_rows(player_ids: list[str], players: dict[str, dict], fc_values: list[dict]) -> list[dict]:
+def player_value_rows(player_ids: list[str], players: dict[str, dict], fc_by_sleeper_id: dict[str, dict]) -> list[dict]:
     """Build {player_id, pos, adj_value} rows for the given players, for lineup/drop logic."""
-    fc_by_sleeper_id = {
-        entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
-    }
     rows = []
     for player_id in player_ids:
         info = players.get(player_id, {})
@@ -510,7 +511,7 @@ def assign_starters(player_rows: list[dict], roster_positions: list[str]) -> lis
 
 
 def lineup_breakdown(
-    roster: dict, players: dict[str, dict], fc_values: list[dict], league: dict
+    roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], league: dict
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return (starters, bench) for the roster's optimal lineup by current value.
 
@@ -518,7 +519,7 @@ def lineup_breakdown(
     or injuries when deciding who starts (a by-week/injury-aware version is
     a planned refinement, not built here).
     """
-    rows = player_value_rows(roster.get("players") or [], players, fc_values)
+    rows = player_value_rows(roster.get("players") or [], players, fc_by_sleeper_id)
     value_by_id = {r["player_id"]: r["adj_value"] for r in rows}
     assignments = assign_starters(rows, league["roster_positions"])
     starter_ids = {pid for _, pid in assignments if pid}
@@ -548,7 +549,7 @@ def lineup_breakdown(
 def recommend_drop(
     player_ids: list[str],
     players: dict[str, dict],
-    fc_values: list[dict],
+    fc_by_sleeper_id: dict[str, dict],
     league: dict,
     exclude_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any] | None:
@@ -557,7 +558,7 @@ def recommend_drop(
     `exclude_ids` protects specific players (e.g. just picked earlier in the
     same multi-round plan) from being recommended for drop in this pass.
     """
-    rows = [r for r in player_value_rows(player_ids, players, fc_values) if r["player_id"] not in exclude_ids]
+    rows = [r for r in player_value_rows(player_ids, players, fc_by_sleeper_id) if r["player_id"] not in exclude_ids]
     if not rows:
         return None
 
@@ -576,15 +577,6 @@ def recommend_drop(
     }
 
 
-def pick_best_available(rows: list[dict], need_positions: frozenset[str]) -> dict | None:
-    """Pick the best available row by adj_value, preferring a flagged-need position if any exist."""
-    if not rows:
-        return None
-    need_fits = [r for r in rows if r["pos"] in need_positions]
-    pool = need_fits if need_fits else rows
-    return max(pool, key=lambda r: r["adj_value"] if r["adj_value"] is not None else -1)
-
-
 def hypothetical_needs_and_handcuffs(
     player_ids: list[str], players: dict[str, dict], handcuffs: dict[str, str]
 ) -> tuple[frozenset[str], dict[str, str]]:
@@ -599,41 +591,157 @@ def hypothetical_needs_and_handcuffs(
     return needs, handcuff_targets
 
 
+def season_average_starter_value(
+    player_ids: list[str],
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+) -> float:
+    """Average optimal starting-lineup value across all 18 weeks, excluding bye'd players each week.
+
+    This is the season-long analog of `lineup_breakdown`'s single snapshot.
+    Every player misses exactly one week (their own bye), so this doesn't
+    inherently favor or penalize any one player for having a bye at all —
+    what it does capture is the *interaction*: a pickup whose bye lines up
+    with an already-thin position contributes less across the season than
+    the same value at a position with real depth behind it, and a pickup
+    that specifically covers a weak spot during a bye week contributes
+    more. Weekly-gap *detection* is handled separately (roster_weekly_gaps)
+    — this is about getting the season-long value comparison right, not
+    about re-deriving gap alerts.
+    """
+    rows = player_value_rows(player_ids, players, fc_by_sleeper_id)
+    bye_by_player = {r["player_id"]: byes.get(players.get(r["player_id"], {}).get("team")) for r in rows}
+
+    total = 0.0
+    for week in NFL_WEEKS:
+        week_rows = [r for r in rows if bye_by_player[r["player_id"]] != week]
+        value_by_id = {r["player_id"]: r["adj_value"] or 0 for r in week_rows}
+        assignments = assign_starters(week_rows, league["roster_positions"])
+        total += sum(value_by_id.get(pid, 0) for _, pid in assignments if pid)
+
+    return total / len(NFL_WEEKS)
+
+
+def rank_by_marginal_value(
+    candidate_ids: list[str],
+    hypothetical_ids: list[str],
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    top_n: int = 3,
+    exclude_from_drop: frozenset[str] = frozenset(),
+) -> list[dict]:
+    """Rank candidates by season-average marginal starting-lineup value, not raw trade value.
+
+    For each candidate: simulate adding them (and making the resulting
+    recommended drop), and measure how much the roster's season-average
+    starting value (see season_average_starter_value) goes up. A modestly
+    valued player at a genuinely weak position can beat a highly valued
+    player who wouldn't even crack the starting lineup — this ranks by
+    projected lineup impact, not market price. Bye weeks are already
+    folded into the season average, not handled as a separate adjustment.
+
+    `exclude_from_drop` protects specific players (e.g. picked in an
+    earlier round of the same multi-round plan) from being recommended for
+    drop here. Returns up to `top_n` entries (player_id, marginal_value,
+    drop), sorted best first — the first is the recommended pick, the rest
+    are backup options for the draft plan's alternates.
+    """
+    if not candidate_ids:
+        return []
+
+    baseline = season_average_starter_value(hypothetical_ids, players, fc_by_sleeper_id, byes, league)
+
+    results = []
+    for candidate_id in candidate_ids:
+        with_candidate = hypothetical_ids + [candidate_id]
+        drop = recommend_drop(with_candidate, players, fc_by_sleeper_id, league, exclude_ids=exclude_from_drop)
+        roster_after = [pid for pid in with_candidate if drop is None or pid != drop["player_id"]]
+        after = season_average_starter_value(roster_after, players, fc_by_sleeper_id, byes, league)
+        results.append({"player_id": candidate_id, "marginal_value": after - baseline, "drop": drop})
+
+    results.sort(key=lambda r: r["marginal_value"], reverse=True)
+    return results[:top_n]
+
+
+def alternate_gap_note(
+    candidate_id: str,
+    drop: dict | None,
+    hypothetical_ids: list[str],
+    players: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+) -> str:
+    """Describe what picking this specific alternate would change about weekly gaps, if anything.
+
+    Compares against the hypothetical roster as it stood entering this
+    round (not the plan's final roster), so the note reflects what THIS
+    choice specifically does. Structured as a plain string so more note
+    types (e.g. injury history, once/if that data is available) can be
+    appended later without changing callers.
+    """
+    with_candidate = hypothetical_ids + [candidate_id]
+    roster_after = [pid for pid in with_candidate if drop is None or pid != drop["player_id"]]
+    before = roster_weekly_gaps({"players": hypothetical_ids}, players, byes, league)
+    after = roster_weekly_gaps({"players": roster_after}, players, byes, league)
+    merged = before[["week", "gap"]].merge(after[["week", "gap"]], on="week", suffixes=("_before", "_after"))
+    worsened = merged[(merged["gap_after"] != "") & (merged["gap_after"] != merged["gap_before"])]
+    if worsened.empty:
+        return ""
+    weeks = ", ".join(str(w) for w in worsened["week"])
+    return f"would open a gap in week(s) {weeks}"
+
+
 def multi_round_plan(
     ownership: list[DraftPickSlot],
     user_roster_id: int,
     current_pick_no: int,
     available: dict[str, dict],
     players: dict[str, dict],
-    fc_values: list[dict],
+    fc_by_sleeper_id: dict[str, dict],
     user_roster: dict,
     league: dict,
     byes: dict[str, int],
     handcuffs: dict[str, str],
     real_picks_by_overall: dict[int, str],
 ) -> dict[str, Any]:
-    """Plan for every pick the user owns this draft — what was picked and what to drop, why.
+    """Plan for every pick the user owns this draft — what to pick and drop, and why.
+
+    Ranks candidates by season-average MARGINAL starting-lineup value (see
+    rank_by_marginal_value), not raw trade value — a modest player at a
+    genuinely weak position can outrank a highly valued player who
+    wouldn't even crack the starting lineup. Bye weeks are folded directly
+    into that season average (season_average_starter_value), so a player
+    isn't over- or under-weighted just because of when their bye falls.
 
     Rounds already played (`overall_pick < current_pick_no`) show the REAL
-    player Sleeper recorded for that pick, not a stale recommendation, so
-    advancing rounds never hides what actually happened last round. Upcoming
-    rounds are simulated: best available value, preferring a currently
-    flagged need if one exists — needs and handcuff targets are recomputed
-    each round against the evolving hypothetical roster, not fixed to the
-    roster's current state. Does NOT simulate the other ~11 teams' picks
-    that happen in between real rounds — assumes "if these were your only
-    remaining picks, back to back, on the board as it looks right now."
+    player Sleeper recorded for that pick — scored the same marginal-value
+    way retroactively, for a consistent "how much did this add" number —
+    not a stale recommendation, so advancing rounds never hides what
+    happened last round. Upcoming rounds are simulated: assumes "if these
+    were your only remaining picks, back to back, on the board as it looks
+    right now" — does NOT simulate the other ~11 teams' picks in between.
     Recomputed fresh on every refresh, so it stays accurate as the real
     draft progresses.
 
     A drop is still recommended for already-played rounds too (using the
     running hypothetical roster) since Sleeper has no record of whether a
-    suggested drop was actually made — it's a live suggestion, not a
-    confirmed transaction, and is labeled that way in the UI.
+    suggested drop was actually made — a live suggestion, not a confirmed
+    transaction, labeled that way in the UI.
 
-    Also compares the resulting hypothetical roster's weekly gaps against
-    the current roster's (see roster_weekly_gaps), flagging any week where
-    this plan would introduce or worsen a dedicated-slot gap.
+    Also returns up to 2 backup alternates per upcoming round
+    (`alternates_by_pick`, keyed by overall_pick), each noting whether
+    picking it instead would open a weekly gap the primary pick doesn't —
+    a plain-string `notes` field meant to carry more note types later
+    (e.g. injury history, if that data ever becomes available), not just
+    this one.
+
+    Finally compares the resulting hypothetical roster's weekly gaps
+    against the current roster's (see roster_weekly_gaps), flagging any
+    week where the full plan would introduce or worsen a dedicated-slot gap.
     """
     own_picks = sorted((p for p in ownership if p.owner_roster_id == user_roster_id), key=lambda p: p.overall_pick)
 
@@ -642,31 +750,46 @@ def multi_round_plan(
     just_picked: set[str] = set()
 
     rounds = []
+    alternates_by_pick: dict[int, pd.DataFrame] = {}
+
     for pick in own_picks:
         is_completed = pick.overall_pick < current_pick_no
         real_pick_id = real_picks_by_overall.get(pick.overall_pick)
         needs, handcuff_targets = hypothetical_needs_and_handcuffs(hypothetical_ids, players, handcuffs)
 
         if is_completed and real_pick_id:
-            picked_id = real_pick_id
+            candidate_ids, top_n = [real_pick_id], 1
+        else:
+            candidate_ids, top_n = list(available_ids), 3
+
+        ranked = rank_by_marginal_value(
+            candidate_ids,
+            hypothetical_ids,
+            players,
+            fc_by_sleeper_id,
+            byes,
+            league,
+            top_n=top_n,
+            exclude_from_drop=frozenset(just_picked),
+        )
+        if not ranked:
+            break
+
+        primary = ranked[0]
+        picked_id = primary["player_id"]
+        drop = primary["drop"]
+        picked_info = players.get(picked_id, {})
+
+        if is_completed and real_pick_id:
             reason = "already picked"
         else:
-            rows = player_value_rows(list(available_ids), players, fc_values)
-            best = pick_best_available(rows, needs)
-            if best is None:
-                break
-            picked_id = best["player_id"]
-            reasons = [f"fills a flagged need at {best['pos']}"] if best["pos"] in needs else ["best value available"]
+            reasons = [f"adds {primary['marginal_value']:+.0f} to season-average starting value (bye-adjusted)"]
+            if picked_info.get("position") in needs:
+                reasons.append(f"also a flagged need at {picked_info.get('position')}")
             handcuff_to = handcuff_targets.get(picked_id)
             if handcuff_to:
                 reasons.append(f"also handcuffs your own {handcuff_to}")
             reason = "; ".join(reasons)
-
-        picked_info = players.get(picked_id, {})
-        picked_rows = player_value_rows([picked_id], players, fc_values)
-        picked_value = picked_rows[0]["adj_value"] if picked_rows else None
-
-        drop = recommend_drop(hypothetical_ids, players, fc_values, league, exclude_ids=frozenset(just_picked))
 
         rounds.append(
             {
@@ -675,13 +798,32 @@ def multi_round_plan(
                 "status": "completed" if is_completed else "upcoming",
                 "pick_name": picked_info.get("full_name"),
                 "pick_pos": picked_info.get("position"),
-                "pick_adj_value": picked_value,
+                "marginal_value": round(primary["marginal_value"], 1),
                 "reason": reason,
                 "drop_name": drop["name"] if drop else None,
                 "drop_pos": drop["pos"] if drop else None,
                 "drop_is_starter": drop["is_starter"] if drop else None,
             }
         )
+
+        if len(ranked) > 1:
+            alt_rows = []
+            for alt in ranked[1:]:
+                alt_info = players.get(alt["player_id"], {})
+                alt_drop = alt["drop"]
+                alt_rows.append(
+                    {
+                        "name": alt_info.get("full_name"),
+                        "pos": alt_info.get("position"),
+                        "marginal_value": round(alt["marginal_value"], 1),
+                        "drop_name": alt_drop["name"] if alt_drop else None,
+                        "drop_is_starter": alt_drop["is_starter"] if alt_drop else None,
+                        "notes": alternate_gap_note(
+                            alt["player_id"], alt_drop, hypothetical_ids, players, byes, league
+                        ),
+                    }
+                )
+            alternates_by_pick[pick.overall_pick] = pd.DataFrame(alt_rows)
 
         available_ids.discard(picked_id)
         if drop:
@@ -697,7 +839,11 @@ def multi_round_plan(
     )
     alerts = merged[(merged["gap_projected"] != "") & (merged["gap_projected"] != merged["gap_current"])]
 
-    return {"rounds": pd.DataFrame(rounds), "weekly_gap_alerts": alerts.reset_index(drop=True)}
+    return {
+        "rounds": pd.DataFrame(rounds),
+        "alternates_by_pick": alternates_by_pick,
+        "weekly_gap_alerts": alerts.reset_index(drop=True),
+    }
 
 
 def format_your_picks(
@@ -736,6 +882,7 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
     num_teams = league["settings"]["num_teams"]
     ppr = league["scoring_settings"].get("rec", 0)
     fc_values = fantasycalc.get_dynasty_values(num_qbs=num_qbs, num_teams=num_teams, ppr=ppr)
+    fc_by_sleeper_id = fc_value_by_sleeper_id(fc_values)
 
     # Enrichment from nfl_data_py: optional, must not break the core draft
     # board if the feed is unavailable or its schema drifts (it already has
@@ -798,9 +945,9 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
             }
         )
 
-    big_board = build_big_board(board_pool, fc_values, needs, handcuff_targets, draft_attribution)
-    roster_value = roster_value_analysis(user_roster, players, fc_values, byes)
-    lineup_starters, lineup_bench = lineup_breakdown(user_roster, players, fc_values, league)
+    big_board = build_big_board(board_pool, fc_by_sleeper_id, needs, handcuff_targets, draft_attribution)
+    roster_value = roster_value_analysis(user_roster, players, fc_by_sleeper_id, byes)
+    lineup_starters, lineup_bench = lineup_breakdown(user_roster, players, fc_by_sleeper_id, league)
 
     return {
         "league": league,
@@ -824,7 +971,7 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
             current_pick_no,
             available,
             players,
-            fc_values,
+            fc_by_sleeper_id,
             user_roster,
             league,
             byes,
