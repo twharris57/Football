@@ -345,6 +345,48 @@ def roster_bye_conflicts(roster: dict, players: dict[str, dict], byes: dict[str,
     return conflicts.sort_values(["pos", "bye"]).reset_index(drop=True)
 
 
+NFL_WEEKS = range(1, 19)
+
+
+def roster_weekly_gaps(roster: dict, players: dict[str, dict], byes: dict[str, int], league: dict) -> pd.DataFrame:
+    """For each week, count available (non-bye) rostered players per position
+    and flag weeks where a dedicated starting slot can't be filled.
+
+    "Dedicated" means the QB/RB/WR/TE counts in `league["roster_positions"]`
+    (1/2/2/1 in this league) — this does NOT model FLEX/SUPER_FLEX slots,
+    which could pull from other positions. It's a rough weekly-depth signal
+    (can this position's own starters be filled from the roster alone), not
+    a full lineup-feasibility solver.
+    """
+    required = {pos: league["roster_positions"].count(pos) for pos in FANTASY_POSITIONS}
+
+    position_bye_weeks: dict[str, list[int]] = {pos: [] for pos in FANTASY_POSITIONS}
+    position_totals: dict[str, int] = dict.fromkeys(FANTASY_POSITIONS, 0)
+    for player_id in roster.get("players") or []:
+        info = players.get(player_id, {})
+        position = info.get("position")
+        if position not in FANTASY_POSITIONS:
+            continue
+        position_totals[position] += 1
+        bye = byes.get(info.get("team"))
+        if bye is not None:
+            position_bye_weeks[position].append(bye)
+
+    rows = []
+    for week in NFL_WEEKS:
+        row: dict[str, Any] = {"week": week}
+        gaps = []
+        for pos in FANTASY_POSITIONS:
+            available = position_totals[pos] - position_bye_weeks[pos].count(week)
+            row[pos] = available
+            if available < required.get(pos, 0):
+                gaps.append(pos)
+        row["gap"] = ", ".join(gaps)
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
 def handcuff_map(season: str) -> dict[str, str]:
     """Map each starting RB's sleeper_id to their primary backup's sleeper_id.
 
@@ -532,6 +574,7 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
         "roster_capacity": roster_capacity(user_roster, league),
         "roster_value": roster_value,
         "roster_bye_conflicts": roster_bye_conflicts(user_roster, players, byes),
+        "roster_weekly_gaps": roster_weekly_gaps(user_roster, players, byes, league),
         "roster_handcuffs": roster_handcuff_status(user_roster, players, handcuffs),
         "recent_picks": pd.DataFrame(recent_rows),
         "big_board": big_board,

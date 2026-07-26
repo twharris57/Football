@@ -166,6 +166,23 @@ with roster_tab:
     else:
         st.dataframe(conflicts, hide_index=True, width="stretch")
 
+    st.subheader("Weekly gaps")
+    st.caption(
+        "Available (non-bye) rostered players per position per week, vs. what's needed to fill "
+        "this league's dedicated starting slots (QB:1 RB:2 WR:2 TE:1). Does not account for "
+        "FLEX/SUPER_FLEX, which could pull from other positions — a rough depth signal, not a "
+        "full lineup-feasibility check."
+    )
+    weekly_gaps = state["roster_weekly_gaps"]
+    gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
+    if gap_weeks.empty:
+        st.write("No weeks have a dedicated-slot gap.")
+    else:
+        st.warning("Weeks with a gap:")
+        st.dataframe(gap_weeks, hide_index=True, width="stretch")
+    with st.expander("Show all 18 weeks"):
+        st.dataframe(weekly_gaps, hide_index=True, width="stretch")
+
     st.subheader("Handcuff status")
     st.caption("Your rostered RBs who are NFL starters, and whether you also own their backup.")
     handcuffs = state["roster_handcuffs"]

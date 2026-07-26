@@ -75,16 +75,31 @@ def print_report(state: dict[str, Any]) -> None:
     print(f"Flagged needs: {', '.join(sorted(needs))}" if needs else "No positions flagged as a need right now.")
 
     print(
-        "\n--- Roster value analysis (lowest value first) ---\n"
-        "Same FantasyCalc values as the big board, so the same scoring-mismatch caveat "
-        "applies (QB/TE likely undervalued here). 'note' weighs age: low value + young is "
-        "still a rebuild asset, low value + aging is a real drop candidate."
+        "\n--- Roster value analysis (lowest adj_value first) ---\n"
+        "Same QB/TE-corrected value as the big board (raw 'value' kept alongside for "
+        "comparison). 'note' weighs age: low value + young is still a rebuild asset, "
+        "low value + aging is a real drop candidate."
     )
     print(state["roster_value"].to_string(index=False) if not state["roster_value"].empty else "(empty roster)")
 
     print("\n--- Bye week conflicts (2+ players at a position sharing a bye) ---")
     conflicts = state["roster_bye_conflicts"]
     print(conflicts.to_string(index=False) if not conflicts.empty else "(none)")
+
+    print(
+        "\n--- Weekly gaps (dedicated QB/RB/WR/TE slots only, not FLEX/SUPER_FLEX) ---\n"
+        "Available (non-bye) rostered players per position per week, vs. what's needed to "
+        "fill this league's dedicated starting slots (QB:1 RB:2 WR:2 TE:1). Does not account "
+        "for FLEX/SUPER_FLEX, which could pull from other positions."
+    )
+    weekly_gaps = state["roster_weekly_gaps"]
+    print(weekly_gaps.to_string(index=False))
+    gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
+    print(
+        "Weeks with a gap:\n" + gap_weeks.to_string(index=False)
+        if not gap_weeks.empty
+        else "No weeks have a dedicated-slot gap."
+    )
 
     print("\n--- Handcuff status (your rostered RB starters) ---")
     handcuffs = state["roster_handcuffs"]
