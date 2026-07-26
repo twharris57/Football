@@ -76,7 +76,8 @@ with draft_tab:
         "**tier** is FantasyCalc's global dynasty tier across *all* players, not rookie-specific — "
         "gaps in the sequence are veterans/other rookies not shown here, lower is better. "
         "**rank** is this player's order within available rookies only. "
-        "**fits_need** flags a currently-thin position on your roster."
+        "**fits_need** flags a currently-thin position on your roster. "
+        "**handcuff_to** means this rookie backs up one of your own RB starters."
     )
     board = state["big_board"]
     if board.empty:
@@ -122,3 +123,19 @@ with roster_tab:
         st.write("(empty roster)")
     else:
         st.dataframe(roster_value, hide_index=True, width="stretch")
+
+    st.subheader("Bye week conflicts")
+    st.caption("Positions where 2+ of your players share the same bye week.")
+    conflicts = state["roster_bye_conflicts"]
+    if conflicts.empty:
+        st.write("(none)")
+    else:
+        st.dataframe(conflicts, hide_index=True, width="stretch")
+
+    st.subheader("Handcuff status")
+    st.caption("Your rostered RBs who are NFL starters, and whether you also own their backup.")
+    handcuffs = state["roster_handcuffs"]
+    if handcuffs.empty:
+        st.write("(none of your RBs are current NFL starters)")
+    else:
+        st.dataframe(handcuffs, hide_index=True, width="stretch")

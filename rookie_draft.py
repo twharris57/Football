@@ -59,6 +59,14 @@ def print_report(state: dict[str, Any]) -> None:
     )
     print(state["roster_value"].to_string(index=False) if not state["roster_value"].empty else "(empty roster)")
 
+    print("\n--- Bye week conflicts (2+ players at a position sharing a bye) ---")
+    conflicts = state["roster_bye_conflicts"]
+    print(conflicts.to_string(index=False) if not conflicts.empty else "(none)")
+
+    print("\n--- Handcuff status (your rostered RB starters) ---")
+    handcuffs = state["roster_handcuffs"]
+    print(handcuffs.to_string(index=False) if not handcuffs.empty else "(none of your RBs are NFL starters)")
+
     if not state["recent_picks"].empty:
         print("\n--- Recently drafted ---")
         print(state["recent_picks"].to_string(index=False))
@@ -67,7 +75,8 @@ def print_report(state: dict[str, Any]) -> None:
         "\n--- Available rookies (big board) ---\n"
         "tier = FantasyCalc's global dynasty tier across ALL players, not rookie-specific "
         "(gaps are veterans/other rookies not shown here). rank = order within this rookie-only "
-        "list. fits_need = position is currently flagged as a roster need."
+        "list. fits_need = position is currently flagged as a roster need. handcuff_to = this "
+        "rookie backs up one of your own RB starters, if any."
     )
     board = state["big_board"]
     if board.empty:

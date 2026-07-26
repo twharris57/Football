@@ -8,13 +8,17 @@ dashboard (`streamlit_app.py`) so the two stay in sync on one code path.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
+import nfl_data_py as nfl
 import pandas as pd
 
 import fantasycalc_api as fantasycalc
 import sleeper_api as sleeper
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_LEAGUE_ID = "1324888291937386496"
 DEFAULT_USERNAME = "twharris57"
@@ -96,7 +100,10 @@ def rookie_pool(players: dict[str, dict], season: str) -> dict[str, dict]:
 
 
 def build_big_board(
-    available: dict[str, dict], fc_values: list[dict], need_positions: frozenset[str] = frozenset()
+    available: dict[str, dict],
+    fc_values: list[dict],
+    need_positions: frozenset[str] = frozenset(),
+    handcuff_targets: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Rank available rookies by dynasty value into tiers, for display.
 
@@ -106,11 +113,13 @@ def build_big_board(
     player's order within this rookie-only list (1 = best available rookie).
     `fits_need` flags whether the player's position is currently a roster
     need (see `roster_needs_summary`) — a rough prioritization signal, not a
-    single "correct" pick.
+    single "correct" pick. `handcuff_to` names the roster's own RB starter
+    this rookie would handcuff, if any (see `handcuff_map`).
     """
     fc_by_sleeper_id = {
         entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
     }
+    handcuff_targets = handcuff_targets or {}
 
     rows = []
     for player_id, info in available.items():
@@ -120,6 +129,7 @@ def build_big_board(
                 "name": info.get("full_name"),
                 "pos": info.get("position"),
                 "fits_need": info.get("position") in need_positions,
+                "handcuff_to": handcuff_targets.get(player_id, ""),
                 "team": info.get("team") or "FA",
                 "college": info.get("college"),
                 "age": info.get("age"),
@@ -200,7 +210,9 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
     }
 
 
-def roster_value_analysis(roster: dict, players: dict[str, dict], fc_values: list[dict]) -> pd.DataFrame:
+def roster_value_analysis(
+    roster: dict, players: dict[str, dict], fc_values: list[dict], byes: dict[str, int] | None = None
+) -> pd.DataFrame:
     """Rank the roster by dynasty value (lowest first) to surface drop candidates.
 
     Uses the same FantasyCalc values as the rookie big board — this league's
@@ -218,6 +230,7 @@ def roster_value_analysis(roster: dict, players: dict[str, dict], fc_values: lis
     fc_by_sleeper_id = {
         entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
     }
+    byes = byes or {}
 
     rows = []
     for player_id in roster.get("players") or []:
@@ -232,6 +245,7 @@ def roster_value_analysis(roster: dict, players: dict[str, dict], fc_values: lis
                 "pos": position,
                 "age": info.get("age"),
                 "years_exp": info.get("years_exp"),
+                "bye": byes.get(info.get("team")),
                 "value": fc_entry["value"] if fc_entry else None,
             }
         )
@@ -255,6 +269,96 @@ def roster_value_analysis(roster: dict, players: dict[str, dict], fc_values: lis
 
     roster_df["note"] = [note(lv, age) for lv, age in zip(is_low_value, roster_df["age"])]
     return roster_df
+
+
+def bye_week_by_team(season: str) -> dict[str, int]:
+    """Return each NFL team's bye week for the season, derived from the schedule.
+
+    nfl_data_py has no direct "bye week" field — derived as the one week in
+    1-18 where a team appears in neither home_team nor away_team.
+    """
+    schedule = nfl.import_schedules([int(season)])
+    regular = schedule[schedule["game_type"] == "REG"]
+    all_weeks = set(regular["week"].unique())
+    teams = set(regular["home_team"]) | set(regular["away_team"])
+
+    byes: dict[str, int] = {}
+    for team in teams:
+        played = set(regular.loc[(regular["home_team"] == team) | (regular["away_team"] == team), "week"])
+        missing = all_weeks - played
+        if len(missing) == 1:
+            byes[team] = missing.pop()
+    return byes
+
+
+def roster_bye_conflicts(roster: dict, players: dict[str, dict], byes: dict[str, int]) -> pd.DataFrame:
+    """Flag position groups on the roster with 2+ players sharing the same bye week."""
+    rows = []
+    for player_id in roster.get("players") or []:
+        info = players.get(player_id, {})
+        position = info.get("position")
+        team = info.get("team")
+        if position not in FANTASY_POSITIONS or team not in byes:
+            continue
+        rows.append({"pos": position, "bye": byes[team], "name": info.get("full_name"), "team": team})
+
+    bye_df = pd.DataFrame(rows)
+    if bye_df.empty:
+        return bye_df
+
+    grouped = bye_df.groupby(["pos", "bye"])["name"].apply(lambda names: ", ".join(sorted(names)))
+    counts = bye_df.groupby(["pos", "bye"]).size()
+    conflicts = pd.DataFrame({"players": grouped, "count": counts})
+    conflicts = conflicts[conflicts["count"] >= 2].reset_index()
+    return conflicts.sort_values(["pos", "bye"]).reset_index(drop=True)
+
+
+def handcuff_map(season: str) -> dict[str, str]:
+    """Map each starting RB's sleeper_id to their primary backup's sleeper_id.
+
+    "Starting"/"backup" come from the latest depth-chart snapshot for the
+    season — nfl_data_py's depth-chart feed is a time series of scrapes, not
+    a single current view, so this filters to the most recent `dt`. Handcuffs
+    are an RB-specific fantasy concept; other positions aren't modeled here.
+    """
+    depth = nfl.import_depth_charts([int(season)])
+    latest = depth[depth["dt"] == depth["dt"].max()]
+    rb = latest[latest["pos_abb"] == "RB"]
+
+    ids = nfl.import_ids().dropna(subset=["gsis_id", "sleeper_id"])
+    gsis_to_sleeper = {row.gsis_id: str(int(row.sleeper_id)) for row in ids.itertuples()}
+
+    handcuffs: dict[str, str] = {}
+    for _team, group in rb.groupby("team"):
+        ranked = group.sort_values("pos_rank")
+        if len(ranked) < 2:
+            continue
+        starter_id = gsis_to_sleeper.get(ranked.iloc[0]["gsis_id"])
+        backup_id = gsis_to_sleeper.get(ranked.iloc[1]["gsis_id"])
+        if starter_id and backup_id:
+            handcuffs[starter_id] = backup_id
+    return handcuffs
+
+
+def roster_handcuff_status(roster: dict, players: dict[str, dict], handcuffs: dict[str, str]) -> pd.DataFrame:
+    """For each rostered RB who is an NFL starter, show whether their handcuff is also rostered."""
+    roster_ids = set(roster.get("players") or [])
+    rows = []
+    for player_id in roster.get("players") or []:
+        info = players.get(player_id, {})
+        if info.get("position") != "RB":
+            continue
+        backup_id = handcuffs.get(player_id)
+        if backup_id is None:
+            continue
+        rows.append(
+            {
+                "starter": info.get("full_name"),
+                "handcuff": players.get(backup_id, {}).get("full_name", "Unknown"),
+                "handcuff_rostered": backup_id in roster_ids,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def format_your_picks(
@@ -294,9 +398,30 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
     ppr = league["scoring_settings"].get("rec", 0)
     fc_values = fantasycalc.get_dynasty_values(num_qbs=num_qbs, num_teams=num_teams, ppr=ppr)
 
+    # Enrichment from nfl_data_py: optional, must not break the core draft
+    # board if the feed is unavailable or its schema drifts (it already has
+    # once - the 2026 depth chart columns differ from prior seasons).
+    try:
+        byes = bye_week_by_team(league["season"])
+    except Exception:
+        logger.warning("Failed to fetch bye weeks; skipping bye-conflict analysis", exc_info=True)
+        byes = {}
+    try:
+        handcuffs = handcuff_map(league["season"])
+    except Exception:
+        logger.warning("Failed to fetch depth charts; skipping handcuff analysis", exc_info=True)
+        handcuffs = {}
+
     user_roster_id = resolve_user_roster_id(users, rosters, username)
     team_names = team_name_by_roster_id(rosters, users)
     user_roster = next(r for r in rosters if r["roster_id"] == user_roster_id)
+
+    user_rb_ids = {pid for pid in (user_roster.get("players") or []) if players.get(pid, {}).get("position") == "RB"}
+    handcuff_targets = {
+        backup_id: players.get(starter_id, {}).get("full_name", "")
+        for starter_id, backup_id in handcuffs.items()
+        if starter_id in user_rb_ids
+    }
 
     ownership = compute_pick_ownership(draft, traded_picks, league["season"])
     picked_player_ids = {p["player_id"] for p in draft_picks if p.get("player_id")}
@@ -329,8 +454,10 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
         "roster_needs": roster_needs,
         "need_positions": needs,
         "roster_capacity": roster_capacity(user_roster, league),
-        "roster_value": roster_value_analysis(user_roster, players, fc_values),
+        "roster_value": roster_value_analysis(user_roster, players, fc_values, byes),
+        "roster_bye_conflicts": roster_bye_conflicts(user_roster, players, byes),
+        "roster_handcuffs": roster_handcuff_status(user_roster, players, handcuffs),
         "recent_picks": pd.DataFrame(recent_rows),
-        "big_board": build_big_board(available, fc_values, needs),
+        "big_board": build_big_board(available, fc_values, needs, handcuff_targets),
         "team_names": team_names,
     }
