@@ -6,36 +6,43 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 
 ## Active
 
-- **Pre-draft hardening** (branch: `feature/pre-draft-hardening`, off `main`
-  after PR #1 + PR #2 both merged) — addresses all four items from the
-  2026-07-26 pre-draft review:
-  - ✅ **Capacity-aware drop logic** — `rank_by_marginal_value()` was
-    calling `recommend_drop()` unconditionally for every candidate, even
-    with open roster/taxi capacity, understating marginal value and
-    risking an unnecessary cut. New `roster_total_capacity()` (active
-    roster slots + taxi slots) gates it: a drop is only simulated once the
-    roster is genuinely full. Regression-covered in
-    `tests/test_dynasty_core.py::TestCapacityAwareDrop`.
-  - ✅ **API retry/backoff + CLI error handling** — `sleeper_api.py` and
-    `fantasycalc_api.py` now use a `requests.Session` with a `Retry`
-    adapter (3 retries, backoff, GET-only); the CLI's interactive loop
-    wraps `gather_state()` in try/except with a retry/quit prompt instead
-    of crashing on one hiccup. Verified by simulating a `ConnectionError`
-    on the first call and confirming the loop recovers.
-  - ✅ **Automated test coverage** — `tests/test_dynasty_core.py` (new,
-    pytest) covers `assign_starters`, the capacity-aware drop logic,
-    `season_average_starter_value`'s bye-week handling, and
-    `roster_weekly_gaps`. `.github/workflows/ci.yml` (new) runs it on
-    every PR to `main`.
-  - ✅ **Picks-until-your-turn indicator** — `picks_until_turn()`, shown
-    in both the CLI and Streamlit on-the-clock line.
-  Full writeup in `docs/rookie-draft-big-board.md` (logic) and
-  `docs/dynasty-draft-web-app.md` (resilience/CI). Remaining before the
-  overall dashboard effort is "done": deploy to the Synology NAS and — the
-  real test — use it through the actual live draft (this Sunday). The
-  *next* feature branch will explore a better valuation algorithm (see
-  Future Ideas: full per-player scoring recompute) rather than more
-  pre-draft fixes — this branch is meant to be the stability checkpoint.
+- **Valuation algorithm improvements** (branch: `feature/valuation-improvements`)
+  — sequenced deliberately, not independent workstreams:
+  1. **E — refresh the QB/TE multiplier's data basis.** Currently derived
+     from 2024 only (39 qualifying QBs, 45 TEs — a fairly small,
+     single-season sample). Average across a few seasons to reduce
+     single-season noise; no architecture change. Stays useful regardless
+     of how B turns out, since rookies will always need this fallback (see
+     step 2).
+  2. **B — full per-player scoring recompute for players with real NFL
+     history.** Compute actual fantasy points from `nfl_data_py` raw stats
+     under this league's exact `scoring_settings` (6pt passing, TE
+     premium, long-TD/first-down bonuses — all of it, no approximation).
+     Replaces the position-level multiplier entirely for those players.
+     Can't reach incoming rookies (no NFL stats yet) — they keep using
+     FantasyCalc + the multiplier. Open design question: how to blend
+     "recomputed real points" for veterans with "market dynasty value" for
+     rookies onto one comparable scale for `rank_by_marginal_value`.
+  3. **A — finer position/play-style multiplier buckets, rescoped to
+     rookies only.** Deliberately sequenced after B, not before — a
+     veteran-inclusive version of this would mostly be thrown away once B
+     replaces the multiplier for anyone with real stats. `import_combine_data`
+     (confirmed available) gives real per-rookie athletic profiles — a
+     usable classification signal (mobile vs. pocket QB, etc.) without
+     needing college stats, which we don't have access to.
+  4. **D — blend in KeepTradeCut as a second market source**, time
+     permitting. `import_ids()` only gives a `ktc_id` crosswalk column,
+     not actual KTC values — sourcing real KTC data is a separate,
+     not-yet-investigated problem.
+  Not deadline-driven the way the pre-draft work was — this is about
+  improving accuracy for ongoing dynasty decisions (trades, future
+  drafts), not a hard cutoff.
+
+- **Rookie draft dashboard — final verification.** Built and merged (PR #1,
+  #2, #3); full writeup in `docs/rookie-draft-big-board.md` and
+  `docs/dynasty-draft-web-app.md`. Only remaining before calling it fully
+  done: deploy to the Synology NAS and use it through the actual live
+  draft.
 
 ## Future Ideas
 
@@ -72,12 +79,6 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   a general accrued-experience eligibility check against Sleeper's actual
   taxi rule. Fold in whenever this needs to handle non-rookie candidates
   (e.g. the free-agent evaluator idea above) rather than as a separate pass.
-- **Full per-player scoring recompute** — replace the QB/TE position-level
-  correction (see Valuation approach below) with real per-player fantasy
-  points computed from `nfl_data_py` raw stats under this league's exact
-  `scoring_settings`, including the long-TD/first-down bonuses the current
-  correction doesn't reach. A bigger lift than the targeted fix, deliberately
-  deferred past this draft.
 
 ## Context
 
@@ -105,8 +106,8 @@ for the full methodology):
 - ⏳ **Still uncorrected**: bonus points for long touchdowns (40+/50+ yard,
   rush/pass/rec) and a first-down bonus (`rush_fd`/`rec_fd: 0.5`) — smaller
   effects than the two above, not yet isolated the way QB/TE were. A real
-  per-player recompute from raw stats (see Future Ideas) would replace this
-  whole correction with something exact instead of a position-level
+  per-player recompute from raw stats (see Active, above) would replace
+  this whole correction with something exact instead of a position-level
   multiplier.
 - Not a scoring setting, but relevant to roster/pick strategy: taxi squad is
   unusually generous (5 slots, 3 years) vs. typical dynasty leagues — more
@@ -116,3 +117,6 @@ Ranking itself no longer uses raw (or even corrected) player value directly —
 picks are ranked by season-average **marginal starting-lineup value**, which
 inherently accounts for positional scarcity without needing a separate
 needs-flag override. See `docs/rookie-draft-big-board.md`.
+
+Closing the "still uncorrected" gap above is now the Active
+**Valuation algorithm improvements** work (see Active, above).
