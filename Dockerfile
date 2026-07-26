@@ -10,6 +10,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Baked in at build time so the running app can show which commit it's
+# actually running (see the Streamlit footer) - verifies a deploy actually
+# picked up the latest image instead of silently staying on a stale one.
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
+
 RUN groupadd --system --gid 1000 app \
  && useradd --system --uid 1000 --gid app app \
  && mkdir -p /app/.cache && chown -R app:app /app

@@ -10,14 +10,21 @@ players.json cache) — the web equivalent of the CLI's Enter-vs-`f` prompt.
 
 from __future__ import annotations
 
+import os
+
 import requests
 import streamlit as st
 
 import dynasty_core
 
+APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
+
 st.set_page_config(page_title="Dynasty Rookie Draft", layout="centered")
 
-st.sidebar.header("League")
+if "league_name" not in st.session_state:
+    st.session_state.league_name = "League"
+
+st.sidebar.header(st.session_state.league_name)
 league_id = st.sidebar.text_input("League ID", value=dynasty_core.DEFAULT_LEAGUE_ID)
 username = st.sidebar.text_input("Username", value=dynasty_core.DEFAULT_USERNAME)
 
@@ -47,6 +54,7 @@ except ValueError as exc:
     st.stop()
 
 league = state["league"]
+st.session_state.league_name = league["name"]
 st.caption(f"{league['name']} - {league['season']} Rookie Draft ({league['status']})")
 
 total_picks = len(state["ownership"])
@@ -58,7 +66,59 @@ else:
     clock_team = state["team_names"][on_the_clock.owner_roster_id]
     st.info(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}")
 
-draft_tab, roster_tab = st.tabs(["Draft Board", "Your Roster"])
+plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(["Draft Plan", "Lineup", "Draft Board", "Your Roster"])
+
+with plan_tab:
+    st.caption(
+        "Picks are ranked by season-average **marginal** starting-lineup value, not raw trade "
+        "value: for each candidate, this simulates adding them (+ the resulting drop) and "
+        "measures how much your roster's season-average starting value goes up — bye weeks are "
+        "folded into that average, not handled separately. A modest player at a weak position "
+        "can beat a highly-valued one who wouldn't crack your lineup. **status=completed** rows "
+        "show the REAL pick Sleeper recorded, scored the same way retroactively; "
+        "**status=upcoming** rows are simulated, assuming no other team's picks happen in "
+        "between — 'if these were your only remaining picks, back to back, on the board right "
+        "now.' **drop_name** is a live suggestion even for completed rounds — Sleeper has no "
+        "record of whether it was actually dropped. Refresh after any pick lands for an updated plan."
+    )
+    plan = state["multi_round_plan"]
+    rounds = plan["rounds"]
+    if rounds.empty:
+        st.write("(no picks owned this draft)")
+    else:
+        st.dataframe(rounds, hide_index=True, width="stretch")
+        if rounds["drop_is_starter"].any():
+            st.warning("At least one recommended drop is a current starter — see drop_is_starter above.")
+
+        alternates_by_pick = plan["alternates_by_pick"]
+        for _, row in rounds.iterrows():
+            alternates = alternates_by_pick.get(row["overall_pick"])
+            if alternates is not None and not alternates.empty:
+                with st.expander(f"Backup options for pick {row['overall_pick']} (round {row['round']})"):
+                    st.dataframe(alternates, hide_index=True, width="stretch")
+
+    st.subheader("Weekly gap impact")
+    alerts = plan["weekly_gap_alerts"]
+    if alerts.empty:
+        st.success("This plan does not introduce any new weekly gaps.")
+    else:
+        st.warning("This plan would introduce or worsen a gap in these weeks:")
+        st.dataframe(alerts, hide_index=True, width="stretch")
+
+with lineup_tab:
+    st.caption(
+        "Optimal current lineup by value alone — a snapshot, not week-specific yet (doesn't "
+        "account for byes or injuries when deciding who starts). A by-week/injury-aware version "
+        "is a planned refinement."
+    )
+    st.subheader("Starters")
+    st.dataframe(state["lineup_starters"], hide_index=True, width="stretch")
+    st.subheader("Bench")
+    bench = state["lineup_bench"]
+    if bench.empty:
+        st.write("(empty)")
+    else:
+        st.dataframe(bench, hide_index=True, width="stretch")
 
 with draft_tab:
     st.subheader("Your picks")
@@ -71,12 +131,17 @@ with draft_tab:
         st.subheader("Recently drafted")
         st.dataframe(state["recent_picks"], hide_index=True, width="stretch")
 
-    st.subheader("Available rookies (big board)")
+    st.subheader("Rookie big board")
     st.caption(
-        "**tier** is FantasyCalc's global dynasty tier across *all* players, not rookie-specific — "
-        "gaps in the sequence are veterans/other rookies not shown here, lower is better. "
-        "**rank** is this player's order within available rookies only. "
-        "**fits_need** flags a currently-thin position on your roster."
+        "The whole rookie class — drafted players stay listed instead of disappearing, "
+        "annotated via **drafted_round**/**drafted_by** (blank if still undrafted). **rank** is "
+        "value order across the whole class, drafted and undrafted together. **value** is "
+        "FantasyCalc's raw number; **adj_value** applies this league's QB/TE scoring correction "
+        "(see the Draft Plan tab) and is what determines sort order and **rank**. **tier** is "
+        "FantasyCalc's own global tier across *all* players, not rookie-specific and not "
+        "adjusted — gaps in the sequence are veterans/other rookies not shown here. "
+        "**fits_need** flags a currently-thin position on your roster. "
+        "**handcuff_to** means this rookie backs up one of your own RB starters."
     )
     board = state["big_board"]
     if board.empty:
@@ -112,13 +177,48 @@ with roster_tab:
 
     st.subheader("Roster value analysis")
     st.caption(
-        "Sorted lowest value first, using the same FantasyCalc values as the big board — the "
-        "same scoring-mismatch caveat applies (QB/TE likely undervalued here). **note** weighs "
-        "age: low value + young is still a rebuild asset worth holding; low value + aging is a "
-        "real drop candidate."
+        "Sorted lowest **adj_value** first (same QB/TE-corrected value as the big board). "
+        "**note** weighs age: low value + young is still a rebuild asset worth holding; low "
+        "value + aging is a real drop candidate."
     )
     roster_value = state["roster_value"]
     if roster_value.empty:
         st.write("(empty roster)")
     else:
         st.dataframe(roster_value, hide_index=True, width="stretch")
+
+    st.subheader("Bye week conflicts")
+    st.caption("Positions where 2+ of your players share the same bye week.")
+    conflicts = state["roster_bye_conflicts"]
+    if conflicts.empty:
+        st.write("(none)")
+    else:
+        st.dataframe(conflicts, hide_index=True, width="stretch")
+
+    st.subheader("Weekly gaps")
+    st.caption(
+        "Available (non-bye) rostered players per position per week, vs. what's needed to fill "
+        "this league's dedicated starting slots (QB:1 RB:2 WR:2 TE:1). Does not account for "
+        "FLEX/SUPER_FLEX, which could pull from other positions — a rough depth signal, not a "
+        "full lineup-feasibility check."
+    )
+    weekly_gaps = state["roster_weekly_gaps"]
+    gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
+    if gap_weeks.empty:
+        st.write("No weeks have a dedicated-slot gap.")
+    else:
+        st.warning("Weeks with a gap:")
+        st.dataframe(gap_weeks, hide_index=True, width="stretch")
+    with st.expander("Show all 18 weeks"):
+        st.dataframe(weekly_gaps, hide_index=True, width="stretch")
+
+    st.subheader("Handcuff status")
+    st.caption("Your rostered RBs who are NFL starters, and whether you also own their backup.")
+    handcuffs = state["roster_handcuffs"]
+    if handcuffs.empty:
+        st.write("(none of your RBs are current NFL starters)")
+    else:
+        st.dataframe(handcuffs, hide_index=True, width="stretch")
+
+st.divider()
+st.caption(f"Dynasty Rookie Draft · build {APP_VERSION}")

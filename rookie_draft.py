@@ -34,7 +34,44 @@ def print_report(state: dict[str, Any]) -> None:
         clock_team = state["team_names"][on_the_clock.owner_roster_id]
         print(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}\n")
 
-    print("--- Your picks ---")
+    print(
+        "--- Draft plan (every pick you own this draft) ---\n"
+        "Picks are ranked by season-average MARGINAL starting-lineup value, not raw trade value:\n"
+        "for each candidate, simulate adding them (+ the resulting drop) and measure how much your\n"
+        "roster's season-average starting value goes up, bye weeks included in that average - not\n"
+        "raw player value with a needs override. A modest player at a weak position can beat a highly\n"
+        "valued one who wouldn't crack your lineup. status=completed rows show the REAL pick Sleeper\n"
+        "recorded, scored the same way retroactively; status=upcoming rows are simulated, assuming no\n"
+        "other team's picks happen in between - 'if these were your only remaining picks, back to back,\n"
+        "on the board right now.' drop_name is a live suggestion even for completed rounds - Sleeper has\n"
+        "no record of whether it was actually dropped. Refresh after any pick lands for an updated plan."
+    )
+    plan = state["multi_round_plan"]
+    if plan["rounds"].empty:
+        print("(no picks owned this draft)")
+    else:
+        print(plan["rounds"].to_string(index=False))
+        if plan["rounds"]["drop_is_starter"].any():
+            print("NOTE: at least one recommended drop is a current starter - see drop_is_starter above.")
+
+        alternates_by_pick = plan["alternates_by_pick"]
+        for _, row in plan["rounds"].iterrows():
+            alternates = alternates_by_pick.get(row["overall_pick"])
+            if alternates is not None and not alternates.empty:
+                print(f"  Backup options for pick {row['overall_pick']} (round {row['round']}):")
+                print(alternates.to_string(index=False))
+    if not plan["weekly_gap_alerts"].empty:
+        print("ALERT: this plan would introduce/worsen a weekly gap:")
+        print(plan["weekly_gap_alerts"].to_string(index=False))
+    else:
+        print("This plan does not introduce any new weekly gaps.")
+
+    print("\n--- Lineup (optimal current starters, value-only snapshot) ---")
+    print(state["lineup_starters"].to_string(index=False))
+    print("Bench (top 5 by value):")
+    print(state["lineup_bench"].head(5).to_string(index=False) if not state["lineup_bench"].empty else "(empty)")
+
+    print("\n--- Your picks ---")
     print(state["your_picks"].to_string(index=False) if not state["your_picks"].empty else "(none)")
 
     cap = state["roster_capacity"]
@@ -52,22 +89,47 @@ def print_report(state: dict[str, Any]) -> None:
     print(f"Flagged needs: {', '.join(sorted(needs))}" if needs else "No positions flagged as a need right now.")
 
     print(
-        "\n--- Roster value analysis (lowest value first) ---\n"
-        "Same FantasyCalc values as the big board, so the same scoring-mismatch caveat "
-        "applies (QB/TE likely undervalued here). 'note' weighs age: low value + young is "
-        "still a rebuild asset, low value + aging is a real drop candidate."
+        "\n--- Roster value analysis (lowest adj_value first) ---\n"
+        "Same QB/TE-corrected value as the big board (raw 'value' kept alongside for "
+        "comparison). 'note' weighs age: low value + young is still a rebuild asset, "
+        "low value + aging is a real drop candidate."
     )
     print(state["roster_value"].to_string(index=False) if not state["roster_value"].empty else "(empty roster)")
+
+    print("\n--- Bye week conflicts (2+ players at a position sharing a bye) ---")
+    conflicts = state["roster_bye_conflicts"]
+    print(conflicts.to_string(index=False) if not conflicts.empty else "(none)")
+
+    print(
+        "\n--- Weekly gaps (dedicated QB/RB/WR/TE slots only, not FLEX/SUPER_FLEX) ---\n"
+        "Available (non-bye) rostered players per position per week, vs. what's needed to "
+        "fill this league's dedicated starting slots (QB:1 RB:2 WR:2 TE:1). Does not account "
+        "for FLEX/SUPER_FLEX, which could pull from other positions."
+    )
+    weekly_gaps = state["roster_weekly_gaps"]
+    print(weekly_gaps.to_string(index=False))
+    gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
+    print(
+        "Weeks with a gap:\n" + gap_weeks.to_string(index=False)
+        if not gap_weeks.empty
+        else "No weeks have a dedicated-slot gap."
+    )
+
+    print("\n--- Handcuff status (your rostered RB starters) ---")
+    handcuffs = state["roster_handcuffs"]
+    print(handcuffs.to_string(index=False) if not handcuffs.empty else "(none of your RBs are NFL starters)")
 
     if not state["recent_picks"].empty:
         print("\n--- Recently drafted ---")
         print(state["recent_picks"].to_string(index=False))
 
     print(
-        "\n--- Available rookies (big board) ---\n"
+        "\n--- Rookie big board (whole class - drafted players stay listed) ---\n"
         "tier = FantasyCalc's global dynasty tier across ALL players, not rookie-specific "
-        "(gaps are veterans/other rookies not shown here). rank = order within this rookie-only "
-        "list. fits_need = position is currently flagged as a roster need."
+        "(gaps are veterans/other rookies not shown here). rank = value order across the WHOLE "
+        "class, drafted and undrafted together. fits_need = position is currently flagged as a "
+        "roster need. handcuff_to = this rookie backs up one of your own RB starters, if any. "
+        "drafted_round/drafted_by = blank if still undrafted."
     )
     board = state["big_board"]
     if board.empty:
