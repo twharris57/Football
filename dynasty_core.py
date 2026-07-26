@@ -508,7 +508,7 @@ def roster_bye_conflicts(
     weekly_df = pd.DataFrame(weekly_rows)
     if weekly_df.empty:
         return weekly_df
-    return weekly_df.sort_values("lineup_delta").reset_index(drop=True)
+    return weekly_df.sort_values("week").reset_index(drop=True)
 
 
 NFL_WEEKS = range(1, 19)
