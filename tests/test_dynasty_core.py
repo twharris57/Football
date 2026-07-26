@@ -22,8 +22,25 @@ def make_player(position: str, team: str = "AAA", full_name: str | None = None) 
     return {"position": position, "team": team, "full_name": full_name or f"{position}-{team}"}
 
 
-def fc_entry(sleeper_id: str, value: float, tier: int = 1) -> dict:
-    return {"player": {"sleeperId": sleeper_id}, "value": value, "maybeTier": tier}
+def fc_entry(sleeper_id: str, value: float, tier: int = 1, position: str | None = None) -> dict:
+    return {"player": {"sleeperId": sleeper_id, "position": position}, "value": value, "maybeTier": tier}
+
+
+class TestComputePickOwnership:
+    """The overall-pick math assumes a linear draft; a different type must fail loudly, not silently."""
+
+    def test_raises_for_a_non_linear_draft_type(self):
+        draft = {"type": "snake", "settings": {"teams": 2, "rounds": 1}, "slot_to_roster_id": {"1": 1, "2": 2}}
+
+        with pytest.raises(ValueError, match="linear"):
+            dc.compute_pick_ownership(draft, [], "2026")
+
+    def test_linear_draft_keeps_the_same_slot_order_every_round(self):
+        draft = {"type": "linear", "settings": {"teams": 2, "rounds": 2}, "slot_to_roster_id": {"1": 1, "2": 2}}
+
+        picks = dc.compute_pick_ownership(draft, [], "2026")
+
+        assert [p.original_roster_id for p in picks] == [1, 2, 1, 2]
 
 
 class TestAssignStarters:
@@ -141,3 +158,27 @@ class TestRosterWeeklyGaps:
 
         assert gaps.loc[gaps["week"] == 7, "gap"].iloc[0] == "QB"
         assert gaps.loc[gaps["week"] == 1, "gap"].iloc[0] == ""
+
+
+class TestPersonalizedMultipliers:
+    """fc_value_by_sleeper_id should prefer a per-player multiplier (see player_scoring.py)
+    over the position average, and fall back sensibly when one isn't available."""
+
+    def test_personalized_multiplier_preferred_over_position_average(self):
+        multipliers = {"per_player": {"qb1": 2.0}, "position_average": {"QB": 1.5}}
+
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("qb1", 100, position="QB")], multipliers)
+
+        assert fc_by_id["qb1"]["adj_value"] == pytest.approx(200.0)
+
+    def test_falls_back_to_position_average_when_no_personalized_entry(self):
+        multipliers = {"per_player": {}, "position_average": {"QB": 1.5}}
+
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("qb1", 100, position="QB")], multipliers)
+
+        assert fc_by_id["qb1"]["adj_value"] == pytest.approx(150.0)
+
+    def test_falls_back_to_hardcoded_constant_when_no_multipliers_available(self):
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("qb1", 100, position="QB")])
+
+        assert fc_by_id["qb1"]["adj_value"] == pytest.approx(100 * dc.POSITION_VALUE_MULTIPLIER["QB"])

@@ -93,10 +93,12 @@ new one:
   — the NAS never builds on-device. Host port is remappable via `.env`'s
   `HOST_PORT` (`.env.example` committed); the container's internal port
   stays fixed at 8501.
-- **Named volume** (`players_cache`) for the on-disk players-dataset cache,
-  so it survives container restarts instead of re-downloading ~14MB every
-  time — matches `docker_guidelines.md`'s "named volumes for data that
-  should persist" directly.
+- **Named volume** (`nfl_data_cache`) for the whole `.cache/` directory —
+  the on-disk players-dataset cache (so it survives container restarts
+  instead of re-downloading ~14MB every time) and the real-scoring
+  multiplier cache (see `player_scoring.py`) — matches
+  `docker_guidelines.md`'s "named volumes for data that should persist"
+  directly.
 
 ### API resilience and test coverage
 

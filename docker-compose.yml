@@ -8,8 +8,8 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - players_cache:/app/.cache
+      - nfl_data_cache:/app/.cache
     restart: unless-stopped
 
 volumes:
-  players_cache:
+  nfl_data_cache:
