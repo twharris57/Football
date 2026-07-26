@@ -38,12 +38,16 @@ not a deployed service.
 - **Dynasty league tools** (Sleeper): `sleeper_api.py` is a thin client for
   Sleeper's public read-only API, with local disk caching for the ~14MB
   players reference dataset (`.cache/`, gitignored, 12h TTL). `fantasycalc_api.py`
-  wraps FantasyCalc's public dynasty trade-value rankings — the project's only
-  valuation source, joined to Sleeper players via `sleeperId`. `dynasty_core.py`
-  holds the shared logic (pick ownership, big board, roster needs, `gather_state`)
-  used by both `rookie_draft.py` (CLI, interactive refresh loop) and
-  `streamlit_app.py` (web dashboard, sidebar refresh buttons) — one code path,
-  two presentation layers.
+  wraps FantasyCalc's public dynasty trade-value rankings — the market-value
+  baseline, corrected for this league's non-standard scoring (see below) and
+  used as an input to a marginal-lineup-value ranking, not the final answer.
+  `dynasty_core.py` holds all the shared logic — pick ownership, the rookie
+  big board, roster analysis (needs/value/capacity/byes/weekly gaps/handcuffs),
+  optimal-lineup assignment, and the round-by-round draft plan — behind one
+  `gather_state()` call, used by both `rookie_draft.py` (CLI, interactive
+  refresh loop) and `streamlit_app.py` (web dashboard, 4 tabs). Full
+  methodology in `docs/rookie-draft-big-board.md`; web/Docker details in
+  `docs/dynasty-draft-web-app.md`.
 - **Web + Docker**: `web_guidelines.md` now applies to `streamlit_app.py`, and
   `docker_guidelines.md` applies to the `Dockerfile`/compose setup below.
   `python:3.12-slim` is used instead of the guideline's alpine default — a
@@ -76,7 +80,7 @@ team_metadata_batch.py   Prototype: team altitude/temperature/style enrichment v
 football.ipynb           Notebook version of football.py for interactive experimentation
 sleeper_api.py           Sleeper API client + local players-dataset cache
 fantasycalc_api.py       FantasyCalc dynasty trade-value client
-dynasty_core.py          Shared dynasty logic (pick ownership, big board, roster needs)
+dynasty_core.py          Shared dynasty logic: big board, roster analysis, lineup, marginal-value draft plan
 rookie_draft.py          Rookie draft big board CLI, with interactive refresh loop
 streamlit_app.py         Rookie draft big board web dashboard (same logic as the CLI)
 Dockerfile               Image for streamlit_app.py (python:3.12-slim, non-root)
@@ -135,13 +139,21 @@ are added.
   any recommendation logic (rookie value, trade sense) toward long-term
   asset value over immediate win-now moves. See `.claude/PROJECT_PLAN.md`
   for the current state of dynasty tooling.
-- **Rookie draft big board**: ranks this season's incoming rookie class by
-  dynasty trade value (FantasyCalc, since this project has no valuation
-  model of its own), grouped into FantasyCalc's tiers, filtered to players
-  not yet rostered or drafted. Cross-referenced against a rough roster-needs
-  heuristic (`young_core` count per position — players at ≤2 years
-  experience — flagged as a `need` if below a threshold), not a full
-  needs model.
+- **Rookie draft big board**: shows the whole incoming rookie class (drafted
+  players stay listed, annotated with who took them), valued via FantasyCalc
+  dynasty trade value corrected for this league's QB/TE scoring (see
+  `POSITION_VALUE_MULTIPLIER` in `dynasty_core.py`). Pick *recommendations*,
+  however, don't rank by that value directly — see "Marginal lineup value"
+  below.
+- **Marginal lineup value**: the draft plan ranks candidates by how much
+  drafting them would raise the roster's season-average optimal
+  starting-lineup value (`rank_by_marginal_value`), not by raw trade value.
+  This is what actually captures positional scarcity — a modest player at a
+  thin position can outrank a highly valued one who wouldn't crack the
+  lineup — and folds bye weeks directly into the season average rather than
+  handling them as a side adjustment. Full methodology, including why
+  `assign_starters`'s most-restrictive-slot-first assignment is provably
+  optimal for this league's slot structure, in `docs/rookie-draft-big-board.md`.
 
 ## Agent Behavior
 
