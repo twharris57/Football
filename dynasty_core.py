@@ -435,6 +435,209 @@ def roster_handcuff_status(roster: dict, players: dict[str, dict], handcuffs: di
     return pd.DataFrame(rows)
 
 
+FLEX_ELIGIBLE_POSITIONS = frozenset({"RB", "WR", "TE"})
+SUPERFLEX_ELIGIBLE_POSITIONS = frozenset({"QB", "RB", "WR", "TE"})
+
+
+def player_value_rows(player_ids: list[str], players: dict[str, dict], fc_values: list[dict]) -> list[dict]:
+    """Build {player_id, pos, adj_value} rows for the given players, for lineup/drop logic."""
+    fc_by_sleeper_id = {
+        entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
+    }
+    rows = []
+    for player_id in player_ids:
+        info = players.get(player_id, {})
+        position = info.get("position")
+        if position not in FANTASY_POSITIONS:
+            continue
+        fc_entry = fc_by_sleeper_id.get(player_id)
+        value = fc_entry["value"] if fc_entry else None
+        rows.append({"player_id": player_id, "pos": position, "adj_value": adjusted_value(position, value)})
+    return rows
+
+
+def assign_starters(player_rows: list[dict], roster_positions: list[str]) -> list[tuple[str, str | None]]:
+    """Assign players to starting slots, most-restrictive slot first.
+
+    Provably optimal for this league's nested slot eligibility: QB's single
+    dedicated slot is a subset of SUPER_FLEX's eligible positions, and
+    RB/WR/TE dedicated slots are a subset of FLEX's, which is in turn a
+    subset of SUPER_FLEX's — filling the most-restrictive slots first with
+    the single best remaining value at each step is optimal for this nested
+    ("laminar") structure, not just a heuristic (a greedy exchange argument
+    applies: filling a less-restrictive slot first could only ever waste a
+    flexible slot's optionality on a player who had nowhere else to go).
+
+    Returns one (slot_label, player_id) pair per starting slot in
+    roster_positions (excluding bench), in QB/RB/WR/TE/FLEX/SUPER_FLEX
+    order; player_id is None if no eligible player remains for that slot.
+    """
+    remaining = sorted(
+        (r for r in player_rows if r["pos"] in FANTASY_POSITIONS),
+        key=lambda r: r["adj_value"] if r["adj_value"] is not None else -1,
+        reverse=True,
+    )
+
+    def take_best(eligible: frozenset[str]) -> str | None:
+        for i, row in enumerate(remaining):
+            if row["pos"] in eligible:
+                return remaining.pop(i)["player_id"]
+        return None
+
+    assignments: list[tuple[str, str | None]] = []
+    for pos in ("QB", "RB", "WR", "TE"):
+        for _ in range(roster_positions.count(pos)):
+            assignments.append((pos, take_best(frozenset({pos}))))
+    for _ in range(roster_positions.count("FLEX")):
+        assignments.append(("FLEX", take_best(FLEX_ELIGIBLE_POSITIONS)))
+    for _ in range(roster_positions.count("SUPER_FLEX")):
+        assignments.append(("SUPER_FLEX", take_best(SUPERFLEX_ELIGIBLE_POSITIONS)))
+    return assignments
+
+
+def lineup_breakdown(
+    roster: dict, players: dict[str, dict], fc_values: list[dict], league: dict
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return (starters, bench) for the roster's optimal lineup by current value.
+
+    A snapshot assessment, not week-specific — doesn't yet account for byes
+    or injuries when deciding who starts (a by-week/injury-aware version is
+    a planned refinement, not built here).
+    """
+    rows = player_value_rows(roster.get("players") or [], players, fc_values)
+    value_by_id = {r["player_id"]: r["adj_value"] for r in rows}
+    assignments = assign_starters(rows, league["roster_positions"])
+    starter_ids = {pid for _, pid in assignments if pid}
+
+    starter_rows = []
+    for slot, pid in assignments:
+        if pid is None:
+            starter_rows.append({"slot": slot, "name": "(empty)", "pos": None, "adj_value": None})
+            continue
+        info = players.get(pid, {})
+        starter_rows.append(
+            {"slot": slot, "name": info.get("full_name"), "pos": info.get("position"), "adj_value": value_by_id[pid]}
+        )
+
+    bench_rows = [
+        {"name": players.get(r["player_id"], {}).get("full_name"), "pos": r["pos"], "adj_value": r["adj_value"]}
+        for r in rows
+        if r["player_id"] not in starter_ids
+    ]
+    bench_df = pd.DataFrame(bench_rows)
+    if not bench_df.empty:
+        bench_df = bench_df.sort_values("adj_value", ascending=False, na_position="last").reset_index(drop=True)
+
+    return pd.DataFrame(starter_rows), bench_df
+
+
+def recommend_drop(
+    player_ids: list[str],
+    players: dict[str, dict],
+    fc_values: list[dict],
+    league: dict,
+    exclude_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any] | None:
+    """Recommend the single best player to drop: lowest-value bench player, over starters.
+
+    `exclude_ids` protects specific players (e.g. just picked earlier in the
+    same multi-round plan) from being recommended for drop in this pass.
+    """
+    rows = [r for r in player_value_rows(player_ids, players, fc_values) if r["player_id"] not in exclude_ids]
+    if not rows:
+        return None
+
+    assignments = assign_starters(rows, league["roster_positions"])
+    starter_ids = {pid for _, pid in assignments if pid}
+    bench_rows = [r for r in rows if r["player_id"] not in starter_ids]
+    pool = bench_rows if bench_rows else rows
+    worst = min(pool, key=lambda r: r["adj_value"] if r["adj_value"] is not None else -1)
+
+    return {
+        "player_id": worst["player_id"],
+        "name": players.get(worst["player_id"], {}).get("full_name"),
+        "pos": worst["pos"],
+        "adj_value": worst["adj_value"],
+        "is_starter": worst["player_id"] in starter_ids,
+    }
+
+
+def multi_round_plan(
+    ownership: list[DraftPickSlot],
+    user_roster_id: int,
+    current_pick_no: int,
+    available: dict[str, dict],
+    players: dict[str, dict],
+    fc_values: list[dict],
+    user_roster: dict,
+    league: dict,
+    byes: dict[str, int],
+) -> dict[str, Any]:
+    """Simulate the user's own remaining picks this draft, round by round.
+
+    For each upcoming pick (in round order): recommends the best available
+    rookie by adj_value, and a corresponding drop (bench preferred over
+    starters, via assign_starters/recommend_drop), then updates the
+    hypothetical roster before simulating the next pick. Does NOT simulate
+    the other ~11 teams' picks that happen in between — this assumes "if
+    these were your only picks, back to back, on the board as it looks
+    right now," not a full mock draft. It's recomputed fresh on every
+    refresh, so it stays realistic as the real draft actually progresses.
+
+    Also compares the resulting hypothetical roster's weekly gaps against
+    the current roster's (see roster_weekly_gaps), flagging any week where
+    this plan would introduce or worsen a dedicated-slot gap.
+    """
+    own_upcoming = sorted(
+        (p for p in ownership if p.owner_roster_id == user_roster_id and p.overall_pick >= current_pick_no),
+        key=lambda p: p.overall_pick,
+    )
+
+    available_ids = set(available.keys())
+    hypothetical_ids = list(user_roster.get("players") or [])
+    just_picked: set[str] = set()
+
+    rounds = []
+    for pick in own_upcoming:
+        rows = player_value_rows(list(available_ids), players, fc_values)
+        if not rows:
+            break
+        best = max(rows, key=lambda r: r["adj_value"] if r["adj_value"] is not None else -1)
+        picked_id = best["player_id"]
+        picked_info = players.get(picked_id, {})
+
+        drop = recommend_drop(hypothetical_ids, players, fc_values, league, exclude_ids=frozenset(just_picked))
+
+        rounds.append(
+            {
+                "round": pick.round,
+                "overall_pick": pick.overall_pick,
+                "pick_name": picked_info.get("full_name"),
+                "pick_pos": picked_info.get("position"),
+                "pick_adj_value": best["adj_value"],
+                "drop_name": drop["name"] if drop else None,
+                "drop_pos": drop["pos"] if drop else None,
+                "drop_is_starter": drop["is_starter"] if drop else None,
+            }
+        )
+
+        available_ids.discard(picked_id)
+        if drop:
+            hypothetical_ids = [pid for pid in hypothetical_ids if pid != drop["player_id"]]
+        hypothetical_ids.append(picked_id)
+        just_picked.add(picked_id)
+
+    hypothetical_roster = {"players": hypothetical_ids}
+    projected_gaps = roster_weekly_gaps(hypothetical_roster, players, byes, league)
+    current_gaps = roster_weekly_gaps(user_roster, players, byes, league)
+    merged = current_gaps[["week", "gap"]].merge(
+        projected_gaps[["week", "gap"]], on="week", suffixes=("_current", "_projected")
+    )
+    alerts = merged[(merged["gap_projected"] != "") & (merged["gap_projected"] != merged["gap_current"])]
+
+    return {"rounds": pd.DataFrame(rounds), "weekly_gap_alerts": alerts.reset_index(drop=True)}
+
+
 def draft_strategy_recommendation(big_board: pd.DataFrame, roster_value: pd.DataFrame) -> dict[str, Any]:
     """Synthesize a top pick recommendation and drop candidates, with reasons.
 
@@ -563,6 +766,7 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
 
     big_board = build_big_board(available, fc_values, needs, handcuff_targets)
     roster_value = roster_value_analysis(user_roster, players, fc_values, byes)
+    lineup_starters, lineup_bench = lineup_breakdown(user_roster, players, fc_values, league)
 
     return {
         "league": league,
@@ -576,8 +780,13 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
         "roster_bye_conflicts": roster_bye_conflicts(user_roster, players, byes),
         "roster_weekly_gaps": roster_weekly_gaps(user_roster, players, byes, league),
         "roster_handcuffs": roster_handcuff_status(user_roster, players, handcuffs),
+        "lineup_starters": lineup_starters,
+        "lineup_bench": lineup_bench,
         "recent_picks": pd.DataFrame(recent_rows),
         "big_board": big_board,
         "strategy": draft_strategy_recommendation(big_board, roster_value),
+        "multi_round_plan": multi_round_plan(
+            ownership, user_roster_id, current_pick_no, available, players, fc_values, user_roster, league, byes
+        ),
         "team_names": team_names,
     }

@@ -58,7 +58,9 @@ else:
     clock_team = state["team_names"][on_the_clock.owner_roster_id]
     st.info(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}")
 
-strategy_tab, draft_tab, roster_tab = st.tabs(["Strategy", "Draft Board", "Your Roster"])
+strategy_tab, plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(
+    ["Strategy", "Draft Plan", "Lineup", "Draft Board", "Your Roster"]
+)
 
 with strategy_tab:
     st.caption(
@@ -93,6 +95,45 @@ with strategy_tab:
             hide_index=True,
             width="stretch",
         )
+
+with plan_tab:
+    st.caption(
+        "Your remaining picks this draft, simulated round by round. Assumes no other team's "
+        "picks happen in between — 'if these were your only picks, back to back, on the board "
+        "right now.' Refresh after any pick lands (yours or anyone else's) for an updated plan "
+        "against the real board."
+    )
+    plan = state["multi_round_plan"]
+    rounds = plan["rounds"]
+    if rounds.empty:
+        st.write("(no upcoming picks)")
+    else:
+        st.dataframe(rounds, hide_index=True, width="stretch")
+        if rounds["drop_is_starter"].any():
+            st.warning("At least one recommended drop is a current starter — see drop_is_starter above.")
+
+    st.subheader("Weekly gap impact")
+    alerts = plan["weekly_gap_alerts"]
+    if alerts.empty:
+        st.success("This plan does not introduce any new weekly gaps.")
+    else:
+        st.warning("This plan would introduce or worsen a gap in these weeks:")
+        st.dataframe(alerts, hide_index=True, width="stretch")
+
+with lineup_tab:
+    st.caption(
+        "Optimal current lineup by value alone — a snapshot, not week-specific yet (doesn't "
+        "account for byes or injuries when deciding who starts). A by-week/injury-aware version "
+        "is a planned refinement."
+    )
+    st.subheader("Starters")
+    st.dataframe(state["lineup_starters"], hide_index=True, width="stretch")
+    st.subheader("Bench")
+    bench = state["lineup_bench"]
+    if bench.empty:
+        st.write("(empty)")
+    else:
+        st.dataframe(bench, hide_index=True, width="stretch")
 
 with draft_tab:
     st.subheader("Your picks")

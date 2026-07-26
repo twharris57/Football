@@ -57,6 +57,30 @@ def print_report(state: dict[str, Any]) -> None:
         print("Consider dropping (to make roster room):")
         print(strategy["drop_candidates"][["name", "pos", "age", "adj_value", "note"]].to_string(index=False))
 
+    print(
+        "\n--- Draft plan (your remaining picks this draft) ---\n"
+        "Assumes no other team's picks happen in between - 'if these were your only picks, "
+        "back to back, on the board right now.' Refresh after any pick lands (yours or "
+        "anyone else's) to get an updated plan against the real board."
+    )
+    plan = state["multi_round_plan"]
+    if plan["rounds"].empty:
+        print("(no upcoming picks)")
+    else:
+        print(plan["rounds"].to_string(index=False))
+        if plan["rounds"]["drop_is_starter"].any():
+            print("NOTE: at least one recommended drop is a current starter - see drop_is_starter above.")
+    if not plan["weekly_gap_alerts"].empty:
+        print("ALERT: this plan would introduce/worsen a weekly gap:")
+        print(plan["weekly_gap_alerts"].to_string(index=False))
+    else:
+        print("This plan does not introduce any new weekly gaps.")
+
+    print("\n--- Lineup (optimal current starters, value-only snapshot) ---")
+    print(state["lineup_starters"].to_string(index=False))
+    print("Bench (top 5 by value):")
+    print(state["lineup_bench"].head(5).to_string(index=False) if not state["lineup_bench"].empty else "(empty)")
+
     print("\n--- Your picks ---")
     print(state["your_picks"].to_string(index=False) if not state["your_picks"].empty else "(none)")
 
