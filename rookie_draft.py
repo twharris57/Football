@@ -34,7 +34,30 @@ def print_report(state: dict[str, Any]) -> None:
         clock_team = state["team_names"][on_the_clock.owner_roster_id]
         print(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}\n")
 
-    print("--- Your picks ---")
+    print(
+        "--- Recommended strategy ---\n"
+        "Heuristic synthesis of the signals below (need fit, handcuff, age-aware drop note), "
+        "not a new model. Values behind this use the QB/TE scoring correction "
+        f"(QB x{dynasty_core.POSITION_VALUE_MULTIPLIER['QB']}, TE x{dynasty_core.POSITION_VALUE_MULTIPLIER['TE']}, "
+        "see dynasty_core.py) but not the smaller long-TD/first-down bonus gaps."
+    )
+    strategy = state["strategy"]
+    top_pick = strategy["top_pick"]
+    if top_pick:
+        print(
+            f"Top pick: {top_pick['name']} ({top_pick['pos']}, rank {top_pick['rank']}, tier {top_pick['tier']}) "
+            f"- {top_pick['reason']}"
+        )
+        if not strategy["also_consider"].empty:
+            print("Also consider:")
+            print(strategy["also_consider"][["rank", "name", "pos", "adj_value", "tier"]].to_string(index=False))
+    else:
+        print("Top pick: (no rookies available)")
+    if not strategy["drop_candidates"].empty:
+        print("Consider dropping (to make roster room):")
+        print(strategy["drop_candidates"][["name", "pos", "age", "adj_value", "note"]].to_string(index=False))
+
+    print("\n--- Your picks ---")
     print(state["your_picks"].to_string(index=False) if not state["your_picks"].empty else "(none)")
 
     cap = state["roster_capacity"]

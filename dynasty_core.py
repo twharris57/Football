@@ -28,6 +28,23 @@ YOUNG_CORE_NEED_THRESHOLD = 2
 LOW_VALUE_YOUNG_AGE = 24
 LOW_VALUE_AGING_AGE = 27
 
+# Position-level correction for FantasyCalc's known scoring mismatch (see
+# PROJECT_PLAN.md): FantasyCalc's values assume 4pt passing TDs and no TE
+# premium, not this league's real 6pt passing TDs / +0.5-per-reception TE
+# premium. Computed from real 2024 season data (the most recent complete
+# season nfl_data_py has published — 2025 isn't available yet) as the ratio
+# of total fantasy points, under this league's real rule vs FantasyCalc's
+# assumed baseline rule, holding every other scoring setting constant, for
+# startable-volume players (QB: >=200 attempts, 39 qualifying; TE: >=30
+# targets, 45 qualifying). This corrects only the two largest, most clearly
+# attributable gaps — it does NOT correct for the smaller long-TD/first-down
+# bonus gaps also noted in PROJECT_PLAN.md. A real per-player recompute
+# (Phase 4) would replace this; this is the deliberately lightweight version.
+POSITION_VALUE_MULTIPLIER = {
+    "QB": 1.164,
+    "TE": 1.204,
+}
+
 
 @dataclass(frozen=True)
 class DraftPickSlot:
@@ -99,6 +116,13 @@ def rookie_pool(players: dict[str, dict], season: str) -> dict[str, dict]:
     }
 
 
+def adjusted_value(position: str, value: float | None) -> float | None:
+    """Apply the QB/TE scoring-mismatch correction to a raw FantasyCalc value."""
+    if value is None:
+        return None
+    return value * POSITION_VALUE_MULTIPLIER.get(position, 1.0)
+
+
 def build_big_board(
     available: dict[str, dict],
     fc_values: list[dict],
@@ -107,14 +131,17 @@ def build_big_board(
 ) -> pd.DataFrame:
     """Rank available rookies by dynasty value into tiers, for display.
 
-    `tier` is FantasyCalc's global tier across *all* dynasty-relevant
-    players, not rookie-specific — gaps in the tier sequence here are
-    veterans/other rookies not in this filtered view. `rank` is this
-    player's order within this rookie-only list (1 = best available rookie).
-    `fits_need` flags whether the player's position is currently a roster
-    need (see `roster_needs_summary`) — a rough prioritization signal, not a
-    single "correct" pick. `handcuff_to` names the roster's own RB starter
-    this rookie would handcuff, if any (see `handcuff_map`).
+    `value` is FantasyCalc's raw number; `adj_value` applies the QB/TE
+    scoring-mismatch correction (see POSITION_VALUE_MULTIPLIER) and is what
+    determines sort order and `rank`. `tier` is FantasyCalc's own global
+    tier across *all* dynasty-relevant players, not rookie-specific and not
+    adjusted — gaps in the tier sequence here are veterans/other rookies not
+    in this filtered view. `rank` is this player's order within this
+    rookie-only list by adj_value (1 = best available rookie). `fits_need`
+    flags whether the player's position is currently a roster need (see
+    `roster_needs_summary`) — a rough prioritization signal, not a single
+    "correct" pick. `handcuff_to` names the roster's own RB starter this
+    rookie would handcuff, if any (see `handcuff_map`).
     """
     fc_by_sleeper_id = {
         entry["player"]["sleeperId"]: entry for entry in fc_values if entry["player"].get("sleeperId")
@@ -124,16 +151,19 @@ def build_big_board(
     rows = []
     for player_id, info in available.items():
         fc_entry = fc_by_sleeper_id.get(player_id)
+        position = info.get("position")
+        value = fc_entry["value"] if fc_entry else None
         rows.append(
             {
                 "name": info.get("full_name"),
-                "pos": info.get("position"),
-                "fits_need": info.get("position") in need_positions,
+                "pos": position,
+                "fits_need": position in need_positions,
                 "handcuff_to": handcuff_targets.get(player_id, ""),
                 "team": info.get("team") or "FA",
                 "college": info.get("college"),
                 "age": info.get("age"),
-                "value": fc_entry["value"] if fc_entry else None,
+                "value": value,
+                "adj_value": adjusted_value(position, value),
                 "tier": fc_entry.get("maybeTier") if fc_entry else None,
             }
         )
@@ -142,7 +172,7 @@ def build_big_board(
     if board.empty:
         return board
 
-    board = board.sort_values("value", ascending=False, na_position="last").reset_index(drop=True)
+    board = board.sort_values("adj_value", ascending=False, na_position="last").reset_index(drop=True)
     unranked_tier = int(board["tier"].max() + 1) if board["tier"].notna().any() else 1
     board["tier"] = board["tier"].fillna(unranked_tier).astype(int)
     board.insert(0, "rank", board.index + 1)
@@ -215,11 +245,11 @@ def roster_value_analysis(
 ) -> pd.DataFrame:
     """Rank the roster by dynasty value (lowest first) to surface drop candidates.
 
-    Uses the same FantasyCalc values as the rookie big board — this league's
-    known scoring mismatch applies here too (see PROJECT_PLAN.md): QB/TE are
-    likely undervalued relative to this league's real 6pt-passing/TE-premium
-    rules, so a "low value" QB/TE deserves more skepticism than the number
-    alone suggests.
+    Uses the same FantasyCalc values as the rookie big board, with the same
+    `adj_value` QB/TE correction applied (see POSITION_VALUE_MULTIPLIER) —
+    ranking and the low-value cutoff below both use `adj_value`, not the raw
+    `value`. `bye` is included for cross-reference against
+    `roster_bye_conflicts`.
 
     The bottom quartile (min 3 players) of the roster's own value distribution
     is flagged low-value. Within that group, `note` distinguishes aging
@@ -239,6 +269,7 @@ def roster_value_analysis(
         if position not in FANTASY_POSITIONS:
             continue
         fc_entry = fc_by_sleeper_id.get(player_id)
+        value = fc_entry["value"] if fc_entry else None
         rows.append(
             {
                 "name": info.get("full_name"),
@@ -246,7 +277,8 @@ def roster_value_analysis(
                 "age": info.get("age"),
                 "years_exp": info.get("years_exp"),
                 "bye": byes.get(info.get("team")),
-                "value": fc_entry["value"] if fc_entry else None,
+                "value": value,
+                "adj_value": adjusted_value(position, value),
             }
         )
 
@@ -254,7 +286,7 @@ def roster_value_analysis(
     if roster_df.empty:
         return roster_df
 
-    roster_df = roster_df.sort_values("value", ascending=True, na_position="first").reset_index(drop=True)
+    roster_df = roster_df.sort_values("adj_value", ascending=True, na_position="first").reset_index(drop=True)
     low_value_cutoff = max(3, len(roster_df) // 4)
     is_low_value = roster_df.index < low_value_cutoff
 
@@ -361,6 +393,47 @@ def roster_handcuff_status(roster: dict, players: dict[str, dict], handcuffs: di
     return pd.DataFrame(rows)
 
 
+def draft_strategy_recommendation(big_board: pd.DataFrame, roster_value: pd.DataFrame) -> dict[str, Any]:
+    """Synthesize a top pick recommendation and drop candidates, with reasons.
+
+    A heuristic synthesis of signals already computed elsewhere (fits_need,
+    handcuff_to, adj_value, the age-aware drop note) into one recommended
+    action — not a new valuation model, and not a claim of certainty. Both
+    inputs already carry the QB/TE scoring correction via adj_value.
+    """
+    recommendation: dict[str, Any] = {"top_pick": None, "also_consider": pd.DataFrame(), "drop_candidates": pd.DataFrame()}
+
+    if not big_board.empty:
+        need_fits = big_board[big_board["fits_need"]]
+        pool = need_fits if not need_fits.empty else big_board
+        top = pool.iloc[0]
+
+        reasons = []
+        if top["fits_need"]:
+            reasons.append(f"fills a flagged need at {top['pos']}")
+        else:
+            reasons.append("no positions are currently flagged as a need, so this is simply the best value available")
+        if top["handcuff_to"]:
+            reasons.append(f"also handcuffs your own {top['handcuff_to']}")
+
+        recommendation["top_pick"] = {
+            "name": top["name"],
+            "pos": top["pos"],
+            "rank": int(top["rank"]),
+            "tier": int(top["tier"]),
+            "reason": "; ".join(reasons),
+        }
+        recommendation["also_consider"] = big_board[big_board["name"] != top["name"]].head(3)
+
+    if not roster_value.empty:
+        drop_candidates = roster_value[roster_value["note"].str.contains("drop candidate", na=False)]
+        if drop_candidates.empty:
+            drop_candidates = roster_value.head(1)
+        recommendation["drop_candidates"] = drop_candidates
+
+    return recommendation
+
+
 def format_your_picks(
     ownership: list[DraftPickSlot], user_roster_id: int, current_pick_no: int, team_names: dict[int, str]
 ) -> pd.DataFrame:
@@ -446,6 +519,9 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
             }
         )
 
+    big_board = build_big_board(available, fc_values, needs, handcuff_targets)
+    roster_value = roster_value_analysis(user_roster, players, fc_values, byes)
+
     return {
         "league": league,
         "ownership": ownership,
@@ -454,10 +530,11 @@ def gather_state(league_id: str, username: str, force_refresh_players: bool) -> 
         "roster_needs": roster_needs,
         "need_positions": needs,
         "roster_capacity": roster_capacity(user_roster, league),
-        "roster_value": roster_value_analysis(user_roster, players, fc_values, byes),
+        "roster_value": roster_value,
         "roster_bye_conflicts": roster_bye_conflicts(user_roster, players, byes),
         "roster_handcuffs": roster_handcuff_status(user_roster, players, handcuffs),
         "recent_picks": pd.DataFrame(recent_rows),
-        "big_board": build_big_board(available, fc_values, needs, handcuff_targets),
+        "big_board": big_board,
+        "strategy": draft_strategy_recommendation(big_board, roster_value),
         "team_names": team_names,
     }
