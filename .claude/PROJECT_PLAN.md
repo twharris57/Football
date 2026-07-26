@@ -92,6 +92,59 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   - Exclude a candidate from its own drop-simulation in `recommend_drop`
     (theoretically possible, vanishingly unlikely to surface as a top pick).
 
+- **Draft dashboard UX polish & minor fixes** — user-flagged during review of
+  PR #5 (2026-07-26), across the Streamlit dashboard's Draft Plan/Lineup/Draft
+  Board/Your Roster tabs. Not blocking, not sequenced yet — pick these up in
+  whatever order makes sense once started.
+  1. **Consolidate "Backup options" into one table.** Each round's expander
+     (`streamlit_app.py:115`, fed by `plan["alternates_by_pick"]` from
+     `multi_round_plan()`) only ever holds up to 2 rows (`top_n=2` for
+     alternates) — a whole expander-per-round is overkill for that little
+     content. Replace with a single consolidated table of additional-pick
+     options across all rounds (e.g. an `overall_pick`/`round` column instead
+     of a heading per round).
+  2. **Restructure the round table into per-pick collapsible sections.**
+     Currently one flat table (`streamlit_app.py:105-124`, `plan["rounds"]`).
+     Split into one collapsible section per pick: collapsed view shows the
+     recommended pick + drop with visual cues (color/icon — exact treatment
+     TBD), expanded view holds the full reasoning/backup options/gap-impact
+     detail. Bigger UI change than the others here — worth a short design
+     pass (what "visual cues" means concretely, how `status=completed` vs.
+     `upcoming` reads in the collapsed state) before coding.
+  3. **Lineup tab needs IR and Taxi sections.** Currently only Starters/Bench
+     (`streamlit_app.py:126-135`, from `lineup_breakdown()`). Neither IR nor
+     taxi-squad rostered players are shown anywhere in this tab today — taxi
+     players are counted (`roster_capacity`) but never listed by name here;
+     IR isn't modeled anywhere yet (see `roster_capacity`'s own documented
+     reserve/IR limitation, `dynasty_core.py:274-280`).
+  4. **`handcuff_to` is always empty on the rookie big board — investigate.**
+     (`dynasty_core.py:1022-1026` builds `handcuff_targets` from
+     `handcuff_map()`'s real-NFL depth-chart backups; `build_big_board` flags
+     a rookie candidate if their `player_id` is a value in that dict.)
+     Working hypothesis, unverified: `handcuff_map()` reflects *current* NFL
+     depth charts, which likely don't list incoming rookies as anyone's
+     backup yet this early pre-draft/pre-training-camp — so structurally
+     nothing would ever match, independent of any join bug. Needs checking
+     against a known real handcuff situation once depth charts populate
+     further into the offseason, before assuming the ID crosswalk is broken.
+  5. **Roster Value's "aging" cutoff should account for position.**
+     `LOW_VALUE_AGING_AGE = 27` (`dynasty_core.py:30`) is one flat threshold
+     for every position — RB decline is well-documented as earlier (mid-20s)
+     than QB/TE, who often start much later. Needs per-position aging curves,
+     not one number. Related idea, same area: pull more per-player detail
+     from Sleeper's player feed over time (currently only name/position/team/
+     age/college/years_exp are read — `sleeper_api.get_players()` returns
+     much more per player that isn't surfaced anywhere yet).
+  6. **Bye Week Conflicts should show real lineup-strength impact, not just
+     who's out.** Currently (`roster_bye_conflicts`, `dynasty_core.py:429`)
+     only flags which players at a position share a bye — doesn't show who'd
+     fill in for them or what that costs. Add the projected replacement(s)
+     for that week and the resulting delta to lineup strength (reusing the
+     same per-week `season_average_starter_value` machinery already built for
+     the draft plan) — a -500 week and a -5000 week are very different
+     situations, and only the second is a real signal to go find bye-week
+     coverage via trade.
+
 - **Valuation algorithm improvements** (branch: `feature/valuation-improvements`)
   — sequenced deliberately, not independent workstreams:
   1. ✅ **E — refresh the QB/TE multiplier's data basis.** Was derived from
