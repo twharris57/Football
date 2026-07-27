@@ -132,6 +132,47 @@ class TestLongPlayBonusPoints:
         assert bonus.empty
 
 
+class TestPickSixPenaltyPoints:
+    """pass_int_td is a penalty on top of the flat per-interception rate, only
+    when the interception itself gets returned for a touchdown - found during
+    a one-time scoring_settings audit, not covered by _stat_points."""
+
+    def test_penalizes_the_passer_on_an_interception_return_touchdown(self):
+        pbp = pd.DataFrame(
+            [
+                {
+                    "interception": 1.0,
+                    "return_touchdown": 1.0,
+                    "passer_player_id": "00-0001",
+                    "season": 2024,
+                }
+            ]
+        )
+        scoring = {"pass_int_td": -6.0}
+
+        penalty = ps._pick_six_penalty_points(pbp, scoring)
+
+        row = penalty[penalty["player_id"] == "00-0001"].iloc[0]
+        assert row["pick_six_points"] == pytest.approx(-6.0)
+
+    def test_no_penalty_for_a_regular_interception(self):
+        pbp = pd.DataFrame(
+            [
+                {
+                    "interception": 1.0,
+                    "return_touchdown": 0.0,
+                    "passer_player_id": "00-0001",
+                    "season": 2024,
+                }
+            ]
+        )
+        scoring = {"pass_int_td": -6.0}
+
+        penalty = ps._pick_six_penalty_points(pbp, scoring)
+
+        assert penalty.empty
+
+
 class TestSaneRatio:
     """A ratio computed from a near-zero/negative baseline, or landing outside
     MULTIPLIER_BOUNDS, must be rejected rather than feeding a nonsense number

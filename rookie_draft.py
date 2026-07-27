@@ -12,12 +12,20 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from typing import Any
 
 import pandas as pd
 import requests
 
 import dynasty_core
+
+# Status flags (see dynasty_core.player_status_flags) and draft-plan status
+# icons print emoji - Windows consoles default to cp1252, which can't
+# encode them and crashes the whole report with a UnicodeEncodeError.
+# Force UTF-8 stdout regardless of the platform's default codepage.
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -37,6 +45,9 @@ def print_report(state: dict[str, Any]) -> None:
     """Print a full draft-state snapshot: on the clock, your picks, roster needs, big board."""
     league = state["league"]
     print(f"\n=== {league['name']} - {league['season']} Rookie Draft ({league['status']}) ===\n")
+
+    for warning in state["data_warnings"]:
+        print(f"WARNING: {warning}")
 
     total_picks = len(state["ownership"])
     current_pick_no = state["current_pick_no"]
@@ -114,11 +125,13 @@ def print_report(state: dict[str, Any]) -> None:
 
     print(
         "\n--- Roster value analysis (lowest adj_value first) ---\n"
-        "Same QB/TE-corrected value as the big board (raw 'value' kept alongside for "
-        "comparison). 'note' weighs age: low value + young is still a rebuild asset, "
-        "low value + aging is a real drop candidate."
+        "Same real-scoring-corrected value as the big board (raw 'value' kept alongside for "
+        "comparison). status: \U0001f195 rookie (no NFL experience yet), \U0001f3e5 injury "
+        "(see Sleeper for the specific status), \U0001f331 taxi, \U0001fa79 IR/reserve. 'note' "
+        "weighs age against a position-aware aging cutoff: low value + young is still a rebuild "
+        "asset, low value + aging is a real drop candidate."
     )
-    print(render_df(state["roster_value"], "(empty roster)"))
+    print(render_df(state["roster_value"].drop(columns="status_details", errors="ignore"), "(empty roster)"))
 
     print(
         "\n--- Bye week impact (weeks with an active-roster player out; "
@@ -187,6 +200,14 @@ def main() -> None:
             if choice == "q":
                 break
             continue
+        except (ValueError, TypeError) as exc:
+            # A bad --league-id or typo'd --username (e.g. resolve_user_roster_id's
+            # "no user found") - not transient, so retrying with the same args
+            # won't help. Streamlit already handles this the same way (st.error
+            # + st.stop()); the CLI equivalent is a clean message and exit,
+            # not an ugly traceback or an infinite retry loop.
+            print(f"\n{exc}")
+            raise SystemExit(1) from exc
 
         force_full_refresh = False
         print_report(state)

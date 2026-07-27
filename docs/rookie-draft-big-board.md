@@ -19,17 +19,20 @@ across a season. Consumed by both `rookie_draft.py` (CLI) and `streamlit_app.py`
 FantasyCalc's API only exposes three knobs: superflex (`numQbs`), league size,
 and PPR. It has no parameter for the rest of this league's non-standard
 scoring — 6-point passing touchdowns, a non-standard passing-yardage rate, a
--3 (not the usual -2) interception penalty, a TE reception premium, and
-first-down/long-play bonuses.
+-3 (not the usual -2) interception penalty plus an *additional* -6 if that
+interception is returned for a touchdown (`pass_int_td` — found via a
+one-time scoring_settings audit, not caught by the original per-INT-only
+correction), a TE reception premium, and first-down/long-play bonuses.
 
 `player_scoring.py` corrects for all of it, per player, wherever real NFL
 history exists: for anyone with a qualifying season in the last 3 years (same
 "startable volume" spirit as the original QB/TE-only version below, extended
 to RB/WR), it recomputes that player's own points under this league's exact
 `scoring_settings` (using raw weekly stats, plus play-by-play data for the
-yardage-gated long-play bonuses weekly aggregates can't capture) and divides
-by their points under FantasyCalc's assumed baseline model (an explicit,
-documented assumption — FantasyCalc doesn't publish its own formula). Below
+yardage-gated long-play bonuses and the pick-six penalty, neither of which
+weekly aggregates capture) and divides by their points under FantasyCalc's
+assumed baseline model (an explicit, documented assumption — FantasyCalc
+doesn't publish its own formula). Below
 the qualifying bar, or for rookies with no NFL history at all, a position
 average computed from that same pooled sample is used instead —
 `POSITION_VALUE_MULTIPLIER` is now a last-resort constant, used only if this
@@ -83,14 +86,23 @@ who wouldn't even crack the starting lineup.
 `recommend_drop()` feeds the drop side: lowest-value **bench** player,
 preferred over starters (via the same `assign_starters` assignment) — a
 marginal starter isn't recommended for cut over a similarly valued deep
-bench piece. A drop is only forced at all when the roster is at total
-capacity (`roster_total_capacity()`: active roster slots + taxi slots) —
-a pre-draft review caught this as a real bug: `rank_by_marginal_value()`
-used to call `recommend_drop()` unconditionally for every candidate, even
-with open roster/taxi room, which understated marginal value for any pick
-that didn't actually need to cost a roster spot. Covered by
-`tests/test_dynasty_core.py` (`TestCapacityAwareDrop`) as a regression
-guard. Rookies are assumed taxi-eligible for this check (true for every
+bench piece. Taxi/IR players are excluded from ever winning that
+`assign_starters` call (Sleeper doesn't allow starting them) but stay in
+the drop-candidate pool itself — a low-value taxi stash can and should
+still lose out to a high-value new candidate, confirmed directly with a
+synthetic repro. A drop is only forced at all when the roster is at total
+capacity (`roster_total_capacity()`: active roster slots + taxi slots +
+reserve/IR slots — the last of these was a real bug, found and fixed
+2026-07-26: it originally omitted `reserve_slots` from the ceiling
+entirely, so an existing IR occupant's headcount silently eroded
+active/taxi capacity instead of its own bucket, misreading a genuinely
+open taxi slot as "no room" and recommending a nonsensical cut of a real
+starter) — a pre-draft review caught the original version of this bug:
+`rank_by_marginal_value()` used to call `recommend_drop()` unconditionally
+for every candidate, even with open roster/taxi room, which understated
+marginal value for any pick that didn't actually need to cost a roster
+spot. Covered by `tests/test_dynasty_core.py` (`TestCapacityAwareDrop`) as
+a regression guard. Rookies are assumed taxi-eligible for this check (true for every
 candidate in this draft); a general accrued-experience eligibility model
 is deferred (see `.claude/PROJECT_PLAN.md`).
 
@@ -119,6 +131,19 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   position-aware (`LOW_VALUE_AGING_AGE`: RB 27 / WR 29 / TE 30 / QB 33, with
   a 29 default) rather than one flat age for every position — dynasty RBs
   decline earlier than QBs/TEs, who often start productively much later.
+  A `status` column gives a compact icon summary of each player's situation
+  — 🆕 rookie (no NFL experience yet, `years_exp` falsy), 🏥 injury, 🌱 taxi
+  squad, 🩹 IR/reserve — icons rather than words to stay space-efficient in
+  a table column; a player can show more than one at once (e.g. a rookie
+  stashed on taxi). `player_status_details()` pairs each icon with its
+  specific description (e.g. the real `injury_status` word, expanding a
+  cryptic Sleeper abbreviation like `PUP` where needed via
+  `INJURY_STATUS_DESCRIPTIONS`) — `player_status_flags()` is the icon-only
+  string built from it, for plain-text display (the CLI). In Streamlit,
+  this table renders as plain HTML (`show_status_table()`) instead of
+  `st.dataframe`, specifically so each status icon gets a real per-cell
+  hover tooltip with its description — `st.dataframe`'s `column_config`
+  only supports a tooltip on the column header, not per cell.
 - **Bye-week impact** and **weekly gaps** — the former (`roster_bye_conflicts`)
   shows every week with an active-roster player on bye: who's out, who fills
   in, and the resulting delta to optimal starting-lineup value versus a

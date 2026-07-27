@@ -53,13 +53,76 @@ environment carries it through.
 Streamlit reruns the whole script top-to-bottom on any widget interaction, so
 a naive port would refetch on every unrelated click. `st.cache_data` is keyed
 on an explicit `refresh_token` in `st.session_state`, bumped only by the
-Refresh/Force-full-refresh buttons — mirroring the CLI's Enter-vs-`f` prompt.
-Refresh re-pulls league/rosters/draft/picks (cheap, always live); Force full
-refresh also busts the on-disk 14MB players-dataset cache.
+Refresh button or the Advanced-refresh "Apply" button — mirroring the CLI's
+Enter-vs-`f` prompt. A button/checkbox's own value can't be the cache key
+directly — it's only current on the exact run it was clicked, so a later
+rerun (e.g. opening an expander) would see a stale/default value and get a
+different key, silently missing cache and re-fetching for no reason.
+`st.session_state.force_refresh_pending`/`force_scoring_pending` hold the
+durable versions instead, set once per click and stable across reruns
+(verified directly: patched `gather_state`/`player_scoring.get_multipliers`
+with call counters and confirmed a plain rerun after a refresh click adds
+no extra call).
+
+Refresh re-pulls league/rosters/draft/picks (cheap, always live) plus
+whatever's expired on `fantasycalc_api`/`bye_week_by_team`/`handcuff_map`'s
+own TTL caches (12-24h, not tied to any button at all). The sidebar's
+"Advanced refresh" expander splits the two remaining, genuinely different
+concerns instead of bundling them behind one "force full refresh" button:
+
+- **Players + market values (fast, default on)** — busts the on-disk 14MB
+  players-dataset cache; a few seconds.
+- **Recompute scoring multipliers (slow, 1-2 min, default off)** — forces
+  `player_scoring`'s multiplier cache to re-import 3 seasons of weekly +
+  play-by-play data. Deliberately its own checkbox, off by default, and
+  gated behind a second "Apply advanced refresh" button — a routine
+  refresh must never trigger this by accident mid-draft. This is also the
+  in-app equivalent of running `python scripts/derive_position_multipliers.py`
+  directly: a genuine prewarm option reachable from a phone if the user
+  needs to warm the cache away from a terminal, not just ahead of time
+  from the CLI.
+
+Whenever byes, handcuffs, or the scoring multipliers silently fall back to
+an empty/default result (a fetch failure, non-fatal by design — see
+`docs/rookie-draft-big-board.md`), `gather_state` returns a
+`data_warnings` list, surfaced as `st.warning`/CLI `WARNING:` lines — a
+fallback used to be indistinguishable from "there's nothing to report."
 
 Network/parsing errors surface as `st.error` with a retry hint instead of a
 raw traceback — this needs to stay usable on a phone mid-draft, not just
-technically correct.
+technically correct. The CLI's own refresh loop mirrors this: it catches
+`ValueError`/`TypeError` (a bad `--league-id`/typo'd `--username`) with a
+clean message and exit, rather than a traceback or an infinite retry loop
+that can't fix a bad input.
+
+### Table presentation
+
+Two conventions applied consistently across every tab:
+
+- **Human-readable column labels.** Every table's underlying DataFrame
+  keeps its plain snake_case column names (so the rest of the codebase and
+  its tests can keep referring to them normally) — only the *displayed*
+  header is relabeled, via `st.dataframe`'s `column_config` and a small
+  `cols()` helper (`streamlit_app.py`) that builds a `{column: st.column_config.Column(label, help=...)}`
+  dict from `(key, label)`/`(key, label, help_text)` tuples. The special
+  `"_index"` key relabels an index-as-column table's header too (e.g.
+  Roster Needs' `pos` index shows as "Pos").
+- **Per-cell hover tooltips need custom HTML, not `st.dataframe`.**
+  `column_config`'s `help` text only tooltips the column *header*, not
+  individual cells. Roster Value Analysis's `status` icons each need their
+  own detail (e.g. the actual `injury_status` word), so that one table
+  renders as plain HTML (`show_status_table()`) instead of the shared
+  `show_df()`/`cols()` approach — a deliberate, scoped exception, not the
+  general pattern. Cell text is `html.escape()`d; the `status` column
+  specifically wraps each icon in `<span title="...">` using
+  `dynasty_core.player_status_details()`'s (icon, description) pairs.
+- **Methodology text lives in a closed "How this works" expander**, not a
+  bare `st.caption`, on every tab/section that has one (Draft Plan, Draft
+  Board, Roster Value Analysis, Bye Week Impact, Weekly Gaps) — keeps the
+  actual data above the fold on a phone instead of pushing it down on
+  every refresh. Reformatted as bulleted term-definition lists rather than
+  run-on prose (user feedback 2026-07-26) — `st.caption` renders Markdown,
+  including lists, same as `st.markdown`.
 
 ## CLI (`rookie_draft.py`)
 

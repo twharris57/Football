@@ -57,39 +57,77 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
      directly against the real 2026 schedule; every team resolved to
      exactly one bye week, nothing dropped. No bug found; nothing to fix.
 
-  **Worth doing this season (not blocking Sunday):**
-  - Catch `ValueError`/`TypeError` from a bad league_id or typo'd username in
-    `rookie_draft.py`'s refresh loop (only `requests.RequestException` is
-    caught today; Streamlit already handles this).
-  - Surface a UI warning when byes/handcuffs silently fall back to `{}` on
-    fetch failure (`dynasty_core.py:993-1002`) — currently indistinguishable
+  **Worth doing this season (not blocking Sunday) — all done, 2026-07-26:**
+  - ✅ CLI now catches `ValueError`/`TypeError` (e.g. a typo'd `--username`)
+    with a clean message and exit, instead of an ugly traceback or an
+    infinite retry loop that can't fix a bad input. Streamlit already
+    handled this the same way.
+  - ✅ `gather_state` now returns `data_warnings: list[str]`, surfaced as
+    `st.warning`/CLI `WARNING:` lines whenever byes, handcuffs, or the
+    scoring multipliers silently fall back — no longer indistinguishable
     from "no conflicts found."
-  - Add caching/TTL to `fantasycalc_api.get_dynasty_values` — currently
-    uncached, so even a plain "Refresh" click re-hits it, contradicting the
-    "Refresh is cheap" framing.
-  - Cache `bye_week_by_team`/`handcuff_map` per session instead of refetching
-    from `nfl_data_py` on every refresh click, not just force-refresh.
-  - Add an end-to-end test for `multi_round_plan` (`dynasty_core.py:785-928`)
-    — the actual "what to pick" output has zero direct test coverage today,
-    even though its sub-pieces (`assign_starters`, drop logic) are tested.
-  - Collapse the Draft Plan tab's methodology caption into a closed
-    `st.expander` — currently pushes the plan table below the fold on a
-    phone, on every refresh.
-  - Visually distinguish `status=completed` vs. `status=upcoming` rows in the
-    plan table (color/style, not just text) — a fast scroll under draft-day
-    pressure could conflate a guaranteed pick with a simulated one.
-  - Confirm the league's real `scoring_settings` has no per-game yardage
-    bonuses (`bonus_pass_yd_300` etc.) that `_stat_points` doesn't check for
-    — likely moot, worth a one-time dump to confirm.
-  - `lineup_breakdown`, `season_average_starter_value`, and
-    `rank_by_marginal_value` all feed `assign_starters` the entire
-    `roster["players"]` list, including taxi and IR/reserve players — none
-    of whom Sleeper actually allows into the starting lineup (found while
-    building the bye-week-impact feature, which correctly excludes them;
-    see `docs/rookie-draft-big-board.md`'s "Known gaps"). Hasn't visibly
-    surfaced yet (today's taxi/IR values happen to be lower than the real
-    bench) but could affect real draft-day pick recommendations if a
-    high-value taxi-eligible player is on the board.
+  - ✅ `fantasycalc_api.get_dynasty_values` now disk-caches (12h TTL, keyed
+    by `numQbs`/`numTeams`/`ppr`), tied to force-refresh — a plain "Refresh"
+    no longer re-hits it every time.
+  - ✅ `bye_week_by_team` (24h TTL) and `handcuff_map` (12h TTL) now disk-cache
+    the same way, also tied to force-refresh. Caught and fixed a real bug
+    while adding this: bye weeks are `numpy.int64` from the schedule
+    dataframe, not JSON-serializable — cast to `int` before caching.
+  - ✅ Added an end-to-end `TestMultiRoundPlan` test — a synthetic 2-round
+    scenario confirming a true positional need (an empty QB slot) is
+    correctly filled before a same-position depth upgrade, and that each
+    round's pick correctly carries into the next.
+  - ✅ Draft Plan tab's methodology caption is now inside a closed
+    `st.expander("How this works")`.
+  - ✅ Already done via the earlier collapsible-sections redesign (✅/🔜/⚠️
+    icons) — no separate work needed.
+  - ✅ Confirmed via a full 61-key dump of the real `scoring_settings`: no
+    missed per-game yardage bonuses, but found a real, previously-uncorrected
+    gap — `pass_int_td: -6.0` (an extra penalty when a QB's interception is
+    returned for a touchdown, on top of the flat `pass_int` rate) — fixed in
+    `player_scoring._pick_six_penalty_points`, same play-by-play approach as
+    the long-play bonuses.
+  - ✅ `lineup_breakdown`, `season_average_starter_value`, and
+    `rank_by_marginal_value` (plus `recommend_drop`, which the last two call
+    into and shares the same bug) now all exclude the roster's current
+    taxi/IR players from ever winning a starting slot or being misclassified
+    as a "starter" — verified this has real, visible effect on the actual
+    league's live draft-plan output, not just a theoretical risk. Doesn't
+    attempt to model taxi/active transitions for newly-drafted candidates
+    mid-simulation (already an accepted simplification elsewhere - see
+    `roster_total_capacity`'s docstring).
+
+  **Follow-up fixes and UI polish (2026-07-26, user re-review of the above):**
+  - ✅ **Found and fixed a real capacity-accounting bug while verifying the
+    taxi/IR drop-eligibility fix above.** `roster_total_capacity()` summed
+    active-roster + taxi slots only, omitting `reserve_slots` — so an
+    existing IR occupant's headcount silently ate into active/taxi
+    capacity instead of its own bucket. Verified directly: a roster with
+    one IR player and a genuinely open taxi slot was misread as "no room,"
+    forcing a nonsensical recommendation to cut a real active starter
+    instead of just placing the new candidate in the open taxi slot. Fixed
+    by including `reserve_slots` in the ceiling; regression test added
+    (`TestCapacityAwareDrop::test_reserve_slots_count_toward_total_capacity`).
+    Separately confirmed (with a direct repro) that taxi players themselves
+    were never excluded from the drop-candidate pool — that part already
+    worked correctly.
+  - ✅ Added a scoring-multiplier **prewarm control to the web app**:
+    "Refresh" stays the single cheap button; a new "Advanced refresh"
+    sidebar expander has a players/values checkbox (fast, default on) and
+    a separate scoring-multiplier checkbox (slow, 1-2 min, default off) —
+    `gather_state` gained an independent `force_scoring_refresh` parameter
+    so the two are never accidentally coupled. Verified directly with a
+    patched call-counter that checking only the scoring box actually
+    triggers `force_refresh=True` on `player_scoring.get_multipliers`.
+  - ✅ Every table now shows human-readable column headers (`cols()` helper
+    + `st.dataframe`'s `column_config`), without renaming the underlying
+    DataFrame columns.
+  - ✅ "How this works" is now consistent across all 5 methodology sections
+    (Draft Plan, Draft Board, Roster Value Analysis, Bye Week Impact,
+    Weekly Gaps) and reformatted from run-on prose into bulleted
+    term-definition lists for readability.
+  - ✅ Roster Needs' index column now displays as "Pos" instead of the raw
+    `pos` field name (via `column_config`'s `_index` key).
 
   **Next-year ideas (not worth the time now):**
   - Handcuff proxy (depth-chart rank 2) has real false-positive risk in
@@ -156,6 +194,18 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 - **Trade targets & sells** — given the rebuild strategy, flag which of the
   user's veterans are sellable for picks, and which other teams' picks/young
   players might be realistically available.
+- **Roster needs — structural positional weakness, not just week-to-week
+  gaps** (user-flagged 2026-07-26, explicitly post-draft). `roster_needs_summary`
+  and `roster_weekly_gaps` both answer "do we have enough bodies at this
+  position right now/this week" — neither answers "is this position
+  structurally weak compared to the rest of the roster (or the league),
+  such that it's worth actively shoring up via trade rather than just
+  monitoring." Would need a real positional-strength metric (e.g. this
+  position's share of total roster value, or its value relative to
+  starting-quality replacement level) rather than the current young-core
+  headcount heuristic. Natural pairing with the "Trade targets & sells"
+  and "League-wide power/timeline read" ideas below - a weak-position
+  signal is exactly what should drive who to target in a trade.
 - **League-wide power/timeline read** — place every team in the league on a
   rebuild-vs-contend spectrum, to identify good trade partners (contenders who
   overpay for immediate help, rebuilders who overpay for future assets).
@@ -186,6 +236,15 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   a general accrued-experience eligibility check against Sleeper's actual
   taxi rule. Fold in whenever this needs to handle non-rookie candidates
   (e.g. the free-agent evaluator idea above) rather than as a separate pass.
+- **Better logging solution than `print()`** (user-flagged 2026-07-26) —
+  `rookie_draft.py`'s CLI output is all `print()` today; `python_guidelines.md`
+  calls for the standard `logging` module instead (levels, no `print()` for
+  diagnostics). Worth a dedicated look at how much of the CLI's *report*
+  output (as opposed to actual diagnostics/warnings, which already use
+  `logger` in `dynasty_core.py`/`player_scoring.py`) should even move to
+  `logging` versus staying as direct terminal output, since the report is
+  the CLI's actual product, not a diagnostic - evaluate in its own feature
+  branch rather than folding into unrelated work.
 
 ## Context
 
