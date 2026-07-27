@@ -44,11 +44,22 @@ username = st.sidebar.text_input("Username", value=dynasty_core.DEFAULT_USERNAME
 
 if "refresh_token" not in st.session_state:
     st.session_state.refresh_token = 0
+if "force_refresh_pending" not in st.session_state:
+    st.session_state.force_refresh_pending = False
 
 refresh = st.sidebar.button("Refresh")
-force_full = st.sidebar.button("Force full refresh (players + values + scoring)")
+force_full = st.sidebar.button("Force full refresh (players + values)")
 if refresh or force_full:
     st.session_state.refresh_token += 1
+    # A widget button's return value is only True on the exact run it was
+    # clicked - any later rerun (e.g. opening an expander) sees False again.
+    # load_state's cache key must not depend on that raw, one-run-only value
+    # (it did before - see PROJECT_PLAN.md), or the very next rerun after a
+    # force-refresh click gets a different key, misses cache, and silently
+    # re-fetches both APIs for no reason. force_refresh_pending is durable
+    # session_state instead, so it stays stable across reruns until the next
+    # actual button click changes refresh_token again.
+    st.session_state.force_refresh_pending = force_full
 
 
 @st.cache_data(show_spinner="Loading draft state...")
@@ -59,7 +70,9 @@ def load_state(league_id: str, username: str, force_full_refresh: bool, _token: 
 st.title("Dynasty Rookie Draft")
 
 try:
-    state = load_state(league_id, username, force_full, st.session_state.refresh_token)
+    state = load_state(
+        league_id, username, st.session_state.force_refresh_pending, st.session_state.refresh_token
+    )
 except requests.RequestException as exc:
     st.error(f"Couldn't reach Sleeper/FantasyCalc: {exc}. Hit Refresh to try again.")
     st.stop()

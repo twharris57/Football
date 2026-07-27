@@ -51,6 +51,28 @@ QUALIFYING_VOLUME: dict[str, tuple[str, int]] = {
     "TE": ("targets", 30),
 }
 
+# A ratio computed from a pooled baseline_points at or below this isn't a
+# trustworthy denominator - a qualifying-volume player with a genuinely bad
+# season (heavy INTs, low yardage) can have baseline_points near zero or
+# negative, which would blow up or invert the resulting ratio. Observed
+# real ratios across a 332-player sample land in [1.08, 1.61] - MULTIPLIER_BOUNDS
+# gives real headroom around that while still rejecting a clearly broken
+# input; a rejected ratio falls back further up the chain (position average,
+# then the hardcoded POSITION_VALUE_MULTIPLIER constant) rather than feeding
+# a nonsense number into adj_value.
+MIN_QUALIFYING_BASELINE_POINTS = 1.0
+MULTIPLIER_BOUNDS = (0.5, 2.0)
+
+
+def _sane_ratio(real_points: float, baseline_points: float) -> float | None:
+    """real_points / baseline_points, or None if the input/result isn't trustworthy."""
+    if baseline_points <= MIN_QUALIFYING_BASELINE_POINTS:
+        return None
+    ratio = real_points / baseline_points
+    if not (MULTIPLIER_BOUNDS[0] <= ratio <= MULTIPLIER_BOUNDS[1]):
+        return None
+    return ratio
+
 # FantasyCalc doesn't publish its scoring assumptions. This is the explicit,
 # documented baseline this project assumes (matches what step E's script
 # implicitly assumed via nfl_data_py's own fantasy_points_ppr column):
@@ -259,18 +281,20 @@ def _derive_multipliers(scoring_settings: dict[str, float], current_season: str)
         qualifying = season_totals[
             (season_totals["position"] == position) & (season_totals[volume_col] >= min_volume)
         ]
-        if qualifying.empty or qualifying["baseline_points"].sum() == 0:
+        if qualifying.empty:
             continue
-        position_average[position] = qualifying["real_points"].sum() / qualifying["baseline_points"].sum()
+        pos_ratio = _sane_ratio(qualifying["real_points"].sum(), qualifying["baseline_points"].sum())
+        if pos_ratio is not None:
+            position_average[position] = pos_ratio
 
         for player_id, group in qualifying.groupby("player_id"):
-            baseline_sum = group["baseline_points"].sum()
-            if baseline_sum == 0:
+            ratio = _sane_ratio(group["real_points"].sum(), group["baseline_points"].sum())
+            if ratio is None:
                 continue
             sleeper_id = gsis_to_sleeper.get(player_id)
             if sleeper_id is None:
                 continue
-            per_player[sleeper_id] = group["real_points"].sum() / baseline_sum
+            per_player[sleeper_id] = ratio
 
     return {"seasons": seasons, "per_player": per_player, "position_average": position_average}
 
@@ -281,9 +305,11 @@ def get_multipliers(scoring_settings: dict[str, float], current_season: str, for
     Cached to disk with no TTL, unlike sleeper_api's players cache - the
     underlying data is entirely historical/complete seasons, so nothing
     changes between refreshes except once a year when a new season's stats
-    are published. `force_refresh` (tied to the app's "force full refresh"
-    action) is the only way this recomputes; a plain refresh always reuses
-    the cache if present.
+    are published. `dynasty_core.gather_state` deliberately never passes
+    `force_refresh=True` here (a 1-2 minute synchronous pull, unsuitable to
+    trigger live mid-draft) - the only way this recomputes is running
+    `python scripts/derive_position_multipliers.py` directly, ahead of time,
+    to pre-warm the cache before draft day.
     """
     if not force_refresh and MULTIPLIERS_CACHE_PATH.exists():
         cached = json.loads(MULTIPLIERS_CACHE_PATH.read_text(encoding="utf-8"))

@@ -130,3 +130,27 @@ class TestLongPlayBonusPoints:
         bonus = ps._long_play_bonus_points(pbp, scoring)
 
         assert bonus.empty
+
+
+class TestSaneRatio:
+    """A ratio computed from a near-zero/negative baseline, or landing outside
+    MULTIPLIER_BOUNDS, must be rejected rather than feeding a nonsense number
+    into adj_value - a real risk for a qualifying-volume player with a
+    genuinely bad season (heavy INTs, low yardage)."""
+
+    def test_normal_ratio_is_returned(self):
+        assert ps._sane_ratio(120.0, 100.0) == pytest.approx(1.2)
+
+    def test_rejects_a_near_zero_baseline(self):
+        # A huge ratio from an almost-zero denominator, e.g. a QB who barely
+        # cleared the volume bar with a dreadful efficiency season.
+        assert ps._sane_ratio(50.0, 0.5) is None
+
+    def test_rejects_a_negative_baseline(self):
+        # A heavy-INT, low-yardage season could make baseline_points negative -
+        # dividing by it would invert the player's value entirely.
+        assert ps._sane_ratio(20.0, -10.0) is None
+
+    def test_rejects_a_ratio_outside_the_sane_band(self):
+        assert ps._sane_ratio(500.0, 100.0) is None  # 5.0, way above the band
+        assert ps._sane_ratio(10.0, 100.0) is None  # 0.1, way below the band

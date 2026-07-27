@@ -194,7 +194,7 @@ def main() -> None:
         if args.once:
             break
 
-        choice = input("\n[Enter] refresh picks  |  f = full refresh (players+values+scoring)  |  q = quit: ")
+        choice = input("\n[Enter] refresh picks  |  f = full refresh (players+values)  |  q = quit: ")
         choice = choice.strip().lower()
         if choice == "q":
             break
