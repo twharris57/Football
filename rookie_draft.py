@@ -38,6 +38,9 @@ def print_report(state: dict[str, Any]) -> None:
     league = state["league"]
     print(f"\n=== {league['name']} - {league['season']} Rookie Draft ({league['status']}) ===\n")
 
+    for warning in state["data_warnings"]:
+        print(f"WARNING: {warning}")
+
     total_picks = len(state["ownership"])
     current_pick_no = state["current_pick_no"]
     if current_pick_no > total_picks:
@@ -187,6 +190,14 @@ def main() -> None:
             if choice == "q":
                 break
             continue
+        except (ValueError, TypeError) as exc:
+            # A bad --league-id or typo'd --username (e.g. resolve_user_roster_id's
+            # "no user found") - not transient, so retrying with the same args
+            # won't help. Streamlit already handles this the same way (st.error
+            # + st.stop()); the CLI equivalent is a clean message and exit,
+            # not an ugly traceback or an infinite retry loop.
+            print(f"\n{exc}")
+            raise SystemExit(1) from exc
 
         force_full_refresh = False
         print_report(state)

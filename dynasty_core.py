@@ -8,8 +8,11 @@ dashboard (`streamlit_app.py`) so the two stay in sync on one code path.
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterator
 
 import nfl_data_py as nfl
@@ -20,6 +23,10 @@ import player_scoring
 import sleeper_api as sleeper
 
 logger = logging.getLogger(__name__)
+
+CACHE_DIR = Path(__file__).parent / ".cache"
+BYES_CACHE_TTL_SECONDS = 24 * 60 * 60
+HANDCUFFS_CACHE_TTL_SECONDS = 12 * 60 * 60
 
 DEFAULT_LEAGUE_ID = "1324888291937386496"
 DEFAULT_USERNAME = "twharris57"
@@ -427,12 +434,22 @@ def recent_complete_seasons_weekly_data(current_season: str, lookback: int = 3) 
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def bye_week_by_team(season: str) -> dict[str, int]:
+def bye_week_by_team(season: str, force_refresh: bool = False) -> dict[str, int]:
     """Return each NFL team's bye week for the season, derived from the schedule.
 
     nfl_data_py has no direct "bye week" field — derived as the one week in
     1-18 where a team appears in neither home_team nor away_team.
+
+    Cached to disk (24h TTL - a published NFL schedule essentially never
+    changes mid-season) so a plain "Refresh" click doesn't re-pull and
+    re-derive this from nfl_data_py every time, not just on force-refresh.
     """
+    cache_path = CACHE_DIR / f"byes_{season}.json"
+    if not force_refresh and cache_path.exists():
+        age_seconds = time.time() - cache_path.stat().st_mtime
+        if age_seconds < BYES_CACHE_TTL_SECONDS:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+
     schedule = nfl.import_schedules([int(season)])
     regular = schedule[schedule["game_type"] == "REG"]
     all_weeks = set(regular["week"].unique())
@@ -443,7 +460,10 @@ def bye_week_by_team(season: str) -> dict[str, int]:
         played = set(regular.loc[(regular["home_team"] == team) | (regular["away_team"] == team), "week"])
         missing = all_weeks - played
         if len(missing) == 1:
-            byes[team] = missing.pop()
+            byes[team] = int(missing.pop())
+
+    CACHE_DIR.mkdir(exist_ok=True)
+    cache_path.write_text(json.dumps(byes), encoding="utf-8")
     return byes
 
 
@@ -567,14 +587,25 @@ def roster_weekly_gaps(roster: dict, players: dict[str, dict], byes: dict[str, i
     return pd.DataFrame(rows)
 
 
-def handcuff_map(season: str) -> dict[str, str]:
+def handcuff_map(season: str, force_refresh: bool = False) -> dict[str, str]:
     """Map each starting RB's sleeper_id to their primary backup's sleeper_id.
 
     "Starting"/"backup" come from the latest depth-chart snapshot for the
     season — nfl_data_py's depth-chart feed is a time series of scrapes, not
     a single current view, so this filters to the most recent `dt`. Handcuffs
     are an RB-specific fantasy concept; other positions aren't modeled here.
+
+    Cached to disk (12h TTL, same cadence as sleeper_api's players cache -
+    depth charts shift day to day, not minute to minute) so a plain
+    "Refresh" click doesn't re-pull and re-derive this every time, not just
+    on force-refresh.
     """
+    cache_path = CACHE_DIR / f"handcuffs_{season}.json"
+    if not force_refresh and cache_path.exists():
+        age_seconds = time.time() - cache_path.stat().st_mtime
+        if age_seconds < HANDCUFFS_CACHE_TTL_SECONDS:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+
     depth = nfl.import_depth_charts([int(season)])
     latest = depth[depth["dt"] == depth["dt"].max()]
     rb = latest[latest["pos_abb"] == "RB"]
@@ -591,6 +622,9 @@ def handcuff_map(season: str) -> dict[str, str]:
         backup_id = gsis_to_sleeper.get(ranked.iloc[1]["gsis_id"])
         if starter_id and backup_id:
             handcuffs[starter_id] = backup_id
+
+    CACHE_DIR.mkdir(exist_ok=True)
+    cache_path.write_text(json.dumps(handcuffs), encoding="utf-8")
     return handcuffs
 
 
@@ -682,14 +716,17 @@ def lineup_breakdown(
     split out by cross-referencing `roster["taxi"]`/`roster["reserve"]`
     (both plain player_id lists, same shape - confirmed directly against
     the live league, including rosters with IR players populated) rather
-    than left lumped into "bench".
+    than left lumped into "bench". They're also excluded from the starter
+    assignment itself - Sleeper doesn't allow starting a taxi/IR player, so
+    they must not be eligible to "win" a slot here regardless of value.
     """
-    rows = player_value_rows(roster.get("players") or [], players, fc_by_sleeper_id)
-    value_by_id = {r["player_id"]: r["adj_value"] for r in rows}
-    assignments = assign_starters(rows, league["roster_positions"])
-    starter_ids = {pid for _, pid in assignments if pid}
     taxi_ids = set(roster.get("taxi") or [])
     reserve_ids = set(roster.get("reserve") or [])
+    rows = player_value_rows(roster.get("players") or [], players, fc_by_sleeper_id)
+    value_by_id = {r["player_id"]: r["adj_value"] for r in rows}
+    active_rows = [r for r in rows if r["player_id"] not in taxi_ids and r["player_id"] not in reserve_ids]
+    assignments = assign_starters(active_rows, league["roster_positions"])
+    starter_ids = {pid for _, pid in assignments if pid}
 
     starter_rows = []
     for slot, pid in assignments:
@@ -725,17 +762,23 @@ def recommend_drop(
     fc_by_sleeper_id: dict[str, dict],
     league: dict,
     exclude_ids: frozenset[str] = frozenset(),
+    ineligible_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any] | None:
     """Recommend the single best player to drop: lowest-value bench player, over starters.
 
     `exclude_ids` protects specific players (e.g. just picked earlier in the
     same multi-round plan) from being recommended for drop in this pass.
+    `ineligible_ids` (taxi/IR players) are never eligible to be assigned a
+    starting slot here - Sleeper doesn't allow it - so they can't be wrongly
+    protected from the drop pool as a false "starter"; they still land in
+    `rows` and so can still be recommended for drop themselves.
     """
     rows = [r for r in player_value_rows(player_ids, players, fc_by_sleeper_id) if r["player_id"] not in exclude_ids]
     if not rows:
         return None
 
-    assignments = assign_starters(rows, league["roster_positions"])
+    eligible_rows = [r for r in rows if r["player_id"] not in ineligible_ids]
+    assignments = assign_starters(eligible_rows, league["roster_positions"])
     starter_ids = {pid for _, pid in assignments if pid}
     bench_rows = [r for r in rows if r["player_id"] not in starter_ids]
     pool = bench_rows if bench_rows else rows
@@ -770,6 +813,7 @@ def season_average_starter_value(
     fc_by_sleeper_id: dict[str, dict],
     byes: dict[str, int],
     league: dict,
+    ineligible_ids: frozenset[str] = frozenset(),
 ) -> float:
     """Average optimal starting-lineup value across all 18 weeks, excluding bye'd players each week.
 
@@ -783,13 +827,19 @@ def season_average_starter_value(
     more. Weekly-gap *detection* is handled separately (roster_weekly_gaps)
     — this is about getting the season-long value comparison right, not
     about re-deriving gap alerts.
+
+    `ineligible_ids` (the roster's current taxi/IR players) never win a
+    starting slot here regardless of value - Sleeper doesn't allow starting
+    them. Doesn't attempt to model taxi/active transitions for newly
+    simulated candidates mid-draft-plan - see PROJECT_PLAN.md.
     """
     rows = player_value_rows(player_ids, players, fc_by_sleeper_id)
-    bye_by_player = {r["player_id"]: byes.get(players.get(r["player_id"], {}).get("team")) for r in rows}
+    eligible_rows = [r for r in rows if r["player_id"] not in ineligible_ids]
+    bye_by_player = {r["player_id"]: byes.get(players.get(r["player_id"], {}).get("team")) for r in eligible_rows}
 
     total = 0.0
     for week in NFL_WEEKS:
-        week_rows = [r for r in rows if bye_by_player[r["player_id"]] != week]
+        week_rows = [r for r in eligible_rows if bye_by_player[r["player_id"]] != week]
         value_by_id = {r["player_id"]: r["adj_value"] or 0 for r in week_rows}
         assignments = assign_starters(week_rows, league["roster_positions"])
         total += sum(value_by_id.get(pid, 0) for _, pid in assignments if pid)
@@ -806,6 +856,7 @@ def rank_by_marginal_value(
     league: dict,
     top_n: int = 3,
     exclude_from_drop: frozenset[str] = frozenset(),
+    ineligible_ids: frozenset[str] = frozenset(),
 ) -> list[dict]:
     """Rank candidates by season-average marginal starting-lineup value, not raw trade value.
 
@@ -824,25 +875,35 @@ def rank_by_marginal_value(
 
     `exclude_from_drop` protects specific players (e.g. picked in an
     earlier round of the same multi-round plan) from being recommended for
-    drop here. Returns up to `top_n` entries (player_id, marginal_value,
-    drop), sorted best first — the first is the recommended pick, the rest
-    are backup options for the draft plan's alternates.
+    drop here. `ineligible_ids` (the roster's current taxi/IR players) are
+    never assignable to a starting slot in the simulation - passed through
+    to both `season_average_starter_value` and `recommend_drop`. Returns up
+    to `top_n` entries (player_id, marginal_value, drop), sorted best first
+    — the first is the recommended pick, the rest are backup options for
+    the draft plan's alternates.
     """
     if not candidate_ids:
         return []
 
     total_capacity = roster_total_capacity(league)
-    baseline = season_average_starter_value(hypothetical_ids, players, fc_by_sleeper_id, byes, league)
+    baseline = season_average_starter_value(hypothetical_ids, players, fc_by_sleeper_id, byes, league, ineligible_ids)
 
     results = []
     for candidate_id in candidate_ids:
         with_candidate = hypothetical_ids + [candidate_id]
         if len(with_candidate) > total_capacity:
-            drop = recommend_drop(with_candidate, players, fc_by_sleeper_id, league, exclude_ids=exclude_from_drop)
+            drop = recommend_drop(
+                with_candidate,
+                players,
+                fc_by_sleeper_id,
+                league,
+                exclude_ids=exclude_from_drop,
+                ineligible_ids=ineligible_ids,
+            )
         else:
             drop = None
         roster_after = [pid for pid in with_candidate if drop is None or pid != drop["player_id"]]
-        after = season_average_starter_value(roster_after, players, fc_by_sleeper_id, byes, league)
+        after = season_average_starter_value(roster_after, players, fc_by_sleeper_id, byes, league, ineligible_ids)
         results.append({"player_id": candidate_id, "marginal_value": after - baseline, "drop": drop})
 
     results.sort(key=lambda r: r["marginal_value"], reverse=True)
@@ -942,6 +1003,10 @@ def multi_round_plan(
 
     available_ids = set(available.keys())
     hypothetical_ids = list(user_roster.get("players") or [])
+    # The roster's current taxi/IR players are never eligible for a starting
+    # slot in the simulation below - Sleeper doesn't allow it - regardless
+    # of how their value compares to the rest of the roster.
+    ineligible_ids = frozenset(user_roster.get("taxi") or []) | frozenset(user_roster.get("reserve") or [])
     just_picked: set[str] = set()
 
     rounds = []
@@ -966,6 +1031,7 @@ def multi_round_plan(
             league,
             top_n=top_n,
             exclude_from_drop=frozenset(just_picked),
+            ineligible_ids=ineligible_ids,
         )
         if not ranked:
             break
@@ -1084,7 +1150,9 @@ def gather_state(league_id: str, username: str, force_full_refresh: bool) -> dic
     num_qbs = league["roster_positions"].count("QB") + league["roster_positions"].count("SUPER_FLEX")
     num_teams = league["settings"]["num_teams"]
     ppr = league["scoring_settings"].get("rec", 0)
-    fc_values = fantasycalc.get_dynasty_values(num_qbs=num_qbs, num_teams=num_teams, ppr=ppr)
+    fc_values = fantasycalc.get_dynasty_values(
+        num_qbs=num_qbs, num_teams=num_teams, ppr=ppr, force_refresh=force_full_refresh
+    )
 
     # Enrichment from nfl_data_py: optional, must not break the core draft
     # board if the feed is unavailable or its schema drifts (it already has
@@ -1099,23 +1167,39 @@ def gather_state(league_id: str, username: str, force_full_refresh: bool) -> dic
     # `python scripts/derive_position_multipliers.py` (run once, outside
     # the app) - "force full refresh" in the app only busts the fast
     # Sleeper players cache now.
+    # Collected so the UI can surface a real warning instead of a fallback
+    # that's silently indistinguishable from "there's nothing to report."
+    data_warnings: list[str] = []
+
     try:
         multipliers = player_scoring.get_multipliers(league["scoring_settings"], league["season"])
     except Exception:
         logger.warning("Failed to compute real-scoring multipliers; falling back to position defaults", exc_info=True)
         multipliers = {}
+        data_warnings.append(
+            "Real-scoring multipliers unavailable this refresh - values are using position-average "
+            "or hardcoded fallbacks, not each player's own recomputed ratio."
+        )
     fc_by_sleeper_id = fc_value_by_sleeper_id(fc_values, multipliers)
 
     try:
-        byes = bye_week_by_team(league["season"])
+        byes = bye_week_by_team(league["season"], force_refresh=force_full_refresh)
     except Exception:
         logger.warning("Failed to fetch bye weeks; skipping bye-conflict analysis", exc_info=True)
         byes = {}
+        data_warnings.append(
+            "Bye week data unavailable this refresh - bye-week impact will show no weeks, which "
+            "does not mean there are none."
+        )
     try:
-        handcuffs = handcuff_map(league["season"])
+        handcuffs = handcuff_map(league["season"], force_refresh=force_full_refresh)
     except Exception:
         logger.warning("Failed to fetch depth charts; skipping handcuff analysis", exc_info=True)
         handcuffs = {}
+        data_warnings.append(
+            "Handcuff data unavailable this refresh - handcuff flags will show none, which does "
+            "not mean there are none."
+        )
 
     user_roster_id = resolve_user_roster_id(users, rosters, username)
     team_names = team_name_by_roster_id(rosters, users)
@@ -1201,4 +1285,5 @@ def gather_state(league_id: str, username: str, force_full_refresh: bool) -> dic
             real_picks_by_overall,
         ),
         "team_names": team_names,
+        "data_warnings": data_warnings,
     }

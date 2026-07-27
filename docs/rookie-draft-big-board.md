@@ -19,17 +19,20 @@ across a season. Consumed by both `rookie_draft.py` (CLI) and `streamlit_app.py`
 FantasyCalc's API only exposes three knobs: superflex (`numQbs`), league size,
 and PPR. It has no parameter for the rest of this league's non-standard
 scoring — 6-point passing touchdowns, a non-standard passing-yardage rate, a
--3 (not the usual -2) interception penalty, a TE reception premium, and
-first-down/long-play bonuses.
+-3 (not the usual -2) interception penalty plus an *additional* -6 if that
+interception is returned for a touchdown (`pass_int_td` — found via a
+one-time scoring_settings audit, not caught by the original per-INT-only
+correction), a TE reception premium, and first-down/long-play bonuses.
 
 `player_scoring.py` corrects for all of it, per player, wherever real NFL
 history exists: for anyone with a qualifying season in the last 3 years (same
 "startable volume" spirit as the original QB/TE-only version below, extended
 to RB/WR), it recomputes that player's own points under this league's exact
 `scoring_settings` (using raw weekly stats, plus play-by-play data for the
-yardage-gated long-play bonuses weekly aggregates can't capture) and divides
-by their points under FantasyCalc's assumed baseline model (an explicit,
-documented assumption — FantasyCalc doesn't publish its own formula). Below
+yardage-gated long-play bonuses and the pick-six penalty, neither of which
+weekly aggregates capture) and divides by their points under FantasyCalc's
+assumed baseline model (an explicit, documented assumption — FantasyCalc
+doesn't publish its own formula). Below
 the qualifying bar, or for rookies with no NFL history at all, a position
 average computed from that same pooled sample is used instead —
 `POSITION_VALUE_MULTIPLIER` is now a last-resort constant, used only if this

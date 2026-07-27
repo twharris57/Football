@@ -84,6 +84,9 @@ league = state["league"]
 st.session_state.league_name = league["name"]
 st.caption(f"{league['name']} - {league['season']} Rookie Draft ({league['status']})")
 
+for warning in state["data_warnings"]:
+    st.warning(warning)
+
 total_picks = len(state["ownership"])
 current_pick_no = state["current_pick_no"]
 if current_pick_no > total_picks:
@@ -103,20 +106,21 @@ else:
 plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(["Draft Plan", "Lineup", "Draft Board", "Your Roster"])
 
 with plan_tab:
-    st.caption(
-        "Picks are ranked by season-average **marginal** starting-lineup value, not raw trade "
-        "value: for each candidate, this simulates adding them (+ the resulting drop) and "
-        "measures how much your roster's season-average starting value goes up — bye weeks are "
-        "folded into that average, not handled separately. A modest player at a weak position "
-        "can beat a highly-valued one who wouldn't crack your lineup. ✅ marks a round Sleeper "
-        "has already recorded, scored the same way retroactively; 🔜 rounds are simulated, "
-        "assuming no other team's picks happen in between — 'if these were your only remaining "
-        "picks, back to back, on the board right now.' The suggested drop is a live suggestion "
-        "even for a completed round — Sleeper has no record of whether it was actually dropped. "
-        "⚠️ flags a suggested drop that's a current starter. Refresh after any pick lands for an "
-        "updated plan. Each pick is collapsed by default — expand one for the full reasoning and "
-        "any backup options."
-    )
+    with st.expander("How this works"):
+        st.caption(
+            "Picks are ranked by season-average **marginal** starting-lineup value, not raw trade "
+            "value: for each candidate, this simulates adding them (+ the resulting drop) and "
+            "measures how much your roster's season-average starting value goes up — bye weeks are "
+            "folded into that average, not handled separately. A modest player at a weak position "
+            "can beat a highly-valued one who wouldn't crack your lineup. ✅ marks a round Sleeper "
+            "has already recorded, scored the same way retroactively; 🔜 rounds are simulated, "
+            "assuming no other team's picks happen in between — 'if these were your only remaining "
+            "picks, back to back, on the board right now.' The suggested drop is a live suggestion "
+            "even for a completed round — Sleeper has no record of whether it was actually dropped. "
+            "⚠️ flags a suggested drop that's a current starter. Refresh after any pick lands for an "
+            "updated plan. Each pick is collapsed by default — expand one for the full reasoning and "
+            "any backup options."
+        )
     plan = state["multi_round_plan"]
     rounds = plan["rounds"]
     if rounds.empty:

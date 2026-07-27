@@ -223,6 +223,40 @@ def _long_play_bonus_points(pbp: pd.DataFrame, scoring: dict[str, float]) -> pd.
     return df.groupby(["player_id", "season"], as_index=False)["long_play_points"].sum()
 
 
+def _pick_six_penalty_points(pbp: pd.DataFrame, scoring: dict[str, float]) -> pd.DataFrame:
+    """Per-player-season penalty points for a passer's interception returned for a TD.
+
+    Found via a one-time scoring_settings audit: this league's real
+    `pass_int_td: -6.0` is a penalty on top of the flat `pass_int` per-
+    interception penalty, only on interceptions that get returned for a
+    touchdown - not covered by _stat_points (which only knows the flat
+    per-INT rate) or weekly data (which has no return-touchdown detail),
+    so it needs the same play-by-play source as the long-play bonuses.
+    Returns columns [player_id, season, pick_six_points] - one row per
+    player-season with at least one such interception.
+    """
+    value = scoring.get("pass_int_td", 0.0)
+    if pbp.empty or value == 0.0:
+        return pd.DataFrame(columns=["player_id", "season", "pick_six_points"])
+
+    pick_sixes = pbp[
+        (pbp["interception"].fillna(0).astype(bool))
+        & (pbp["return_touchdown"].fillna(0).astype(bool))
+        & pbp["passer_player_id"].notna()
+    ]
+    if pick_sixes.empty:
+        return pd.DataFrame(columns=["player_id", "season", "pick_six_points"])
+
+    credits = pd.DataFrame(
+        {
+            "player_id": pick_sixes["passer_player_id"],
+            "season": pick_sixes["season"],
+            "pick_six_points": value,
+        }
+    )
+    return credits.groupby(["player_id", "season"], as_index=False)["pick_six_points"].sum()
+
+
 def _season_totals_by_player(weekly: pd.DataFrame) -> pd.DataFrame:
     """Sum weekly stats into one row per player-season, keeping the columns _stat_points needs."""
     stat_cols = [
@@ -265,9 +299,15 @@ def _derive_multipliers(scoring_settings: dict[str, float], current_season: str)
     long_play = _long_play_bonus_points(pbp, scoring_settings)
     season_totals = season_totals.merge(long_play, on=["player_id", "season"], how="left")
     season_totals["long_play_points"] = season_totals["long_play_points"].fillna(0.0)
+    pick_six = _pick_six_penalty_points(pbp, scoring_settings)
+    season_totals = season_totals.merge(pick_six, on=["player_id", "season"], how="left")
+    season_totals["pick_six_points"] = season_totals["pick_six_points"].fillna(0.0)
 
     season_totals["real_points"] = season_totals.apply(
-        lambda row: _stat_points(row, scoring_settings, row["position"]) + row["long_play_points"], axis=1
+        lambda row: _stat_points(row, scoring_settings, row["position"])
+        + row["long_play_points"]
+        + row["pick_six_points"],
+        axis=1,
     )
     season_totals["baseline_points"] = season_totals.apply(
         lambda row: _stat_points(row, BASELINE_SCORING, row["position"]), axis=1
