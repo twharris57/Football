@@ -115,7 +115,10 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   Doesn't treat "low value" as "drop" outright: age is weighed in, so a
   low-value *young* player is flagged as rebuild upside to hold, while
   low-value *aging* is a real drop candidate — matching this team's stated
-  rebuild strategy rather than a generic cutoff.
+  rebuild strategy rather than a generic cutoff. The aging cutoff itself is
+  position-aware (`LOW_VALUE_AGING_AGE`: RB 27 / WR 29 / TE 30 / QB 33, with
+  a 29 default) rather than one flat age for every position — dynasty RBs
+  decline earlier than QBs/TEs, who often start productively much later.
 - **Bye-week impact** and **weekly gaps** — the former (`roster_bye_conflicts`)
   shows every week with an active-roster player on bye: who's out, who fills
   in, and the resulting delta to optimal starting-lineup value versus a
@@ -124,12 +127,16 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   the same per-week `assign_starters` machinery as
   `season_average_starter_value`, restricted to active-roster players only
   (taxi/reserve excluded — they can't actually be started to cover a bye).
-  In Streamlit, each week is its own collapsible section (collapsed: who's
-  out, who fills in, the delta; expanded: a plain-language breakdown) — an
-  ✅/📅 cue distinguishes a week that's already happened from one still
-  ahead, using `league["settings"]["leg"]` (Sleeper's current-week counter).
-  A week already past still shows this same roster-based projection, not a
-  real result — there's no live in-week stats feed yet, and the UI says so
+  `starters_out` (players actually bumped from the lineup) is kept separate
+  from `bench_out` (bye'd players who weren't starting anyway, so they don't
+  move `lineup_delta`) — a bench player's bye shouldn't read as a problem
+  just because it also happened. In Streamlit, each week is its own
+  collapsible section: collapsed shows only `starters_out`/`fillers`/delta,
+  expanded adds `bench_out` and a plain-language breakdown. An ✅/📅 cue
+  distinguishes a week that's already happened from one still ahead, using
+  `league["settings"]["leg"]` (Sleeper's current-week counter). A week
+  already past still shows this same roster-based projection, not a real
+  result — there's no live in-week stats feed yet, and the UI says so
   explicitly rather than implying otherwise.
   The latter (`roster_weekly_gaps`) checks, per week, whether the roster can
   actually fill its *dedicated* QB/RB/WR/TE slots (not FLEX/SUPER_FLEX —
@@ -192,6 +199,17 @@ tighter.
 - `roster_weekly_gaps` doesn't model FLEX/SUPER_FLEX, only dedicated slots.
 - Lineup and handcuff logic have no injury-status awareness.
 - Handcuffs are RB-only — the standard fantasy usage of the term.
+
+## Known gaps (oversights, tracked in `.claude/PROJECT_PLAN.md`)
+
+- `lineup_breakdown`, `season_average_starter_value`, and
+  `rank_by_marginal_value` all feed `assign_starters` the entire
+  `roster["players"]` list, including taxi and IR/reserve players — none of
+  whom Sleeper actually allows into the starting lineup. Found while
+  building the bye-week-impact feature above, which correctly excludes
+  them; the older functions don't yet. Hasn't visibly surfaced (today's
+  taxi/IR values happen to be lower than the real bench), but is a latent
+  correctness gap, not a style inconsistency.
 
 ## Static assumptions — revisit if the league's rules ever change
 
