@@ -400,6 +400,20 @@ class TestPersonalizedMultipliers:
 
         assert fc_by_id["qb1"]["adj_value"] == pytest.approx(200.0)
 
+    def test_rookie_bucket_preferred_over_position_average(self):
+        multipliers = {"per_player": {}, "rookie_bucket": {"qb1": 1.3}, "position_average": {"QB": 1.5}}
+
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("qb1", 100, position="QB")], multipliers)
+
+        assert fc_by_id["qb1"]["adj_value"] == pytest.approx(130.0)
+
+    def test_personalized_multiplier_preferred_over_rookie_bucket(self):
+        multipliers = {"per_player": {"qb1": 2.0}, "rookie_bucket": {"qb1": 1.3}, "position_average": {"QB": 1.5}}
+
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("qb1", 100, position="QB")], multipliers)
+
+        assert fc_by_id["qb1"]["adj_value"] == pytest.approx(200.0)
+
     def test_falls_back_to_position_average_when_no_personalized_entry(self):
         multipliers = {"per_player": {}, "position_average": {"QB": 1.5}}
 

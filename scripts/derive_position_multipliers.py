@@ -43,6 +43,13 @@ def main() -> None:
     for name, ratio in sorted(named, key=lambda p: p[1])[:15]:
         print(f"  {name}: {ratio:.4f}")
 
+    print()
+    rookie_bucket = result.get("rookie_bucket", {})
+    print(f"Rookie play-style buckets: {len(rookie_bucket)} of this year's incoming class matched")
+    for pid, ratio in sorted(rookie_bucket.items(), key=lambda p: p[1], reverse=True):
+        name = players.get(pid, {}).get("full_name", pid)
+        print(f"  {name}: {ratio:.4f}")
+
 
 if __name__ == "__main__":
     main()

@@ -73,6 +73,136 @@ def _sane_ratio(real_points: float, baseline_points: float) -> float | None:
         return None
     return ratio
 
+
+# Valuation step A: rookies have no real NFL history, so they always fall
+# back to the flat per-position average ratio above - but that one number
+# doesn't distinguish a mobile QB from a pocket passer, or a receiving TE
+# from an in-line blocker, even though this league's scoring gap (6pt
+# passing TDs, TE reception premium, long-play bonuses) plausibly affects
+# those two profiles differently. This splits each position into two
+# play-style buckets using NFL Scouting Combine testing data
+# (`import_combine_data`), a real per-rookie athletic signal available
+# without college stats: each qualifying *historical* player (same
+# QUALIFYING_VOLUME bar as above) who has a matched combine record is
+# assigned a bucket by a simple median split on the metric below, bucket
+# ratios are pooled the same way position_average is, and this year's
+# incoming rookies are assigned to a bucket by the same threshold via their
+# own combine number. A rookie with no combine record, or no number for
+# the position's metric (QBs skip the 40 more often than other positions),
+# simply isn't in the result dict and falls back to position_average
+# instead - a real coverage gap, not a bug (see docs).
+#
+# Labels are (low-metric-value bucket, high-metric-value bucket):
+#   QB: 40-yd dash - faster (lower) => mobile; slower => pocket. Rushing
+#       production isn't boosted by the 6pt passing-TD rule the way pocket
+#       passing volume is, so a mobile QB's true ratio plausibly differs
+#       from a pocket passer's.
+#   RB: weight - lighter => receiving back; heavier => early-down/power.
+#       Reception/first-down bonuses matter more to receiving-back usage.
+#   WR: 40-yd dash - faster (lower) => deep threat; slower => possession.
+#       The 40p/50p long-play bonuses reward exactly the deep-threat profile.
+#   TE: weight+40 composite (z-scored, summed) - lower => receiving;
+#       higher => in-line/blocking. Receiving TEs earn more of the TE
+#       reception premium than blocking-heavy TEs who see fewer targets.
+BUCKET_LABELS: dict[str, tuple[str, str]] = {
+    "QB": ("mobile", "pocket"),
+    "RB": ("receiving_back", "early_down"),
+    "WR": ("deep_threat", "possession"),
+    "TE": ("receiving", "in_line"),
+}
+
+# Below this many combine-matched qualifying player-seasons in a bucket, the
+# pooled ratio is too noisy to trust - skip that bucket (its rookies fall
+# back to position_average) rather than publish a number from a handful of
+# player-seasons. Real observed counts (77-203 combine-matched
+# player-seasons per position, see docs) comfortably clear this in normal
+# operation; this is a defensive floor, not a normal code path.
+MIN_BUCKET_PLAYER_SEASONS = 10
+
+
+def _z_scores(series: pd.Series) -> pd.Series:
+    std = series.std()
+    if not std:
+        return pd.Series(0.0, index=series.index)
+    return (series - series.mean()) / std
+
+
+def _bucket_metric(position: str, rows: pd.DataFrame) -> pd.Series:
+    """Score per row; a HIGHER score means more of BUCKET_LABELS[position][1] (see above)."""
+    if position in ("QB", "WR"):
+        return rows["forty"]
+    if position == "RB":
+        return rows["wt"]
+    if position == "TE":
+        return _z_scores(rows["wt"]) + _z_scores(rows["forty"])
+    raise ValueError(f"no bucket metric defined for position {position!r}")
+
+
+def _combine_data(years: list[int]) -> pd.DataFrame:
+    try:
+        return nfl.import_combine_data(years=years, positions=list(BUCKET_LABELS))
+    except Exception:
+        logger.warning("nfl_data_py has no combine data for %s; rookie play-style buckets skipped", years)
+        return pd.DataFrame()
+
+
+def _pfr_crosswalk() -> pd.DataFrame:
+    ids = nfl.import_ids().dropna(subset=["pfr_id"])
+    return ids[["pfr_id", "gsis_id", "sleeper_id"]]
+
+
+def _derive_rookie_buckets(season_totals: pd.DataFrame, current_season: str) -> dict[str, float]:
+    """{sleeper_id: ratio} for this year's incoming rookie class, bucketed by play style.
+
+    Only ever produces entries for players in this year's combine class
+    (`current_season`) - explicitly rescoped to rookies, not a general
+    veteran-inclusive bucket system (see PROJECT_PLAN.md step A).
+    """
+    historical_combine = _combine_data(list(range(2000, int(current_season))))
+    rookie_combine = _combine_data([int(current_season)])
+    if historical_combine.empty or rookie_combine.empty:
+        return {}
+
+    crosswalk = _pfr_crosswalk()
+    historical_combine = historical_combine.merge(crosswalk, on="pfr_id", how="inner").dropna(subset=["gsis_id"])
+    rookie_combine = rookie_combine.merge(crosswalk, on="pfr_id", how="inner").dropna(subset=["sleeper_id"])
+
+    bucket_ratio: dict[str, float] = {}
+    for position, (volume_col, min_volume) in QUALIFYING_VOLUME.items():
+        needed_cols = ["wt", "forty"] if position == "TE" else ["forty" if position in ("QB", "WR") else "wt"]
+
+        qualifying = season_totals[
+            (season_totals["position"] == position) & (season_totals[volume_col] >= min_volume)
+        ]
+        historical = historical_combine[historical_combine["pos"] == position].merge(
+            qualifying, left_on="gsis_id", right_on="player_id", how="inner"
+        )
+        historical = historical.dropna(subset=needed_cols)
+        if len(historical) < MIN_BUCKET_PLAYER_SEASONS * 2:
+            continue
+
+        rookies = rookie_combine[rookie_combine["pos"] == position].dropna(subset=needed_cols)
+        if rookies.empty:
+            continue
+
+        metric = _bucket_metric(position, historical)
+        threshold = metric.median()
+        low_label, high_label = BUCKET_LABELS[position]
+
+        for label, mask in ((low_label, metric <= threshold), (high_label, metric > threshold)):
+            bucket_rows = historical[mask]
+            if len(bucket_rows) < MIN_BUCKET_PLAYER_SEASONS:
+                continue
+            ratio = _sane_ratio(bucket_rows["real_points"].sum(), bucket_rows["baseline_points"].sum())
+            if ratio is None:
+                continue
+            rookie_metric = _bucket_metric(position, rookies)
+            rookie_mask = rookie_metric <= threshold if label == low_label else rookie_metric > threshold
+            for sleeper_id in rookies.loc[rookie_mask, "sleeper_id"]:
+                bucket_ratio[str(int(sleeper_id))] = ratio
+
+    return bucket_ratio
+
 # FantasyCalc doesn't publish its scoring assumptions. This is the explicit,
 # documented baseline this project assumes (matches what step E's script
 # implicitly assumed via nfl_data_py's own fantasy_points_ppr column):
@@ -336,11 +466,19 @@ def _derive_multipliers(scoring_settings: dict[str, float], current_season: str)
                 continue
             per_player[sleeper_id] = ratio
 
-    return {"seasons": seasons, "per_player": per_player, "position_average": position_average}
+    rookie_bucket = _derive_rookie_buckets(season_totals, current_season)
+
+    return {
+        "seasons": seasons,
+        "per_player": per_player,
+        "position_average": position_average,
+        "rookie_bucket": rookie_bucket,
+    }
 
 
 def get_multipliers(scoring_settings: dict[str, float], current_season: str, force_refresh: bool = False) -> dict[str, Any]:
-    """Return {"seasons": [...], "per_player": {sleeper_id: ratio}, "position_average": {pos: ratio}}.
+    """Return {"seasons": [...], "per_player": {sleeper_id: ratio}, "position_average": {pos: ratio},
+    "rookie_bucket": {sleeper_id: ratio}}.
 
     Cached to disk with no TTL, unlike sleeper_api's players cache - the
     underlying data is entirely historical/complete seasons, so nothing
@@ -353,7 +491,12 @@ def get_multipliers(scoring_settings: dict[str, float], current_season: str, for
     """
     if not force_refresh and MULTIPLIERS_CACHE_PATH.exists():
         cached = json.loads(MULTIPLIERS_CACHE_PATH.read_text(encoding="utf-8"))
-        return {"seasons": cached["seasons"], "per_player": cached["per_player"], "position_average": cached["position_average"]}
+        return {
+            "seasons": cached["seasons"],
+            "per_player": cached["per_player"],
+            "position_average": cached["position_average"],
+            "rookie_bucket": cached.get("rookie_bucket", {}),
+        }
 
     logger.info("Recomputing real-scoring multipliers from nfl_data_py (weekly + play-by-play)...")
     result = _derive_multipliers(scoring_settings, current_season)
