@@ -21,17 +21,41 @@ import dynasty_core
 APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
 
 
-def show_df(df: pd.DataFrame, empty_message: str, *, hide_index: bool = True) -> bool:
+def show_df(
+    df: pd.DataFrame,
+    empty_message: str,
+    *,
+    hide_index: bool = True,
+    column_config: dict[str, object] | None = None,
+) -> bool:
     """Render df, or empty_message if it's empty - the repeated shape across every tab.
 
     Returns whether df had rows, so callers can compose extra logic (an
-    extra warning, an expander) on the non-empty path.
+    extra warning, an expander) on the non-empty path. `column_config` is
+    passed straight through to st.dataframe - display-only relabeling
+    (see the `cols()` helper below), the underlying column names (and
+    every reference to them elsewhere in this codebase) are untouched.
     """
     if df.empty:
         st.write(empty_message)
         return False
-    st.dataframe(df, hide_index=hide_index, width="stretch")
+    st.dataframe(df, hide_index=hide_index, width="stretch", column_config=column_config)
     return True
+
+
+def cols(*specs: tuple[str, str] | tuple[str, str, str]) -> dict[str, object]:
+    """Build a column_config dict from (key, label) or (key, label, help_text) tuples.
+
+    Human-readable table headers without renaming the underlying DataFrame
+    columns everything else in this codebase (and its tests) refers to by
+    their plain snake_case names.
+    """
+    config: dict[str, object] = {}
+    for spec in specs:
+        key, label = spec[0], spec[1]
+        help_text = spec[2] if len(spec) == 3 else None
+        config[key] = st.column_config.Column(label, help=help_text)
+    return config
 
 st.set_page_config(page_title="Dynasty Rookie Draft", layout="centered")
 
@@ -143,7 +167,19 @@ with plan_tab:
                 alternates = alternates_by_pick.get(row["overall_pick"])
                 if alternates is not None and not alternates.empty:
                     st.caption("Backup options for this pick:")
-                    st.dataframe(alternates, hide_index=True, width="stretch")
+                    st.dataframe(
+                        alternates,
+                        hide_index=True,
+                        width="stretch",
+                        column_config=cols(
+                            ("name", "Player"),
+                            ("pos", "Position"),
+                            ("marginal_value", "Marginal Value"),
+                            ("drop_name", "Drop"),
+                            ("drop_is_starter", "Drop Is Starter"),
+                            ("notes", "Notes"),
+                        ),
+                    )
 
     st.subheader("Weekly gap impact")
     alerts = plan["weekly_gap_alerts"]
@@ -151,7 +187,12 @@ with plan_tab:
         st.success("This plan does not introduce any new weekly gaps.")
     else:
         st.warning("This plan would introduce or worsen a gap in these weeks:")
-        st.dataframe(alerts, hide_index=True, width="stretch")
+        st.dataframe(
+            alerts,
+            hide_index=True,
+            width="stretch",
+            column_config=cols(("week", "Week"), ("gap_before", "Gap Before"), ("gap_after", "Gap After")),
+        )
 
 with lineup_tab:
     st.caption(
@@ -159,47 +200,81 @@ with lineup_tab:
         "account for byes or injuries when deciding who starts). A by-week/injury-aware version "
         "is a planned refinement."
     )
+    starter_cols = cols(("slot", "Slot"), ("name", "Player"), ("pos", "Position"), ("adj_value", "Value"))
+    bench_cols = cols(("name", "Player"), ("pos", "Position"), ("adj_value", "Value"))
     st.subheader("Starters")
-    st.dataframe(state["lineup_starters"], hide_index=True, width="stretch")
+    st.dataframe(state["lineup_starters"], hide_index=True, width="stretch", column_config=starter_cols)
     st.subheader("Bench")
-    show_df(state["lineup_bench"], "(empty)")
+    show_df(state["lineup_bench"], "(empty)", column_config=bench_cols)
     st.subheader("Taxi squad")
-    show_df(state["lineup_taxi"], "(empty)")
+    show_df(state["lineup_taxi"], "(empty)", column_config=bench_cols)
     st.subheader("IR / Reserve")
-    show_df(state["lineup_ir"], "(empty)")
+    show_df(state["lineup_ir"], "(empty)", column_config=bench_cols)
 
 with draft_tab:
     st.subheader("Your picks")
-    show_df(state["your_picks"], "(none)")
+    show_df(
+        state["your_picks"],
+        "(none)",
+        column_config=cols(
+            ("round", "Round"),
+            ("overall_pick", "Pick #"),
+            ("status", "Status"),
+            ("acquired_from", "Acquired From"),
+        ),
+    )
 
     if not state["recent_picks"].empty:
         st.subheader("Recently drafted")
-        st.dataframe(state["recent_picks"], hide_index=True, width="stretch")
+        st.dataframe(
+            state["recent_picks"],
+            hide_index=True,
+            width="stretch",
+            column_config=cols(
+                ("pick", "Pick #"), ("team", "Team"), ("player", "Player"), ("pos", "Position")
+            ),
+        )
 
     st.subheader("Rookie big board")
-    st.caption(
-        "The whole rookie class — drafted players stay listed instead of disappearing, "
-        "annotated via **drafted_round**/**drafted_by** (blank if still undrafted). **rank** is "
-        "value order across the whole class, drafted and undrafted together. **value** is "
-        "FantasyCalc's raw number; **adj_value** applies this league's real-scoring correction "
-        "(see the Draft Plan tab) and is what determines sort order and **rank**. **tier** is "
-        "FantasyCalc's own global tier across *all* players, not rookie-specific and not "
-        "adjusted — gaps in the sequence are veterans/other rookies not shown here. "
-        "**fits_need** flags a currently-thin position on your roster. "
-        "**handcuff_to** means this rookie backs up one of your own RB starters — expect this "
-        "to be sparse pre-season: `nfl_data_py`'s player-ID crosswalk hasn't caught up with most "
-        "of this year's incoming class yet, not a bug, and should fill in later in the year."
-    )
+    with st.expander("How this works"):
+        st.caption(
+            "The whole rookie class — drafted players stay listed instead of disappearing, "
+            "annotated via **drafted_round**/**drafted_by** (blank if still undrafted). **rank** is "
+            "value order across the whole class, drafted and undrafted together. **value** is "
+            "FantasyCalc's raw number; **adj_value** applies this league's real-scoring correction "
+            "(see the Draft Plan tab) and is what determines sort order and **rank**. **tier** is "
+            "FantasyCalc's own global tier across *all* players, not rookie-specific and not "
+            "adjusted — gaps in the sequence are veterans/other rookies not shown here. "
+            "**fits_need** flags a currently-thin position on your roster. "
+            "**handcuff_to** means this rookie backs up one of your own RB starters — expect this "
+            "to be sparse pre-season: `nfl_data_py`'s player-ID crosswalk hasn't caught up with most "
+            "of this year's incoming class yet, not a bug, and should fill in later in the year."
+        )
     board = state["big_board"]
     if board.empty:
         st.write("(no rookies available)")
     else:
+        board_cols = cols(
+            ("rank", "Rank"),
+            ("name", "Player"),
+            ("pos", "Position"),
+            ("fits_need", "Fits Need"),
+            ("handcuff_to", "Handcuff To"),
+            ("drafted_round", "Drafted Round"),
+            ("drafted_by", "Drafted By"),
+            ("team", "Team"),
+            ("college", "College"),
+            ("age", "Age"),
+            ("value", "Value"),
+            ("adj_value", "Adj. Value"),
+        )
         for tier in sorted(board["tier"].unique()):
             st.markdown(f"**Tier {tier}**")
             st.dataframe(
                 board[board["tier"] == tier].drop(columns="tier"),
                 hide_index=True,
                 width="stretch",
+                column_config=board_cols,
             )
 
 with roster_tab:
@@ -213,7 +288,17 @@ with roster_tab:
         st.warning("No open roster or taxi slots — drafting a rookie means dropping someone first.")
 
     st.subheader("Roster needs")
-    show_df(state["roster_needs"], "(empty roster)", hide_index=False)
+    show_df(
+        state["roster_needs"],
+        "(empty roster)",
+        hide_index=False,
+        column_config=cols(
+            ("count", "Count"),
+            ("avg_age", "Avg Age"),
+            ("young_core", "Young Core"),
+            ("need", "Need"),
+        ),
+    )
     needs = state["need_positions"]
     if needs:
         st.info(f"Flagged needs: {', '.join(sorted(needs))} — the big board marks rookies at these positions.")
@@ -227,20 +312,35 @@ with roster_tab:
         "QBs/TEs): low value + young is still a rebuild asset worth holding; low value + aging "
         "is a real drop candidate."
     )
-    show_df(state["roster_value"], "(empty roster)")
+    show_df(
+        state["roster_value"],
+        "(empty roster)",
+        column_config=cols(
+            ("name", "Player"),
+            ("pos", "Position"),
+            ("age", "Age"),
+            ("years_exp", "Years Exp"),
+            ("status", "Status", "🆕 Rookie (no NFL experience yet) · 🏥 + injury code · 🌱 Taxi · 🩹 IR/Reserve"),
+            ("bye", "Bye"),
+            ("value", "Value"),
+            ("adj_value", "Adj. Value"),
+            ("note", "Note"),
+        ),
+    )
 
     st.subheader("Bye week impact")
-    st.caption(
-        "One collapsible section per week with an active-roster player on bye — collapsed shows "
-        "only starters actually bumped out and who fills in, plus the lineup-value delta vs. a "
-        "full-strength week; a bye'd bench player who wasn't starting anyway doesn't clutter the "
-        "collapsed view (it's still there, expanded, since it doesn't move the delta). ✅ marks a "
-        "week that's already happened — this project has no live in-week stats yet, so the delta "
-        "shown is still this same projection, not real results. 📅 marks a week still ahead, "
-        "projected from today's roster (it'll shift if the roster changes before then). A small "
-        "delta means the bench covers it fine; a large one is worth looking for bye-week coverage "
-        "via trade."
-    )
+    with st.expander("How this works"):
+        st.caption(
+            "One collapsible section per week with an active-roster player on bye — collapsed shows "
+            "only starters actually bumped out and who fills in, plus the lineup-value delta vs. a "
+            "full-strength week; a bye'd bench player who wasn't starting anyway doesn't clutter the "
+            "collapsed view (it's still there, expanded, since it doesn't move the delta). ✅ marks a "
+            "week that's already happened — this project has no live in-week stats yet, so the delta "
+            "shown is still this same projection, not real results. 📅 marks a week still ahead, "
+            "projected from today's roster (it'll shift if the roster changes before then). A small "
+            "delta means the bench covers it fine; a large one is worth looking for bye-week coverage "
+            "via trade."
+        )
     bye_impact = state["roster_bye_conflicts"]
     if bye_impact.empty:
         st.write("(none)")
@@ -272,23 +372,33 @@ with roster_tab:
                 st.write(f"**Also on bye (bench, no lineup impact):** {row['bench_out']}")
 
     st.subheader("Weekly gaps")
-    st.caption(
-        "Available (non-bye) rostered players per position per week, vs. what's needed to fill "
-        "this league's dedicated starting slots (QB:1 RB:2 WR:2 TE:1). Does not account for "
-        "FLEX/SUPER_FLEX, which could pull from other positions — a rough depth signal, not a "
-        "full lineup-feasibility check."
-    )
+    with st.expander("How this works"):
+        st.caption(
+            "Available (non-bye) rostered players per position per week, vs. what's needed to fill "
+            "this league's dedicated starting slots (QB:1 RB:2 WR:2 TE:1). Does not account for "
+            "FLEX/SUPER_FLEX, which could pull from other positions — a rough depth signal, not a "
+            "full lineup-feasibility check."
+        )
     weekly_gaps = state["roster_weekly_gaps"]
     gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
+    weekly_gap_cols = cols(
+        ("week", "Week"), ("QB", "QB"), ("RB", "RB"), ("WR", "WR"), ("TE", "TE"), ("gap", "Gap")
+    )
     if not gap_weeks.empty:
         st.warning("Weeks with a gap:")
-    show_df(gap_weeks, "No weeks have a dedicated-slot gap.")
+    show_df(gap_weeks, "No weeks have a dedicated-slot gap.", column_config=weekly_gap_cols)
     with st.expander("Show all 18 weeks"):
-        st.dataframe(weekly_gaps, hide_index=True, width="stretch")
+        st.dataframe(weekly_gaps, hide_index=True, width="stretch", column_config=weekly_gap_cols)
 
     st.subheader("Handcuff status")
     st.caption("Your rostered RBs who are NFL starters, and whether you also own their backup.")
-    show_df(state["roster_handcuffs"], "(none of your RBs are current NFL starters)")
+    show_df(
+        state["roster_handcuffs"],
+        "(none of your RBs are current NFL starters)",
+        column_config=cols(
+            ("starter", "Starter"), ("handcuff", "Handcuff"), ("handcuff_rostered", "Handcuff Rostered")
+        ),
+    )
 
 st.divider()
 st.caption(f"Dynasty Rookie Draft · build {APP_VERSION}")

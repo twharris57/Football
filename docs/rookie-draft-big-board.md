@@ -122,6 +122,12 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   position-aware (`LOW_VALUE_AGING_AGE`: RB 27 / WR 29 / TE 30 / QB 33, with
   a 29 default) rather than one flat age for every position — dynasty RBs
   decline earlier than QBs/TEs, who often start productively much later.
+  A `status` column (`player_status_flags()`) gives a compact icon summary
+  of each player's situation — 🆕 rookie (no NFL experience yet, `years_exp`
+  falsy), 🏥 + a one-letter code from Sleeper's real `injury_status`, 🌱
+  taxi squad, 🩹 IR/reserve — icons rather than words to stay space-efficient
+  in a table column; a player can show more than one at once (e.g. a
+  rookie stashed on taxi).
 - **Bye-week impact** and **weekly gaps** — the former (`roster_bye_conflicts`)
   shows every week with an active-roster player on bye: who's out, who fills
   in, and the resulting delta to optimal starting-lineup value versus a

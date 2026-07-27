@@ -348,6 +348,27 @@ def roster_total_capacity(league: dict) -> int:
     return len(league["roster_positions"]) + league["settings"].get("taxi_slots", 0)
 
 
+def player_status_flags(player_id: str, info: dict, taxi_ids: set[str], reserve_ids: set[str]) -> str:
+    """Compact icon summary of a player's current situation: rookie/injured/taxi/IR.
+
+    Space-efficient by design (icons, not words) for a table column — pair
+    with a `column_config` `help=` tooltip explaining the legend at display
+    time (see streamlit_app.py), since st.dataframe can't show a per-cell
+    hover tooltip, only a per-column one.
+    """
+    flags = []
+    if not info.get("years_exp"):
+        flags.append("🆕")
+    injury_status = info.get("injury_status")
+    if injury_status:
+        flags.append(f"🏥{injury_status[:1]}")
+    if player_id in taxi_ids:
+        flags.append("🌱")
+    if player_id in reserve_ids:
+        flags.append("🩹")
+    return " ".join(flags)
+
+
 def roster_value_analysis(
     roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], byes: dict[str, int] | None = None
 ) -> pd.DataFrame:
@@ -357,7 +378,10 @@ def roster_value_analysis(
     real-scoring correction applied (see `fc_value_by_sleeper_id`) —
     ranking and the low-value cutoff below both use `adj_value`, not the raw
     `value`. `bye` is included for cross-reference against
-    `roster_bye_conflicts`.
+    `roster_bye_conflicts`. `status` is a compact icon summary (see
+    `player_status_flags`) - 🆕 rookie (no NFL experience yet), 🏥 + a
+    one-letter injury code (from Sleeper's real `injury_status`), 🌱 taxi
+    squad, 🩹 IR/reserve - a player can show more than one at once.
 
     The bottom quartile (min 3 players) of the roster's own value distribution
     is flagged low-value. Within that group, `note` distinguishes aging
@@ -368,6 +392,8 @@ def roster_value_analysis(
     dynasty value, so one flat age cutoff would misjudge either end.
     """
     byes = byes or {}
+    taxi_ids = set(roster.get("taxi") or [])
+    reserve_ids = set(roster.get("reserve") or [])
 
     rows = []
     for player_id, info in roster_fantasy_players(roster, players):
@@ -380,6 +406,7 @@ def roster_value_analysis(
                 "pos": position,
                 "age": info.get("age"),
                 "years_exp": info.get("years_exp"),
+                "status": player_status_flags(player_id, info, taxi_ids, reserve_ids),
                 "bye": byes.get(info.get("team")),
                 "value": value,
                 "adj_value": fc_entry.get("adj_value") if fc_entry else None,

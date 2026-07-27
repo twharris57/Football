@@ -54,12 +54,55 @@ Streamlit reruns the whole script top-to-bottom on any widget interaction, so
 a naive port would refetch on every unrelated click. `st.cache_data` is keyed
 on an explicit `refresh_token` in `st.session_state`, bumped only by the
 Refresh/Force-full-refresh buttons — mirroring the CLI's Enter-vs-`f` prompt.
-Refresh re-pulls league/rosters/draft/picks (cheap, always live); Force full
-refresh also busts the on-disk 14MB players-dataset cache.
+The button's own return value can't be the cache key directly — it's only
+`True` on the exact run it was clicked, so a later rerun (e.g. opening an
+expander) would see `False` and get a different key, silently missing cache
+and re-fetching both APIs for no reason. `st.session_state.force_refresh_pending`
+holds the durable version instead, set once per click and stable across
+reruns (verified directly: patched `gather_state` with a call counter and
+confirmed a plain rerun after a force-refresh click adds no extra call).
+
+Refresh re-pulls league/rosters/draft/picks (cheap, always live) plus
+whatever's expired on `fantasycalc_api`/`bye_week_by_team`/`handcuff_map`'s
+own TTL caches (12-24h, not tied to this button at all). Force full refresh
+busts the on-disk 14MB players-dataset cache — and *only* that; it
+deliberately does **not** force a recompute of `player_scoring`'s
+multiplier cache, which is a 1-2 minute synchronous pull of 3 seasons of
+weekly + play-by-play data, unsuitable to trigger live mid-draft. That
+cache is meant to be pre-warmed ahead of draft day via
+`python scripts/derive_position_multipliers.py`, run once, outside the app.
+
+Whenever byes, handcuffs, or the scoring multipliers silently fall back to
+an empty/default result (a fetch failure, non-fatal by design — see
+`docs/rookie-draft-big-board.md`), `gather_state` returns a
+`data_warnings` list, surfaced as `st.warning`/CLI `WARNING:` lines — a
+fallback used to be indistinguishable from "there's nothing to report."
 
 Network/parsing errors surface as `st.error` with a retry hint instead of a
 raw traceback — this needs to stay usable on a phone mid-draft, not just
-technically correct.
+technically correct. The CLI's own refresh loop mirrors this: it catches
+`ValueError`/`TypeError` (a bad `--league-id`/typo'd `--username`) with a
+clean message and exit, rather than a traceback or an infinite retry loop
+that can't fix a bad input.
+
+### Table presentation
+
+Two conventions applied consistently across every tab:
+
+- **Human-readable column labels.** Every table's underlying DataFrame
+  keeps its plain snake_case column names (so the rest of the codebase and
+  its tests can keep referring to them normally) — only the *displayed*
+  header is relabeled, via `st.dataframe`'s `column_config` and a small
+  `cols()` helper (`streamlit_app.py`) that builds a `{column: st.column_config.Column(label, help=...)}`
+  dict from `(key, label)`/`(key, label, help_text)` tuples. Emoji-only
+  columns (e.g. Roster Value's `status`) use the `help` text for a legend,
+  shown as a hover tooltip on the column header — `st.dataframe` has no
+  per-cell tooltip, so this is the native way to explain an icon column
+  without cluttering every cell with words.
+- **Methodology text lives in a closed "How this works" expander**, not a
+  bare `st.caption`, on every tab/section that has one (Draft Plan, Draft
+  Board, Bye Week Impact, Weekly Gaps) — keeps the actual data above the
+  fold on a phone instead of pushing it down on every refresh.
 
 ## CLI (`rookie_draft.py`)
 

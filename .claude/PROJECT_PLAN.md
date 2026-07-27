@@ -162,6 +162,18 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 - **Trade targets & sells** — given the rebuild strategy, flag which of the
   user's veterans are sellable for picks, and which other teams' picks/young
   players might be realistically available.
+- **Roster needs — structural positional weakness, not just week-to-week
+  gaps** (user-flagged 2026-07-26, explicitly post-draft). `roster_needs_summary`
+  and `roster_weekly_gaps` both answer "do we have enough bodies at this
+  position right now/this week" — neither answers "is this position
+  structurally weak compared to the rest of the roster (or the league),
+  such that it's worth actively shoring up via trade rather than just
+  monitoring." Would need a real positional-strength metric (e.g. this
+  position's share of total roster value, or its value relative to
+  starting-quality replacement level) rather than the current young-core
+  headcount heuristic. Natural pairing with the "Trade targets & sells"
+  and "League-wide power/timeline read" ideas below - a weak-position
+  signal is exactly what should drive who to target in a trade.
 - **League-wide power/timeline read** — place every team in the league on a
   rebuild-vs-contend spectrum, to identify good trade partners (contenders who
   overpay for immediate help, rebuilders who overpay for future assets).
