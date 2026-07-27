@@ -40,6 +40,16 @@ whole enrichment fails for a refresh. Results are cached to disk (no
 TTL — the underlying seasons are historical and don't change on a clock) and
 recomputed only on a "force full refresh."
 
+`_sane_ratio()` guards every computed ratio before it's used: a
+near-zero/negative pooled `baseline_points` (`<= 1.0`, which would blow the
+ratio up or invert its sign) or a result outside `MULTIPLIER_BOUNDS`
+(`[0.5, 2.0]`) falls back to the position average instead, then to
+`POSITION_VALUE_MULTIPLIER` if even that's unavailable — real observed
+ratios across a 332-player sample land in `[1.08, 1.61]`, comfortably
+inside the bound, so this is a defensive floor against a bad data pull, not
+a normal code path. Covered by `tests/test_player_scoring.py`
+(`TestSaneRatio`).
+
 The original version of this correction (superseded, kept here for context on
 how the project arrived at the current approach) used one flat multiplier per
 position instead of a per-player one, and covered only the two largest gaps

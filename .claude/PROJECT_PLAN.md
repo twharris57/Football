@@ -6,128 +6,21 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 
 ## Active
 
-- **Pre-draft hardening for Sunday's live draft (2026-08-02)** — findings from a
-  multi-agent code review (2026-07-26) of `feature/valuation-recompute`,
-  covering valuation logic, backend correctness/performance, test coverage,
-  deployment readiness, and draft-day UX. Prioritized by what actually blocks
-  or risks Sunday vs. what can wait.
-
-  **Must fix before Sunday:**
-  1. ⏳ **Synology deploy hasn't happened at all yet — needs the user's own
-     action, can't be done from here.** No SSH/credentials to the NAS.
-     Code-side prerequisites confirmed ready: `docker-publish.yml` triggers
-     correctly on push to `main` and bakes `GIT_SHA` into the image for the
-     footer version check; `Dockerfile` builds a non-root, healthchecked
-     image with the `nfl_data_cache` volume mount point present. Once merged
-     to `main`: confirm the GHCR build goes green (`gh run list` /
-     `gh pr checks`), then on the NAS: deploy, verify the running
-     container's footer git SHA matches, and pre-warm the multiplier cache
-     with `python scripts/derive_position_multipliers.py` ahead of draft
-     day, not live (a cold cache means a 1-2 minute `nfl_data_py` pull on
-     first load — see item 2, now fixed, for why that's no longer triggered
-     by the app itself). The CLI (`rookie_draft.py`, no Docker) remains the
-     safer fallback regardless of how the deploy goes.
-  2. ✅ **Decoupled "Force full refresh" from the scoring-multiplier
-     recompute.** `dynasty_core.gather_state` no longer passes
-     `force_refresh=True` to `player_scoring.get_multipliers` at all — the
-     Streamlit/CLI "force full refresh" action now only busts the fast
-     Sleeper players cache (~4s, confirmed by timing directly, down from
-     ~33s). The only way to recompute the multiplier cache is running
-     `python scripts/derive_position_multipliers.py` directly, ahead of
-     time — matches item 1's "pre-warm before draft day, not live" plan
-     exactly.
-  3. ✅ **Clamped the per-player scoring ratio.** `player_scoring._sane_ratio`
-     rejects a ratio computed from a near-zero/negative pooled
-     `baseline_points` (`<= 1.0`) or landing outside `MULTIPLIER_BOUNDS`
-     (`[0.5, 2.0]` — real observed ratios across 332 players land in
-     `[1.08, 1.61]`, comfortably inside), falling back to the position
-     average (then the hardcoded constant) instead of feeding a nonsense
-     number into `adj_value`. Covered by `tests/test_player_scoring.py`
-     (`TestSaneRatio`).
-  4. ✅ **Fixed the Streamlit cache-key bug in `load_state`.** Was keyed on
-     the raw force-refresh button's return value, which is only `True` on
-     the exact run it was clicked — any later rerun (e.g. opening an
-     expander) saw `False` again, changing the cache key and silently
-     re-fetching both APIs for no reason. Now keyed on
-     `st.session_state.force_refresh_pending`, a durable flag set once per
-     click and stable across reruns. Verified directly: patched
-     `gather_state` with a call counter through an `AppTest` run — a plain
-     rerun immediately after a force-refresh click no longer adds a call.
-  5. ✅ **Verified `bye_week_by_team('2026')` returns all 32 teams** — ran it
-     directly against the real 2026 schedule; every team resolved to
-     exactly one bye week, nothing dropped. No bug found; nothing to fix.
-
-  **Worth doing this season (not blocking Sunday) — all done, 2026-07-26:**
-  - ✅ CLI now catches `ValueError`/`TypeError` (e.g. a typo'd `--username`)
-    with a clean message and exit, instead of an ugly traceback or an
-    infinite retry loop that can't fix a bad input. Streamlit already
-    handled this the same way.
-  - ✅ `gather_state` now returns `data_warnings: list[str]`, surfaced as
-    `st.warning`/CLI `WARNING:` lines whenever byes, handcuffs, or the
-    scoring multipliers silently fall back — no longer indistinguishable
-    from "no conflicts found."
-  - ✅ `fantasycalc_api.get_dynasty_values` now disk-caches (12h TTL, keyed
-    by `numQbs`/`numTeams`/`ppr`), tied to force-refresh — a plain "Refresh"
-    no longer re-hits it every time.
-  - ✅ `bye_week_by_team` (24h TTL) and `handcuff_map` (12h TTL) now disk-cache
-    the same way, also tied to force-refresh. Caught and fixed a real bug
-    while adding this: bye weeks are `numpy.int64` from the schedule
-    dataframe, not JSON-serializable — cast to `int` before caching.
-  - ✅ Added an end-to-end `TestMultiRoundPlan` test — a synthetic 2-round
-    scenario confirming a true positional need (an empty QB slot) is
-    correctly filled before a same-position depth upgrade, and that each
-    round's pick correctly carries into the next.
-  - ✅ Draft Plan tab's methodology caption is now inside a closed
-    `st.expander("How this works")`.
-  - ✅ Already done via the earlier collapsible-sections redesign (✅/🔜/⚠️
-    icons) — no separate work needed.
-  - ✅ Confirmed via a full 61-key dump of the real `scoring_settings`: no
-    missed per-game yardage bonuses, but found a real, previously-uncorrected
-    gap — `pass_int_td: -6.0` (an extra penalty when a QB's interception is
-    returned for a touchdown, on top of the flat `pass_int` rate) — fixed in
-    `player_scoring._pick_six_penalty_points`, same play-by-play approach as
-    the long-play bonuses.
-  - ✅ `lineup_breakdown`, `season_average_starter_value`, and
-    `rank_by_marginal_value` (plus `recommend_drop`, which the last two call
-    into and shares the same bug) now all exclude the roster's current
-    taxi/IR players from ever winning a starting slot or being misclassified
-    as a "starter" — verified this has real, visible effect on the actual
-    league's live draft-plan output, not just a theoretical risk. Doesn't
-    attempt to model taxi/active transitions for newly-drafted candidates
-    mid-simulation (already an accepted simplification elsewhere - see
-    `roster_total_capacity`'s docstring).
-
-  **Follow-up fixes and UI polish (2026-07-26, user re-review of the above):**
-  - ✅ **Found and fixed a real capacity-accounting bug while verifying the
-    taxi/IR drop-eligibility fix above.** `roster_total_capacity()` summed
-    active-roster + taxi slots only, omitting `reserve_slots` — so an
-    existing IR occupant's headcount silently ate into active/taxi
-    capacity instead of its own bucket. Verified directly: a roster with
-    one IR player and a genuinely open taxi slot was misread as "no room,"
-    forcing a nonsensical recommendation to cut a real active starter
-    instead of just placing the new candidate in the open taxi slot. Fixed
-    by including `reserve_slots` in the ceiling; regression test added
-    (`TestCapacityAwareDrop::test_reserve_slots_count_toward_total_capacity`).
-    Separately confirmed (with a direct repro) that taxi players themselves
-    were never excluded from the drop-candidate pool — that part already
-    worked correctly.
-  - ✅ Added a scoring-multiplier **prewarm control to the web app**:
-    "Refresh" stays the single cheap button; a new "Advanced refresh"
-    sidebar expander has a players/values checkbox (fast, default on) and
-    a separate scoring-multiplier checkbox (slow, 1-2 min, default off) —
-    `gather_state` gained an independent `force_scoring_refresh` parameter
-    so the two are never accidentally coupled. Verified directly with a
-    patched call-counter that checking only the scoring box actually
-    triggers `force_refresh=True` on `player_scoring.get_multipliers`.
-  - ✅ Every table now shows human-readable column headers (`cols()` helper
-    + `st.dataframe`'s `column_config`), without renaming the underlying
-    DataFrame columns.
-  - ✅ "How this works" is now consistent across all 5 methodology sections
-    (Draft Plan, Draft Board, Roster Value Analysis, Bye Week Impact,
-    Weekly Gaps) and reformatted from run-on prose into bulleted
-    term-definition lists for readability.
-  - ✅ Roster Needs' index column now displays as "Pos" instead of the raw
-    `pos` field name (via `column_config`'s `_index` key).
+- **Synology NAS deploy + live-draft verification** (blocks calling the
+  dashboard fully done; needed before Sunday 2026-08-02). Everything else
+  from the pre-draft hardening review is done — see
+  `docs/rookie-draft-big-board.md` and `docs/dynasty-draft-web-app.md` for
+  the full methodology/implementation writeup. Needs the user's own action —
+  no SSH/credentials to the NAS from here:
+  1. Confirm the GHCR build went green on the latest push to `main`
+     (`gh run list` / `gh pr checks`).
+  2. Deploy on the NAS via `docker-compose.deploy.yml`, verify the running
+     container's footer git SHA matches.
+  3. Pre-warm the multiplier cache with
+     `python scripts/derive_position_multipliers.py` ahead of draft day, not
+     live (a cold cache means a 1-2 minute `nfl_data_py` pull on first load).
+  4. Use it through the actual live draft. The CLI (`rookie_draft.py`, no
+     Docker) remains the safer fallback regardless of how the deploy goes.
 
   **Next-year ideas (not worth the time now):**
   - Handcuff proxy (depth-chart rank 2) has real false-positive risk in
@@ -142,25 +35,18 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   - Exclude a candidate from its own drop-simulation in `recommend_drop`
     (theoretically possible, vanishingly unlikely to surface as a top pick).
 
-- **Valuation algorithm improvements** (branch: `feature/valuation-improvements`)
-  — sequenced deliberately, not independent workstreams:
-  1. ✅ **E — refresh the QB/TE multiplier's data basis.** Pooled across 3
-     seasons instead of one. Done; see `docs/rookie-draft-big-board.md`.
-  2. ✅ **B — full per-player scoring recompute for players with real NFL
-     history.** Replaced the position-level multiplier with a per-player one
-     (`player_scoring.py`), resolving the open "blend recomputed points with
-     rookie market value" question by not introducing a second value scale —
-     `fc_value_by_sleeper_id` bakes the corrected multiplier into `adj_value`
-     once, at the single choke point every ranking function already reads.
-     Done; full methodology in `docs/rookie-draft-big-board.md`.
-  3. **A — finer position/play-style multiplier buckets, rescoped to
+- **Valuation algorithm improvements** (branch: `feature/valuation-rookie-buckets`)
+  — sequenced deliberately, not independent workstreams. E (multiplier data
+  pooled across 3 seasons) and B (full per-player scoring recompute) are
+  done — see `docs/rookie-draft-big-board.md` for methodology. Remaining:
+  1. **A — finer position/play-style multiplier buckets, rescoped to
      rookies only.** Deliberately sequenced after B, not before — a
      veteran-inclusive version of this would mostly be thrown away once B
      replaces the multiplier for anyone with real stats. `import_combine_data`
      (confirmed available) gives real per-rookie athletic profiles — a
      usable classification signal (mobile vs. pocket QB, etc.) without
      needing college stats, which we don't have access to.
-  4. **D — blend in KeepTradeCut as a second market source**, time
+  2. **D — blend in KeepTradeCut as a second market source**, time
      permitting. `import_ids()` only gives a `ktc_id` crosswalk column,
      not actual KTC values — sourcing real KTC data is a separate,
      not-yet-investigated problem.
@@ -179,15 +65,9 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   re-derive (season rollover? a scheduled job?) and probably a sanity-check
   guard before auto-applying a new multiplier (e.g. reject a swing beyond
   some threshold vs. the current value), so a bad data pull can't silently
-  skew live rankings. Worth a proper look once B (per-player recompute)
-  lands, since B may shrink how much this multiplier still matters.
-
-- **Rookie draft dashboard — final verification.** Built and merged (PR #1,
-  #2, #3); full writeup in `docs/rookie-draft-big-board.md` and
-  `docs/dynasty-draft-web-app.md`. Only remaining before calling it fully
-  done: deploy to the Synology NAS (not yet done at all) and use it through
-  the actual live draft — see the Synology deploy item under "Pre-draft
-  hardening" above for what needs to happen first.
+  skew live rankings. Now that B (per-player recompute) has landed, this
+  multiplier is a last-resort fallback only — worth a proper look if it
+  still seems to matter enough to justify the automation.
 
 ## Future Ideas
 
@@ -245,6 +125,12 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   `logging` versus staying as direct terminal output, since the report is
   the CLI's actual product, not a diagnostic - evaluate in its own feature
   branch rather than folding into unrelated work.
+- **Cap decimal precision in UI displays** (user-flagged 2026-07-26) — value/
+  score columns across the CLI and Streamlit tables currently show whatever
+  float precision the underlying computation happens to produce; cap display
+  to 2 decimal digits with proper rounding (not truncation) everywhere a
+  value is rendered for a human, without changing the underlying stored/
+  compared precision.
 
 ## Context
 
