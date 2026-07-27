@@ -78,6 +78,15 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   - Confirm the league's real `scoring_settings` has no per-game yardage
     bonuses (`bonus_pass_yd_300` etc.) that `_stat_points` doesn't check for
     — likely moot, worth a one-time dump to confirm.
+  - `lineup_breakdown`, `season_average_starter_value`, and
+    `rank_by_marginal_value` all feed `assign_starters` the entire
+    `roster["players"]` list, including taxi and IR/reserve players — none
+    of whom Sleeper actually allows into the starting lineup (found while
+    building the bye-week-impact feature, which correctly excludes them;
+    see `docs/rookie-draft-big-board.md`'s "Known gaps"). Hasn't visibly
+    surfaced yet (today's taxi/IR values happen to be lower than the real
+    bench) but could affect real draft-day pick recommendations if a
+    high-value taxi-eligible player is on the board.
 
   **Next-year ideas (not worth the time now):**
   - Handcuff proxy (depth-chart rank 2) has real false-positive risk in
@@ -92,97 +101,17 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   - Exclude a candidate from its own drop-simulation in `recommend_drop`
     (theoretically possible, vanishingly unlikely to surface as a top pick).
 
-- **Draft dashboard UX polish & minor fixes** — user-flagged during review of
-  PR #5 (2026-07-26), across the Streamlit dashboard's Draft Plan/Lineup/Draft
-  Board/Your Roster tabs. Not blocking, not sequenced yet — pick these up in
-  whatever order makes sense once started.
-  1. **Consolidate "Backup options" into one table.** Each round's expander
-     (`streamlit_app.py:115`, fed by `plan["alternates_by_pick"]` from
-     `multi_round_plan()`) only ever holds up to 2 rows (`top_n=2` for
-     alternates) — a whole expander-per-round is overkill for that little
-     content. Replace with a single consolidated table of additional-pick
-     options across all rounds (e.g. an `overall_pick`/`round` column instead
-     of a heading per round).
-  2. **Restructure the round table into per-pick collapsible sections.**
-     Currently one flat table (`streamlit_app.py:105-124`, `plan["rounds"]`).
-     Split into one collapsible section per pick: collapsed view shows the
-     recommended pick + drop with visual cues (color/icon — exact treatment
-     TBD), expanded view holds the full reasoning/backup options/gap-impact
-     detail. Bigger UI change than the others here — worth a short design
-     pass (what "visual cues" means concretely, how `status=completed` vs.
-     `upcoming` reads in the collapsed state) before coding.
-  3. **Lineup tab needs IR and Taxi sections.** Currently only Starters/Bench
-     (`streamlit_app.py:126-135`, from `lineup_breakdown()`). Neither IR nor
-     taxi-squad rostered players are shown anywhere in this tab today — taxi
-     players are counted (`roster_capacity`) but never listed by name here;
-     IR isn't modeled anywhere yet (see `roster_capacity`'s own documented
-     reserve/IR limitation, `dynasty_core.py:274-280`).
-  4. **`handcuff_to` is always empty on the rookie big board — investigate.**
-     (`dynasty_core.py:1022-1026` builds `handcuff_targets` from
-     `handcuff_map()`'s real-NFL depth-chart backups; `build_big_board` flags
-     a rookie candidate if their `player_id` is a value in that dict.)
-     Working hypothesis, unverified: `handcuff_map()` reflects *current* NFL
-     depth charts, which likely don't list incoming rookies as anyone's
-     backup yet this early pre-draft/pre-training-camp — so structurally
-     nothing would ever match, independent of any join bug. Needs checking
-     against a known real handcuff situation once depth charts populate
-     further into the offseason, before assuming the ID crosswalk is broken.
-  5. **Roster Value's "aging" cutoff should account for position.**
-     `LOW_VALUE_AGING_AGE = 27` (`dynasty_core.py:30`) is one flat threshold
-     for every position — RB decline is well-documented as earlier (mid-20s)
-     than QB/TE, who often start much later. Needs per-position aging curves,
-     not one number. Related idea, same area: pull more per-player detail
-     from Sleeper's player feed over time (currently only name/position/team/
-     age/college/years_exp are read — `sleeper_api.get_players()` returns
-     much more per player that isn't surfaced anywhere yet).
-  6. **Bye Week Conflicts should show real lineup-strength impact, not just
-     who's out.** Currently (`roster_bye_conflicts`, `dynasty_core.py:429`)
-     only flags which players at a position share a bye — doesn't show who'd
-     fill in for them or what that costs. Add the projected replacement(s)
-     for that week and the resulting delta to lineup strength (reusing the
-     same per-week `season_average_starter_value` machinery already built for
-     the draft plan) — a -500 week and a -5000 week are very different
-     situations, and only the second is a real signal to go find bye-week
-     coverage via trade.
-
 - **Valuation algorithm improvements** (branch: `feature/valuation-improvements`)
   — sequenced deliberately, not independent workstreams:
-  1. ✅ **E — refresh the QB/TE multiplier's data basis.** Was derived from
-     2024 only (39 qualifying QBs, 45 TEs — a fairly small, single-season
-     sample); now pooled across the 3 most recent complete seasons (108
-     QB player-seasons, 135 TE, via `scripts/derive_position_multipliers.py`
-     + `recent_complete_seasons_weekly_data()`). Stays useful regardless of
-     how B turns out, since rookies will always need this fallback (see
-     step 2).
+  1. ✅ **E — refresh the QB/TE multiplier's data basis.** Pooled across 3
+     seasons instead of one. Done; see `docs/rookie-draft-big-board.md`.
   2. ✅ **B — full per-player scoring recompute for players with real NFL
-     history.** Replaced the position-level multiplier with a per-player
-     one (see `player_scoring.py`): for anyone with a qualifying season in
-     the last 3 years (same volume bars as E, extended to RB ≥100 carries
-     / WR ≥50 targets), this league's exact `scoring_settings` is applied
-     to raw weekly stats — 6pt passing TDs, this league's real (non-
-     standard) `pass_yd` rate, the -3 INT penalty (a previously-undocumented
-     gap — the assumed baseline is -2), TE premium, `rush_fd`/`rec_fd`
-     first-down bonuses, and long-play bonuses (`*_40p`/`*_50p`, pulled from
-     play-by-play data since weekly aggregates don't preserve play length)
-     — against FantasyCalc's assumed baseline model (an explicit, documented
-     assumption in `player_scoring.BASELINE_SCORING`, since FantasyCalc
-     doesn't publish its own formula: standard 4pt passing TD, -2 INT, full
-     PPR, 6pt rush/rec TD, no TE premium, no first-down/long-play bonuses —
-     **the biggest remaining source of uncertainty in this whole
-     correction**, since it can't be verified against FantasyCalc directly).
-     Below the qualifying bar (or for rookies, with no NFL history at all),
-     falls back to a position average computed from that same pooled
-     sample — `POSITION_VALUE_MULTIPLIER`'s hardcoded QB/TE values are now
-     a last-resort fallback only, used if this whole enrichment fails.
-     **Resolved the open blending question** by not introducing a second
-     value scale at all: every ranking function already reads FantasyCalc's
-     value through one function (`fc_value_by_sleeper_id`), which now bakes
-     the per-player (or position-average) multiplier into `adj_value`
-     directly — rookies and veterans stay on the same unit everywhere.
-     Cached to disk (`.cache/scoring_multipliers.json`, no TTL — the
-     underlying seasons are historical/complete and don't change on a
-     clock) and tied to the existing "force full refresh" action: a plain
-     refresh reuses the cache, force-refresh recomputes from scratch.
+     history.** Replaced the position-level multiplier with a per-player one
+     (`player_scoring.py`), resolving the open "blend recomputed points with
+     rookie market value" question by not introducing a second value scale —
+     `fc_value_by_sleeper_id` bakes the corrected multiplier into `adj_value`
+     once, at the single choke point every ranking function already reads.
+     Done; full methodology in `docs/rookie-draft-big-board.md`.
   3. **A — finer position/play-style multiplier buckets, rescoped to
      rookies only.** Deliberately sequenced after B, not before — a
      veteran-inclusive version of this would mostly be thrown away once B
