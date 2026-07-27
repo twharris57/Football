@@ -13,46 +13,49 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   or risks Sunday vs. what can wait.
 
   **Must fix before Sunday:**
-  1. Synology deploy hasn't happened at all yet (not a stale-image problem —
-     just not done). `docker-publish.yml` only builds on push to `main`, so
-     this branch's per-player scoring work won't exist in any NAS image until
-     merged. Before Sunday: merge to `main`, confirm the GHCR build completes,
-     deploy to the NAS, and verify the running container's footer git SHA
-     matches (check already documented in `docs/dynasty-draft-web-app.md`).
-     Pre-warm the cache with one forced refresh ahead of draft day, not live —
-     a cold cache means the multi-season `nfl_data_py` pull happens on first
-     load. The CLI (`rookie_draft.py`, no Docker) remains the safer fallback
-     regardless of how the deploy goes. (Since there's no existing NAS
-     deployment, the `players_cache` → `nfl_data_cache` volume rename in
-     `docker-compose.deploy.yml` is a non-issue — nothing to orphan.)
-  2. Decouple "Force full refresh" from the scoring-multiplier recompute
-     (`streamlit_app.py:49` → `dynasty_core.py:987` (players) and `:997-1003`
-     (multipliers) → `player_scoring.py:278-300`; re-checked 2026-07-26,
-     still current after the same-day league-rule-assumption audit — line
-     numbers shifted slightly from the original finding but the issue is
-     unchanged). One button currently busts both the Sleeper players cache
-     and the multiplier cache, and the latter re-imports 3 seasons of weekly
-     + play-by-play data — a 1-2 minute synchronous pull that could freeze
-     the app right when the user is on the clock, for data that's static all
-     season and never needs a mid-draft recompute. Deferred to a future
-     feature branch along with the rest of this list — not fixed here.
-  3. Clamp the per-player scoring ratio in `player_scoring.py:264-273` —
-     currently `real_points / baseline_points` with no floor/ceiling. A
-     qualifying-volume player with a low/negative baseline-points season
-     (heavy INTs, low yardage) can produce an extreme ratio that feeds
-     `adj_value` -> `season_average_starter_value`, contaminating the
-     marginal-value baseline for the whole draft plan. Reject/fall back to
-     the position average outside a sane band (e.g. ~[0.5, 2.0]) or below a
-     minimum `baseline_points` floor.
-  4. Fix the Streamlit cache-key bug in `load_state` (`streamlit_app.py:48-56`)
-     — keyed on the raw force-refresh button boolean, not a durable
-     `session_state` flag, so the rerun immediately after a force-refresh
-     click (e.g. opening an expander) misses cache and silently re-fetches
-     both APIs.
-  5. Verify `bye_week_by_team(2026)` (`dynasty_core.py:396-413`) returns all
-     32 teams before draft day — it silently drops any team that doesn't
-     resolve to exactly one missing week, understating value everywhere
-     downstream with no visible symptom.
+  1. ⏳ **Synology deploy hasn't happened at all yet — needs the user's own
+     action, can't be done from here.** No SSH/credentials to the NAS.
+     Code-side prerequisites confirmed ready: `docker-publish.yml` triggers
+     correctly on push to `main` and bakes `GIT_SHA` into the image for the
+     footer version check; `Dockerfile` builds a non-root, healthchecked
+     image with the `nfl_data_cache` volume mount point present. Once merged
+     to `main`: confirm the GHCR build goes green (`gh run list` /
+     `gh pr checks`), then on the NAS: deploy, verify the running
+     container's footer git SHA matches, and pre-warm the multiplier cache
+     with `python scripts/derive_position_multipliers.py` ahead of draft
+     day, not live (a cold cache means a 1-2 minute `nfl_data_py` pull on
+     first load — see item 2, now fixed, for why that's no longer triggered
+     by the app itself). The CLI (`rookie_draft.py`, no Docker) remains the
+     safer fallback regardless of how the deploy goes.
+  2. ✅ **Decoupled "Force full refresh" from the scoring-multiplier
+     recompute.** `dynasty_core.gather_state` no longer passes
+     `force_refresh=True` to `player_scoring.get_multipliers` at all — the
+     Streamlit/CLI "force full refresh" action now only busts the fast
+     Sleeper players cache (~4s, confirmed by timing directly, down from
+     ~33s). The only way to recompute the multiplier cache is running
+     `python scripts/derive_position_multipliers.py` directly, ahead of
+     time — matches item 1's "pre-warm before draft day, not live" plan
+     exactly.
+  3. ✅ **Clamped the per-player scoring ratio.** `player_scoring._sane_ratio`
+     rejects a ratio computed from a near-zero/negative pooled
+     `baseline_points` (`<= 1.0`) or landing outside `MULTIPLIER_BOUNDS`
+     (`[0.5, 2.0]` — real observed ratios across 332 players land in
+     `[1.08, 1.61]`, comfortably inside), falling back to the position
+     average (then the hardcoded constant) instead of feeding a nonsense
+     number into `adj_value`. Covered by `tests/test_player_scoring.py`
+     (`TestSaneRatio`).
+  4. ✅ **Fixed the Streamlit cache-key bug in `load_state`.** Was keyed on
+     the raw force-refresh button's return value, which is only `True` on
+     the exact run it was clicked — any later rerun (e.g. opening an
+     expander) saw `False` again, changing the cache key and silently
+     re-fetching both APIs for no reason. Now keyed on
+     `st.session_state.force_refresh_pending`, a durable flag set once per
+     click and stable across reruns. Verified directly: patched
+     `gather_state` with a call counter through an `AppTest` run — a plain
+     rerun immediately after a force-refresh click no longer adds a call.
+  5. ✅ **Verified `bye_week_by_team('2026')` returns all 32 teams** — ran it
+     directly against the real 2026 schedule; every team resolved to
+     exactly one bye week, nothing dropped. No bug found; nothing to fix.
 
   **Worth doing this season (not blocking Sunday):**
   - Catch `ValueError`/`TypeError` from a bad league_id or typo'd username in

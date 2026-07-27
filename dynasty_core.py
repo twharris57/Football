@@ -1089,10 +1089,18 @@ def gather_state(league_id: str, username: str, force_full_refresh: bool) -> dic
     # Enrichment from nfl_data_py: optional, must not break the core draft
     # board if the feed is unavailable or its schema drifts (it already has
     # once - the 2026 depth chart columns differ from prior seasons).
+    #
+    # Deliberately never forces a scoring-multiplier recompute from here,
+    # even on "force full refresh" - that pull is a 1-2 minute synchronous
+    # re-import of 3 seasons of weekly + play-by-play data, for data that's
+    # entirely historical and doesn't change mid-draft. Forcing it live
+    # risked freezing the app right when the user is on the clock. The
+    # multiplier cache should be pre-warmed ahead of draft day instead, via
+    # `python scripts/derive_position_multipliers.py` (run once, outside
+    # the app) - "force full refresh" in the app only busts the fast
+    # Sleeper players cache now.
     try:
-        multipliers = player_scoring.get_multipliers(
-            league["scoring_settings"], league["season"], force_refresh=force_full_refresh
-        )
+        multipliers = player_scoring.get_multipliers(league["scoring_settings"], league["season"])
     except Exception:
         logger.warning("Failed to compute real-scoring multipliers; falling back to position defaults", exc_info=True)
         multipliers = {}
