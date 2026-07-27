@@ -337,8 +337,8 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
     }
 
 
-def roster_total_capacity(league: dict) -> int:
-    """Return the combined active-roster + taxi-squad + reserve/IR slot count.
+def roster_total_capacity(league: dict, reserve_filled: int = 0) -> int:
+    """Return the combined active-roster + taxi-squad + occupied-reserve slot count.
 
     Used to decide whether adding a player genuinely requires a drop, for
     simulated/hypothetical rosters — those are tracked as a flat player-id
@@ -346,23 +346,24 @@ def roster_total_capacity(league: dict) -> int:
     is the "is there room *anywhere*" signal rather than a precise slot
     type. A newly-drafted rookie is never assumed to land on reserve (that
     requires a real injury designation, unlike taxi, which any rookie
-    qualifies for) - `reserve_slots` is included here only so an *existing*
-    IR occupant is properly accounted for in the ceiling. A previous
-    version excluded reserve_slots entirely, reasoning "it's not room for a
-    new player" - true, but that meant an existing IR player's own
-    headcount silently ate into active/taxi capacity instead of its own
-    bucket, understating true room and forcing unnecessary drops whenever
-    the roster had anyone on IR (verified directly: a genuinely open taxi
-    slot got misread as "no room" and recommended cutting a real starter).
-    Rookies are assumed taxi-eligible (true for every candidate in this
-    draft, since they're all entering their first season) — a general
-    accrued-experience eligibility check is deferred (see PROJECT_PLAN.md).
+    qualifies for) - so `reserve_filled` (the roster's actual current IR
+    headcount, passed by the caller, not the league's full `reserve_slots`
+    setting) is added to the ceiling only to properly account for *existing*
+    IR occupants, not to manufacture room for a new player who could never
+    actually be assigned there. A previous version added the full
+    `reserve_slots` setting unconditionally - fixed an earlier bug (an
+    existing IR occupant's headcount silently eating into active/taxi
+    capacity) but overcorrected: with reserve_slots > 0 and nobody actually
+    on IR, that inflated the ceiling by empty slots no rookie could ever
+    occupy, silently skipping the drop that should have been forced on
+    the first `reserve_slots` picks (found via a live draft-plan bug
+    report: the first 2 picks had no drop associated, in a league with 2
+    reserve slots and no one on IR). Rookies are assumed taxi-eligible
+    (true for every candidate in this draft, since they're all entering
+    their first season) — a general accrued-experience eligibility check
+    is deferred (see PROJECT_PLAN.md).
     """
-    return (
-        len(league["roster_positions"])
-        + league["settings"].get("taxi_slots", 0)
-        + league["settings"].get("reserve_slots", 0)
-    )
+    return len(league["roster_positions"]) + league["settings"].get("taxi_slots", 0) + reserve_filled
 
 
 # Sleeper's real injury_status values include some genuinely cryptic
@@ -928,6 +929,7 @@ def rank_by_marginal_value(
     top_n: int = 3,
     exclude_from_drop: frozenset[str] = frozenset(),
     ineligible_ids: frozenset[str] = frozenset(),
+    reserve_filled: int = 0,
 ) -> list[dict]:
     """Rank candidates by season-average marginal starting-lineup value, not raw trade value.
 
@@ -948,15 +950,19 @@ def rank_by_marginal_value(
     earlier round of the same multi-round plan) from being recommended for
     drop here. `ineligible_ids` (the roster's current taxi/IR players) are
     never assignable to a starting slot in the simulation - passed through
-    to both `season_average_starter_value` and `recommend_drop`. Returns up
-    to `top_n` entries (player_id, marginal_value, drop), sorted best first
-    — the first is the recommended pick, the rest are backup options for
-    the draft plan's alternates.
+    to both `season_average_starter_value` and `recommend_drop`.
+    `reserve_filled` (the roster's actual current IR headcount, not the
+    league's full `reserve_slots` setting - see `roster_total_capacity`)
+    keeps a drafted rookie, who can never actually be assigned to reserve,
+    from being treated as if empty IR slots were open room for them.
+    Returns up to `top_n` entries (player_id, marginal_value, drop), sorted
+    best first — the first is the recommended pick, the rest are backup
+    options for the draft plan's alternates.
     """
     if not candidate_ids:
         return []
 
-    total_capacity = roster_total_capacity(league)
+    total_capacity = roster_total_capacity(league, reserve_filled)
     baseline = season_average_starter_value(hypothetical_ids, players, fc_by_sleeper_id, byes, league, ineligible_ids)
 
     results = []
@@ -1078,6 +1084,13 @@ def multi_round_plan(
     # slot in the simulation below - Sleeper doesn't allow it - regardless
     # of how their value compares to the rest of the roster.
     ineligible_ids = frozenset(user_roster.get("taxi") or []) | frozenset(user_roster.get("reserve") or [])
+    # A drafted rookie can never actually be assigned to reserve/IR (that
+    # requires a real injury designation) - only the roster's *actual*
+    # current IR headcount should count toward total capacity, not the
+    # league's full reserve_slots setting (see roster_total_capacity).
+    # Reserve occupancy doesn't change across simulated rounds, since no
+    # simulated pick ever lands on it, so this is computed once.
+    reserve_filled = len(user_roster.get("reserve") or [])
     just_picked: set[str] = set()
 
     rounds = []
@@ -1103,6 +1116,7 @@ def multi_round_plan(
             top_n=top_n,
             exclude_from_drop=frozenset(just_picked),
             ineligible_ids=ineligible_ids,
+            reserve_filled=reserve_filled,
         )
         if not ranked:
             break
