@@ -171,13 +171,13 @@ class TestCapacityAwareDrop:
         # Lowest-value player (p0) should be the one dropped.
         assert ranked[0]["drop"]["player_id"] == "p0"
 
-    def test_reserve_slots_count_toward_total_capacity(self):
+    def test_occupied_reserve_slots_count_toward_total_capacity(self):
         # roster_total_capacity() used to omit reserve_slots entirely, so an
         # existing IR occupant's headcount silently ate into active/taxi
         # capacity instead of its own bucket - understating true room and
         # forcing an unnecessary drop even with a genuinely open taxi slot.
         league = {"roster_positions": ["WR"], "settings": {"taxi_slots": 1, "reserve_slots": 1}}
-        assert dc.roster_total_capacity(league) == 3  # 1 active + 1 taxi + 1 reserve
+        assert dc.roster_total_capacity(league, reserve_filled=1) == 3  # 1 active + 1 taxi + 1 occupied reserve
 
         players = {
             "starter_wr": make_player("WR", full_name="Starter WR"),
@@ -199,11 +199,50 @@ class TestCapacityAwareDrop:
             league=league,
             top_n=1,
             ineligible_ids=ineligible_ids,
+            reserve_filled=1,
         )
 
         # The rookie fits in the open taxi slot - no drop should be forced,
         # and certainly not the real active starter.
         assert ranked[0]["drop"] is None
+
+    def test_empty_reserve_slots_do_not_count_toward_total_capacity(self):
+        # Live-draft bug report: a league with 2 unused reserve_slots (nobody
+        # on IR) let the first 2 picks skip a drop entirely, since the old
+        # roster_total_capacity() always added the full reserve_slots
+        # setting regardless of actual IR occupancy - even though a drafted
+        # rookie can never actually be assigned to reserve (that requires a
+        # real injury designation). reserve_filled=0 here (its default)
+        # should give the same capacity as if reserve_slots didn't exist.
+        league = {"roster_positions": ["WR"], "settings": {"taxi_slots": 1, "reserve_slots": 2}}
+        assert dc.roster_total_capacity(league) == 2  # 1 active + 1 taxi + 0 occupied reserve
+
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "taxi_wr": make_player("WR", full_name="Taxi WR"),
+            "new_rookie": make_player("WR", full_name="High Value Rookie"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 200), fc_entry("taxi_wr", 100), fc_entry("new_rookie", 500)]
+        )
+        # Active (1/1) and taxi (1/1) are both already full; nobody is on reserve.
+        ineligible_ids = frozenset({"taxi_wr"})
+
+        ranked = dc.rank_by_marginal_value(
+            candidate_ids=["new_rookie"],
+            hypothetical_ids=["starter_wr", "taxi_wr"],
+            players=players,
+            fc_by_sleeper_id=fc_by_id,
+            byes={},
+            league=league,
+            top_n=1,
+            ineligible_ids=ineligible_ids,
+        )
+
+        # No room anywhere the rookie could actually go - a drop must be forced
+        # despite 2 nominally "open" reserve_slots that a healthy rookie can't use.
+        assert ranked[0]["drop"] is not None
+        assert ranked[0]["drop"]["player_id"] == "taxi_wr"
 
 
 class TestRecommendDropIneligibility:
