@@ -86,14 +86,23 @@ who wouldn't even crack the starting lineup.
 `recommend_drop()` feeds the drop side: lowest-value **bench** player,
 preferred over starters (via the same `assign_starters` assignment) — a
 marginal starter isn't recommended for cut over a similarly valued deep
-bench piece. A drop is only forced at all when the roster is at total
-capacity (`roster_total_capacity()`: active roster slots + taxi slots) —
-a pre-draft review caught this as a real bug: `rank_by_marginal_value()`
-used to call `recommend_drop()` unconditionally for every candidate, even
-with open roster/taxi room, which understated marginal value for any pick
-that didn't actually need to cost a roster spot. Covered by
-`tests/test_dynasty_core.py` (`TestCapacityAwareDrop`) as a regression
-guard. Rookies are assumed taxi-eligible for this check (true for every
+bench piece. Taxi/IR players are excluded from ever winning that
+`assign_starters` call (Sleeper doesn't allow starting them) but stay in
+the drop-candidate pool itself — a low-value taxi stash can and should
+still lose out to a high-value new candidate, confirmed directly with a
+synthetic repro. A drop is only forced at all when the roster is at total
+capacity (`roster_total_capacity()`: active roster slots + taxi slots +
+reserve/IR slots — the last of these was a real bug, found and fixed
+2026-07-26: it originally omitted `reserve_slots` from the ceiling
+entirely, so an existing IR occupant's headcount silently eroded
+active/taxi capacity instead of its own bucket, misreading a genuinely
+open taxi slot as "no room" and recommending a nonsensical cut of a real
+starter) — a pre-draft review caught the original version of this bug:
+`rank_by_marginal_value()` used to call `recommend_drop()` unconditionally
+for every candidate, even with open roster/taxi room, which understated
+marginal value for any pick that didn't actually need to cost a roster
+spot. Covered by `tests/test_dynasty_core.py` (`TestCapacityAwareDrop`) as
+a regression guard. Rookies are assumed taxi-eligible for this check (true for every
 candidate in this draft); a general accrued-experience eligibility model
 is deferred (see `.claude/PROJECT_PLAN.md`).
 

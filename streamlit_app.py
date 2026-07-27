@@ -4,8 +4,11 @@
 
 Meant to be usable from a phone during the live draft: sidebar inputs for
 league ID / username, a Refresh button (re-pulls league/rosters/draft/picks —
-cheap, always live) and a Force full refresh button (also busts the on-disk
-players.json cache) — the web equivalent of the CLI's Enter-vs-`f` prompt.
+cheap, always live), and an "Advanced refresh" section (players/values cache
+bust, plus a scoring-multiplier prewarm) — the web equivalent of the CLI's
+Enter-vs-`f` prompt, split further so the slow multiplier recompute (1-2
+min) is never an accidental side effect of a routine refresh, but is still
+reachable from a phone if the user needs to prewarm it away from a terminal.
 """
 
 from __future__ import annotations
@@ -70,32 +73,50 @@ if "refresh_token" not in st.session_state:
     st.session_state.refresh_token = 0
 if "force_refresh_pending" not in st.session_state:
     st.session_state.force_refresh_pending = False
+if "force_scoring_pending" not in st.session_state:
+    st.session_state.force_scoring_pending = False
 
 refresh = st.sidebar.button("Refresh")
-force_full = st.sidebar.button("Force full refresh (players + values)")
-if refresh or force_full:
+with st.sidebar.expander("Advanced refresh"):
+    st.caption(
+        "Force-bust caches instead of waiting for their normal TTL. The scoring-multiplier "
+        "prewarm takes 1-2 minutes (re-imports 3 seasons of weekly + play-by-play data) - do "
+        "this ahead of draft day, not while on the clock."
+    )
+    refresh_players = st.checkbox("Players + market values (fast)", value=True)
+    refresh_scoring = st.checkbox("Recompute scoring multipliers (slow, 1-2 min)")
+    apply_advanced = st.button("Apply advanced refresh")
+
+if refresh or apply_advanced:
     st.session_state.refresh_token += 1
-    # A widget button's return value is only True on the exact run it was
-    # clicked - any later rerun (e.g. opening an expander) sees False again.
-    # load_state's cache key must not depend on that raw, one-run-only value
-    # (it did before - see PROJECT_PLAN.md), or the very next rerun after a
-    # force-refresh click gets a different key, misses cache, and silently
-    # re-fetches both APIs for no reason. force_refresh_pending is durable
-    # session_state instead, so it stays stable across reruns until the next
-    # actual button click changes refresh_token again.
-    st.session_state.force_refresh_pending = force_full
+    # A widget button/checkbox's value is only current on the exact run it
+    # was clicked - any later rerun (e.g. opening an expander) can see a
+    # stale/default value again. load_state's cache key must not depend on
+    # that raw, one-run-only value (it did before - see PROJECT_PLAN.md),
+    # or the very next rerun after a refresh click gets a different key,
+    # misses cache, and silently re-fetches for no reason. These two flags
+    # are durable session_state instead, stable across reruns until the
+    # next actual button click changes refresh_token again.
+    st.session_state.force_refresh_pending = apply_advanced and refresh_players
+    st.session_state.force_scoring_pending = apply_advanced and refresh_scoring
 
 
 @st.cache_data(show_spinner="Loading draft state...")
-def load_state(league_id: str, username: str, force_full_refresh: bool, _token: int) -> dict:
-    return dynasty_core.gather_state(league_id, username, force_full_refresh)
+def load_state(
+    league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool, _token: int
+) -> dict:
+    return dynasty_core.gather_state(league_id, username, force_full_refresh, force_scoring_refresh)
 
 
 st.title("Dynasty Rookie Draft")
 
 try:
     state = load_state(
-        league_id, username, st.session_state.force_refresh_pending, st.session_state.refresh_token
+        league_id,
+        username,
+        st.session_state.force_refresh_pending,
+        st.session_state.force_scoring_pending,
+        st.session_state.refresh_token,
     )
 except requests.RequestException as exc:
     st.error(f"Couldn't reach Sleeper/FantasyCalc: {exc}. Hit Refresh to try again.")
@@ -133,17 +154,20 @@ with plan_tab:
     with st.expander("How this works"):
         st.caption(
             "Picks are ranked by season-average **marginal** starting-lineup value, not raw trade "
-            "value: for each candidate, this simulates adding them (+ the resulting drop) and "
-            "measures how much your roster's season-average starting value goes up — bye weeks are "
-            "folded into that average, not handled separately. A modest player at a weak position "
-            "can beat a highly-valued one who wouldn't crack your lineup. ✅ marks a round Sleeper "
-            "has already recorded, scored the same way retroactively; 🔜 rounds are simulated, "
-            "assuming no other team's picks happen in between — 'if these were your only remaining "
-            "picks, back to back, on the board right now.' The suggested drop is a live suggestion "
-            "even for a completed round — Sleeper has no record of whether it was actually dropped. "
-            "⚠️ flags a suggested drop that's a current starter. Refresh after any pick lands for an "
-            "updated plan. Each pick is collapsed by default — expand one for the full reasoning and "
-            "any backup options."
+            "value — for each candidate, this simulates adding them (+ the resulting drop) and "
+            "measures how much your roster's season-average starting value goes up. A modest "
+            "player at a weak position can beat a highly-valued one who wouldn't crack your "
+            "lineup.\n"
+            "- **✅** — a round Sleeper has already recorded, scored the same way retroactively.\n"
+            "- **🔜** — a round that's simulated, assuming no other team's picks happen in "
+            "between (\"if these were your only remaining picks, back to back, on the board "
+            "right now\").\n"
+            "- **⚠️** — the suggested drop is a current starter.\n"
+            "- **Drop suggestion** — a live suggestion even for a completed round; Sleeper has no "
+            "record of whether it was actually dropped.\n"
+            "- **Bye weeks** are folded into the season average, not handled separately.\n"
+            "- Each pick is collapsed by default — expand one for the full reasoning and any "
+            "backup options. Refresh after any pick lands for an updated plan."
         )
     plan = state["multi_round_plan"]
     rounds = plan["rounds"]
@@ -238,17 +262,18 @@ with draft_tab:
     st.subheader("Rookie big board")
     with st.expander("How this works"):
         st.caption(
-            "The whole rookie class — drafted players stay listed instead of disappearing, "
-            "annotated via **drafted_round**/**drafted_by** (blank if still undrafted). **rank** is "
-            "value order across the whole class, drafted and undrafted together. **value** is "
-            "FantasyCalc's raw number; **adj_value** applies this league's real-scoring correction "
-            "(see the Draft Plan tab) and is what determines sort order and **rank**. **tier** is "
-            "FantasyCalc's own global tier across *all* players, not rookie-specific and not "
-            "adjusted — gaps in the sequence are veterans/other rookies not shown here. "
-            "**fits_need** flags a currently-thin position on your roster. "
-            "**handcuff_to** means this rookie backs up one of your own RB starters — expect this "
-            "to be sparse pre-season: `nfl_data_py`'s player-ID crosswalk hasn't caught up with most "
-            "of this year's incoming class yet, not a bug, and should fill in later in the year."
+            "The whole rookie class — drafted players stay listed instead of disappearing.\n"
+            "- **Rank** — value order across the whole class, drafted and undrafted together.\n"
+            "- **Drafted Round / Drafted By** — blank if still undrafted.\n"
+            "- **Value** — FantasyCalc's raw number.\n"
+            "- **Adj. Value** — applies this league's real-scoring correction (see the Draft Plan "
+            "tab) and is what determines sort order and Rank.\n"
+            "- **Tier** — FantasyCalc's own global tier across *all* players, not rookie-specific "
+            "and not adjusted; gaps in the sequence are veterans/other rookies not shown here.\n"
+            "- **Fits Need** — flags a currently-thin position on your roster.\n"
+            "- **Handcuff To** — this rookie backs up one of your own RB starters. Expect this to "
+            "be sparse pre-season: `nfl_data_py`'s player-ID crosswalk hasn't caught up with most "
+            "of this year's incoming class yet — not a bug, should fill in later in the year."
         )
     board = state["big_board"]
     if board.empty:
@@ -293,6 +318,7 @@ with roster_tab:
         "(empty roster)",
         hide_index=False,
         column_config=cols(
+            ("_index", "Pos"),
             ("count", "Count"),
             ("avg_age", "Avg Age"),
             ("young_core", "Young Core"),
@@ -306,12 +332,16 @@ with roster_tab:
         st.info("No positions are flagged as a need right now — best available value is the main signal.")
 
     st.subheader("Roster value analysis")
-    st.caption(
-        "Sorted lowest **adj_value** first (same real-scoring-corrected value as the big board). "
-        "**note** weighs age against a position-aware aging cutoff (RBs decline earlier than "
-        "QBs/TEs): low value + young is still a rebuild asset worth holding; low value + aging "
-        "is a real drop candidate."
-    )
+    with st.expander("How this works"):
+        st.caption(
+            "Sorted lowest Adj. Value first (same real-scoring-corrected value as the big "
+            "board).\n"
+            "- **Note** — weighs age against a position-aware aging cutoff (RBs decline earlier "
+            "than QBs/TEs): low value + young is still a rebuild asset worth holding; low value "
+            "+ aging is a real drop candidate.\n"
+            "- **Status** — 🆕 rookie (no NFL experience yet), 🏥 + a one-letter injury code, "
+            "🌱 taxi squad, 🩹 IR/reserve; a player can show more than one at once."
+        )
     show_df(
         state["roster_value"],
         "(empty roster)",
@@ -331,15 +361,17 @@ with roster_tab:
     st.subheader("Bye week impact")
     with st.expander("How this works"):
         st.caption(
-            "One collapsible section per week with an active-roster player on bye — collapsed shows "
-            "only starters actually bumped out and who fills in, plus the lineup-value delta vs. a "
-            "full-strength week; a bye'd bench player who wasn't starting anyway doesn't clutter the "
-            "collapsed view (it's still there, expanded, since it doesn't move the delta). ✅ marks a "
-            "week that's already happened — this project has no live in-week stats yet, so the delta "
-            "shown is still this same projection, not real results. 📅 marks a week still ahead, "
-            "projected from today's roster (it'll shift if the roster changes before then). A small "
-            "delta means the bench covers it fine; a large one is worth looking for bye-week coverage "
-            "via trade."
+            "One collapsible section per week with an active-roster player on bye.\n"
+            "- **Collapsed view** — only starters actually bumped out and who fills in, plus the "
+            "lineup-value delta vs. a full-strength week. A bye'd bench player who wasn't starting "
+            "anyway doesn't clutter this view (it's still shown, expanded, since it doesn't move "
+            "the delta).\n"
+            "- **✅** — a week that's already happened. This project has no live in-week stats "
+            "yet, so the delta shown is still this same projection, not a real result.\n"
+            "- **📅** — a week still ahead, projected from today's roster (it'll shift if the "
+            "roster changes before then).\n"
+            "- **Delta size** — a small delta means the bench covers it fine; a large one is "
+            "worth looking for bye-week coverage via trade."
         )
     bye_impact = state["roster_bye_conflicts"]
     if bye_impact.empty:
@@ -374,10 +406,11 @@ with roster_tab:
     st.subheader("Weekly gaps")
     with st.expander("How this works"):
         st.caption(
-            "Available (non-bye) rostered players per position per week, vs. what's needed to fill "
-            "this league's dedicated starting slots (QB:1 RB:2 WR:2 TE:1). Does not account for "
-            "FLEX/SUPER_FLEX, which could pull from other positions — a rough depth signal, not a "
-            "full lineup-feasibility check."
+            "- **What it shows** — available (non-bye) rostered players per position per week, "
+            "vs. what's needed to fill this league's dedicated starting slots (QB:1 RB:2 WR:2 "
+            "TE:1).\n"
+            "- **What it doesn't** — FLEX/SUPER_FLEX, which could pull from other positions; a "
+            "rough depth signal, not a full lineup-feasibility check."
         )
     weekly_gaps = state["roster_weekly_gaps"]
     gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]

@@ -331,21 +331,31 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
 
 
 def roster_total_capacity(league: dict) -> int:
-    """Return the combined active-roster + taxi-squad slot count.
+    """Return the combined active-roster + taxi-squad + reserve/IR slot count.
 
     Used to decide whether adding a player genuinely requires a drop, for
     simulated/hypothetical rosters — those are tracked as a flat player-id
-    list (see multi_round_plan) with no active-vs-taxi split, so this is
-    the "is there room *anywhere*" signal rather than a precise slot type.
-    Reserve/IR is deliberately excluded even though it's modeled elsewhere
-    now (see roster_capacity) — it's a separate allotment for an already-
-    rostered player with a qualifying injury designation, not extra room to
-    place a newly-drafted rookie. Rookies are assumed taxi-eligible (true
-    for every candidate in this draft,
-    since they're all entering their first season) — a general
+    list (see multi_round_plan) with no active/taxi/reserve split, so this
+    is the "is there room *anywhere*" signal rather than a precise slot
+    type. A newly-drafted rookie is never assumed to land on reserve (that
+    requires a real injury designation, unlike taxi, which any rookie
+    qualifies for) - `reserve_slots` is included here only so an *existing*
+    IR occupant is properly accounted for in the ceiling. A previous
+    version excluded reserve_slots entirely, reasoning "it's not room for a
+    new player" - true, but that meant an existing IR player's own
+    headcount silently ate into active/taxi capacity instead of its own
+    bucket, understating true room and forcing unnecessary drops whenever
+    the roster had anyone on IR (verified directly: a genuinely open taxi
+    slot got misread as "no room" and recommended cutting a real starter).
+    Rookies are assumed taxi-eligible (true for every candidate in this
+    draft, since they're all entering their first season) — a general
     accrued-experience eligibility check is deferred (see PROJECT_PLAN.md).
     """
-    return len(league["roster_positions"]) + league["settings"].get("taxi_slots", 0)
+    return (
+        len(league["roster_positions"])
+        + league["settings"].get("taxi_slots", 0)
+        + league["settings"].get("reserve_slots", 0)
+    )
 
 
 def player_status_flags(player_id: str, info: dict, taxi_ids: set[str], reserve_ids: set[str]) -> str:
@@ -1164,8 +1174,15 @@ def format_your_picks(
     return pd.DataFrame(rows)
 
 
-def gather_state(league_id: str, username: str, force_full_refresh: bool) -> dict[str, Any]:
-    """Pull one full snapshot of league + draft state and compute the big board."""
+def gather_state(
+    league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool = False
+) -> dict[str, Any]:
+    """Pull one full snapshot of league + draft state and compute the big board.
+
+    `force_scoring_refresh` is deliberately its own, separate flag - see the
+    comment above the `player_scoring.get_multipliers` call below for why
+    `force_full_refresh` alone never triggers it.
+    """
     league = sleeper.get_league(league_id)
     rosters = sleeper.get_rosters(league_id)
     users = sleeper.get_users(league_id)
@@ -1185,21 +1202,22 @@ def gather_state(league_id: str, username: str, force_full_refresh: bool) -> dic
     # board if the feed is unavailable or its schema drifts (it already has
     # once - the 2026 depth chart columns differ from prior seasons).
     #
-    # Deliberately never forces a scoring-multiplier recompute from here,
-    # even on "force full refresh" - that pull is a 1-2 minute synchronous
-    # re-import of 3 seasons of weekly + play-by-play data, for data that's
-    # entirely historical and doesn't change mid-draft. Forcing it live
-    # risked freezing the app right when the user is on the clock. The
-    # multiplier cache should be pre-warmed ahead of draft day instead, via
-    # `python scripts/derive_position_multipliers.py` (run once, outside
-    # the app) - "force full refresh" in the app only busts the fast
-    # Sleeper players cache now.
+    # "Force full refresh" alone never triggers a scoring-multiplier
+    # recompute - that pull is a 1-2 minute synchronous re-import of 3
+    # seasons of weekly + play-by-play data, for data that's entirely
+    # historical and doesn't change mid-draft, and forcing it live risked
+    # freezing the app right when the user is on the clock. It's only ever
+    # triggered by the separate, explicit `force_scoring_refresh` - the
+    # web UI's "Advanced refresh" prewarm option, or
+    # `python scripts/derive_position_multipliers.py` run directly.
     # Collected so the UI can surface a real warning instead of a fallback
     # that's silently indistinguishable from "there's nothing to report."
     data_warnings: list[str] = []
 
     try:
-        multipliers = player_scoring.get_multipliers(league["scoring_settings"], league["season"])
+        multipliers = player_scoring.get_multipliers(
+            league["scoring_settings"], league["season"], force_refresh=force_scoring_refresh
+        )
     except Exception:
         logger.warning("Failed to compute real-scoring multipliers; falling back to position defaults", exc_info=True)
         multipliers = {}

@@ -53,24 +53,34 @@ environment carries it through.
 Streamlit reruns the whole script top-to-bottom on any widget interaction, so
 a naive port would refetch on every unrelated click. `st.cache_data` is keyed
 on an explicit `refresh_token` in `st.session_state`, bumped only by the
-Refresh/Force-full-refresh buttons — mirroring the CLI's Enter-vs-`f` prompt.
-The button's own return value can't be the cache key directly — it's only
-`True` on the exact run it was clicked, so a later rerun (e.g. opening an
-expander) would see `False` and get a different key, silently missing cache
-and re-fetching both APIs for no reason. `st.session_state.force_refresh_pending`
-holds the durable version instead, set once per click and stable across
-reruns (verified directly: patched `gather_state` with a call counter and
-confirmed a plain rerun after a force-refresh click adds no extra call).
+Refresh button or the Advanced-refresh "Apply" button — mirroring the CLI's
+Enter-vs-`f` prompt. A button/checkbox's own value can't be the cache key
+directly — it's only current on the exact run it was clicked, so a later
+rerun (e.g. opening an expander) would see a stale/default value and get a
+different key, silently missing cache and re-fetching for no reason.
+`st.session_state.force_refresh_pending`/`force_scoring_pending` hold the
+durable versions instead, set once per click and stable across reruns
+(verified directly: patched `gather_state`/`player_scoring.get_multipliers`
+with call counters and confirmed a plain rerun after a refresh click adds
+no extra call).
 
 Refresh re-pulls league/rosters/draft/picks (cheap, always live) plus
 whatever's expired on `fantasycalc_api`/`bye_week_by_team`/`handcuff_map`'s
-own TTL caches (12-24h, not tied to this button at all). Force full refresh
-busts the on-disk 14MB players-dataset cache — and *only* that; it
-deliberately does **not** force a recompute of `player_scoring`'s
-multiplier cache, which is a 1-2 minute synchronous pull of 3 seasons of
-weekly + play-by-play data, unsuitable to trigger live mid-draft. That
-cache is meant to be pre-warmed ahead of draft day via
-`python scripts/derive_position_multipliers.py`, run once, outside the app.
+own TTL caches (12-24h, not tied to any button at all). The sidebar's
+"Advanced refresh" expander splits the two remaining, genuinely different
+concerns instead of bundling them behind one "force full refresh" button:
+
+- **Players + market values (fast, default on)** — busts the on-disk 14MB
+  players-dataset cache; a few seconds.
+- **Recompute scoring multipliers (slow, 1-2 min, default off)** — forces
+  `player_scoring`'s multiplier cache to re-import 3 seasons of weekly +
+  play-by-play data. Deliberately its own checkbox, off by default, and
+  gated behind a second "Apply advanced refresh" button — a routine
+  refresh must never trigger this by accident mid-draft. This is also the
+  in-app equivalent of running `python scripts/derive_position_multipliers.py`
+  directly: a genuine prewarm option reachable from a phone if the user
+  needs to warm the cache away from a terminal, not just ahead of time
+  from the CLI.
 
 Whenever byes, handcuffs, or the scoring multipliers silently fall back to
 an empty/default result (a fetch failure, non-fatal by design — see
@@ -98,11 +108,16 @@ Two conventions applied consistently across every tab:
   columns (e.g. Roster Value's `status`) use the `help` text for a legend,
   shown as a hover tooltip on the column header — `st.dataframe` has no
   per-cell tooltip, so this is the native way to explain an icon column
-  without cluttering every cell with words.
+  without cluttering every cell with words. The special `"_index"` key
+  relabels an index-as-column table's header too (e.g. Roster Needs' `pos`
+  index shows as "Pos").
 - **Methodology text lives in a closed "How this works" expander**, not a
   bare `st.caption`, on every tab/section that has one (Draft Plan, Draft
-  Board, Bye Week Impact, Weekly Gaps) — keeps the actual data above the
-  fold on a phone instead of pushing it down on every refresh.
+  Board, Roster Value Analysis, Bye Week Impact, Weekly Gaps) — keeps the
+  actual data above the fold on a phone instead of pushing it down on
+  every refresh. Reformatted as bulleted term-definition lists rather than
+  run-on prose (user feedback 2026-07-26) — `st.caption` renders Markdown,
+  including lists, same as `st.markdown`.
 
 ## CLI (`rookie_draft.py`)
 

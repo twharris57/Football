@@ -171,6 +171,40 @@ class TestCapacityAwareDrop:
         # Lowest-value player (p0) should be the one dropped.
         assert ranked[0]["drop"]["player_id"] == "p0"
 
+    def test_reserve_slots_count_toward_total_capacity(self):
+        # roster_total_capacity() used to omit reserve_slots entirely, so an
+        # existing IR occupant's headcount silently ate into active/taxi
+        # capacity instead of its own bucket - understating true room and
+        # forcing an unnecessary drop even with a genuinely open taxi slot.
+        league = {"roster_positions": ["WR"], "settings": {"taxi_slots": 1, "reserve_slots": 1}}
+        assert dc.roster_total_capacity(league) == 3  # 1 active + 1 taxi + 1 reserve
+
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "hurt_wr": make_player("WR", full_name="Injured Reserve WR"),
+            "new_rookie": make_player("WR", full_name="High Value Rookie"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 200), fc_entry("hurt_wr", 300), fc_entry("new_rookie", 500)]
+        )
+        # hurt_wr is on reserve; taxi is genuinely open (0/1 used).
+        ineligible_ids = frozenset({"hurt_wr"})
+
+        ranked = dc.rank_by_marginal_value(
+            candidate_ids=["new_rookie"],
+            hypothetical_ids=["starter_wr", "hurt_wr"],
+            players=players,
+            fc_by_sleeper_id=fc_by_id,
+            byes={},
+            league=league,
+            top_n=1,
+            ineligible_ids=ineligible_ids,
+        )
+
+        # The rookie fits in the open taxi slot - no drop should be forced,
+        # and certainly not the real active starter.
+        assert ranked[0]["drop"] is None
+
 
 class TestRecommendDropIneligibility:
     """A taxi/IR player must never be misclassified as a "starter", even if its

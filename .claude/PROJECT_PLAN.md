@@ -97,6 +97,38 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
     mid-simulation (already an accepted simplification elsewhere - see
     `roster_total_capacity`'s docstring).
 
+  **Follow-up fixes and UI polish (2026-07-26, user re-review of the above):**
+  - ✅ **Found and fixed a real capacity-accounting bug while verifying the
+    taxi/IR drop-eligibility fix above.** `roster_total_capacity()` summed
+    active-roster + taxi slots only, omitting `reserve_slots` — so an
+    existing IR occupant's headcount silently ate into active/taxi
+    capacity instead of its own bucket. Verified directly: a roster with
+    one IR player and a genuinely open taxi slot was misread as "no room,"
+    forcing a nonsensical recommendation to cut a real active starter
+    instead of just placing the new candidate in the open taxi slot. Fixed
+    by including `reserve_slots` in the ceiling; regression test added
+    (`TestCapacityAwareDrop::test_reserve_slots_count_toward_total_capacity`).
+    Separately confirmed (with a direct repro) that taxi players themselves
+    were never excluded from the drop-candidate pool — that part already
+    worked correctly.
+  - ✅ Added a scoring-multiplier **prewarm control to the web app**:
+    "Refresh" stays the single cheap button; a new "Advanced refresh"
+    sidebar expander has a players/values checkbox (fast, default on) and
+    a separate scoring-multiplier checkbox (slow, 1-2 min, default off) —
+    `gather_state` gained an independent `force_scoring_refresh` parameter
+    so the two are never accidentally coupled. Verified directly with a
+    patched call-counter that checking only the scoring box actually
+    triggers `force_refresh=True` on `player_scoring.get_multipliers`.
+  - ✅ Every table now shows human-readable column headers (`cols()` helper
+    + `st.dataframe`'s `column_config`), without renaming the underlying
+    DataFrame columns.
+  - ✅ "How this works" is now consistent across all 5 methodology sections
+    (Draft Plan, Draft Board, Roster Value Analysis, Bye Week Impact,
+    Weekly Gaps) and reformatted from run-on prose into bulleted
+    term-definition lists for readability.
+  - ✅ Roster Needs' index column now displays as "Pos" instead of the raw
+    `pos` field name (via `column_config`'s `_index` key).
+
   **Next-year ideas (not worth the time now):**
   - Handcuff proxy (depth-chart rank 2) has real false-positive risk in
     modern RB committees — informational field only, not worth revisiting
@@ -204,6 +236,15 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
   a general accrued-experience eligibility check against Sleeper's actual
   taxi rule. Fold in whenever this needs to handle non-rookie candidates
   (e.g. the free-agent evaluator idea above) rather than as a separate pass.
+- **Better logging solution than `print()`** (user-flagged 2026-07-26) —
+  `rookie_draft.py`'s CLI output is all `print()` today; `python_guidelines.md`
+  calls for the standard `logging` module instead (levels, no `print()` for
+  diagnostics). Worth a dedicated look at how much of the CLI's *report*
+  output (as opposed to actual diagnostics/warnings, which already use
+  `logger` in `dynasty_core.py`/`player_scoring.py`) should even move to
+  `logging` versus staying as direct terminal output, since the report is
+  the CLI's actual product, not a diagnostic - evaluate in its own feature
+  branch rather than folding into unrelated work.
 
 ## Context
 
