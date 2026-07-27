@@ -167,12 +167,19 @@ def roster_fantasy_players(roster: dict, players: dict[str, dict]) -> Iterator[t
 
 def _resolve_multiplier(sleeper_id: str, position: str, multipliers: dict[str, Any]) -> float:
     """Personalized multiplier (see player_scoring.py) if this player has enough real NFL
-    history to trust one; else that position's average from the same pooled data; else the
+    history to trust one; else this year's rookie class's play-style-bucket average, if this
+    player is a rookie with a matched combine profile (see player_scoring._derive_rookie_buckets,
+    valuation step A); else that position's flat average from the same pooled data; else the
     hardcoded POSITION_VALUE_MULTIPLIER, used only if the whole nfl_data_py enrichment failed
     for this refresh (see gather_state)."""
     per_player = multipliers.get("per_player", {})
+    rookie_bucket = multipliers.get("rookie_bucket", {})
     position_average = multipliers.get("position_average", {})
-    return per_player.get(sleeper_id, position_average.get(position, POSITION_VALUE_MULTIPLIER.get(position, 1.0)))
+    if sleeper_id in per_player:
+        return per_player[sleeper_id]
+    if sleeper_id in rookie_bucket:
+        return rookie_bucket[sleeper_id]
+    return position_average.get(position, POSITION_VALUE_MULTIPLIER.get(position, 1.0))
 
 
 def fc_value_by_sleeper_id(fc_values: list[dict], multipliers: dict[str, Any] | None = None) -> dict[str, dict]:

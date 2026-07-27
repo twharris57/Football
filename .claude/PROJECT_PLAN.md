@@ -37,16 +37,10 @@ in `docs/` (what was built and why, key decisions) and remove it from this file.
 
 - **Valuation algorithm improvements** (branch: `feature/valuation-rookie-buckets`)
   — sequenced deliberately, not independent workstreams. E (multiplier data
-  pooled across 3 seasons) and B (full per-player scoring recompute) are
-  done — see `docs/rookie-draft-big-board.md` for methodology. Remaining:
-  1. **A — finer position/play-style multiplier buckets, rescoped to
-     rookies only.** Deliberately sequenced after B, not before — a
-     veteran-inclusive version of this would mostly be thrown away once B
-     replaces the multiplier for anyone with real stats. `import_combine_data`
-     (confirmed available) gives real per-rookie athletic profiles — a
-     usable classification signal (mobile vs. pocket QB, etc.) without
-     needing college stats, which we don't have access to.
-  2. **D — blend in KeepTradeCut as a second market source**, time
+  pooled across 3 seasons), B (full per-player scoring recompute), and A
+  (finer position/play-style multiplier buckets, rescoped to rookies only)
+  are done — see `docs/rookie-draft-big-board.md` for methodology. Remaining:
+  1. **D — blend in KeepTradeCut as a second market source**, time
      permitting. `import_ids()` only gives a `ktc_id` crosswalk column,
      not actual KTC values — sourcing real KTC data is a separate,
      not-yet-investigated problem.

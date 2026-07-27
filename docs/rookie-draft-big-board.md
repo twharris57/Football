@@ -32,23 +32,70 @@ to RB/WR), it recomputes that player's own points under this league's exact
 yardage-gated long-play bonuses and the pick-six penalty, neither of which
 weekly aggregates capture) and divides by their points under FantasyCalc's
 assumed baseline model (an explicit, documented assumption — FantasyCalc
-doesn't publish its own formula). Below
-the qualifying bar, or for rookies with no NFL history at all, a position
-average computed from that same pooled sample is used instead —
-`POSITION_VALUE_MULTIPLIER` is now a last-resort constant, used only if this
-whole enrichment fails for a refresh. Results are cached to disk (no
-TTL — the underlying seasons are historical and don't change on a clock) and
-recomputed only on a "force full refresh."
+doesn't publish its own formula). Below the qualifying bar, a rookie with a
+matched combine profile gets that position's play-style-bucket average (see
+below); everyone else below the bar falls back to the flat position
+average computed from that same pooled sample — `POSITION_VALUE_MULTIPLIER`
+is now a last-resort constant, used only if this whole enrichment fails for
+a refresh. Results are cached to disk (no TTL — the underlying seasons are
+historical and don't change on a clock) and recomputed only on a "force
+full refresh."
 
 `_sane_ratio()` guards every computed ratio before it's used: a
 near-zero/negative pooled `baseline_points` (`<= 1.0`, which would blow the
 ratio up or invert its sign) or a result outside `MULTIPLIER_BOUNDS`
-(`[0.5, 2.0]`) falls back to the position average instead, then to
-`POSITION_VALUE_MULTIPLIER` if even that's unavailable — real observed
+(`[0.5, 2.0]`) falls back further up the chain instead — real observed
 ratios across a 332-player sample land in `[1.08, 1.61]`, comfortably
 inside the bound, so this is a defensive floor against a bad data pull, not
 a normal code path. Covered by `tests/test_player_scoring.py`
 (`TestSaneRatio`).
+
+### Rookie play-style buckets (valuation step A)
+
+A flat position average doesn't distinguish a mobile QB from a pocket
+passer, or a receiving TE from an in-line blocker — plausibly relevant
+here, since this league's scoring gap (6pt passing TDs, TE reception
+premium, long-play bonuses) rewards those profiles differently.
+`_derive_rookie_buckets()` splits each position into two play-style buckets
+using NFL Scouting Combine testing data (`import_combine_data`), a real
+per-rookie athletic signal available without college stats:
+
+- **QB** — 40-yd dash: faster → `mobile`, slower → `pocket`. Rushing
+  production isn't boosted by the 6pt passing-TD rule the way pocket
+  passing volume is.
+- **RB** — weight: lighter → `receiving_back`, heavier → `early_down`.
+  Reception/first-down bonuses matter more to receiving-back usage.
+- **WR** — 40-yd dash: faster → `deep_threat`, slower → `possession`. The
+  `40p`/`50p` long-play bonuses reward exactly the deep-threat profile.
+- **TE** — a weight+40 composite (z-scored, summed): lower → `receiving`,
+  higher → `in_line`. Receiving TEs earn more of the TE reception premium
+  than blocking-heavy TEs who see fewer targets.
+
+Each position's split point is the median of that metric among
+combine-matched **historical** qualifying players (via a `pfr_id` →
+`gsis_id` crosswalk from `import_ids()`) — real observed samples run
+77-203 combine-matched player-seasons per position (2022-2024 pool, see
+`QUALIFYING_VOLUME`), comfortably above `MIN_BUCKET_PLAYER_SEASONS` (10)
+per bucket. Each bucket's ratio is pooled the same way `position_average`
+is (`_sane_ratio` on the bucket's summed real/baseline points). This
+year's incoming rookies are then classified into a bucket by the same
+threshold, via their own combine number (`pfr_id` → `sleeper_id`, same
+crosswalk) — deliberately rescoped to rookies only, via a *separate*
+`import_combine_data` call for just the current season's class, not a
+general veteran-inclusive bucket system (a veteran with real NFL history
+already gets a more accurate per-player ratio directly, so bucketing them
+too would only ever be thrown away).
+
+**Real coverage is partial, by design, not a bug**: a rookie needs both a
+combine invite and a `sleeper_id` crosswalk match to land in a bucket —
+confirmed directly against the actual 2026 class, roughly half of
+combine-matched rookies crosswalk to a `sleeper_id`, and QBs skip the
+40-yard dash more often than other positions (68% completeness across
+2015-2026 in a direct check, lower still in some single-year classes).
+Every rookie who doesn't get a bucket match simply falls back to the flat
+`position_average`, same as before this feature existed — never a worse
+outcome, only sometimes a less specific one. `scripts/derive_position_multipliers.py`
+prints the resolved rookie bucket ratios for direct inspection.
 
 The original version of this correction (superseded, kept here for context on
 how the project arrived at the current approach) used one flat multiplier per
