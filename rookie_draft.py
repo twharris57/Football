@@ -126,12 +126,12 @@ def print_report(state: dict[str, Any]) -> None:
     print(
         "\n--- Roster value analysis (lowest adj_value first) ---\n"
         "Same real-scoring-corrected value as the big board (raw 'value' kept alongside for "
-        "comparison). status: \U0001f195 rookie (no NFL experience yet), \U0001f3e5 + injury "
-        "code, \U0001f331 taxi, \U0001fa79 IR/reserve. 'note' weighs age against a position-aware "
-        "aging cutoff: low value + young is still a rebuild asset, low value + aging is a real "
-        "drop candidate."
+        "comparison). status: \U0001f195 rookie (no NFL experience yet), \U0001f3e5 injury "
+        "(see Sleeper for the specific status), \U0001f331 taxi, \U0001fa79 IR/reserve. 'note' "
+        "weighs age against a position-aware aging cutoff: low value + young is still a rebuild "
+        "asset, low value + aging is a real drop candidate."
     )
-    print(render_df(state["roster_value"], "(empty roster)"))
+    print(render_df(state["roster_value"].drop(columns="status_details", errors="ignore"), "(empty roster)"))
 
     print(
         "\n--- Bye week impact (weeks with an active-roster player out; "

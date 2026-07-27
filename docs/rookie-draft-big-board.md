@@ -131,12 +131,19 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   position-aware (`LOW_VALUE_AGING_AGE`: RB 27 / WR 29 / TE 30 / QB 33, with
   a 29 default) rather than one flat age for every position — dynasty RBs
   decline earlier than QBs/TEs, who often start productively much later.
-  A `status` column (`player_status_flags()`) gives a compact icon summary
-  of each player's situation — 🆕 rookie (no NFL experience yet, `years_exp`
-  falsy), 🏥 + a one-letter code from Sleeper's real `injury_status`, 🌱
-  taxi squad, 🩹 IR/reserve — icons rather than words to stay space-efficient
-  in a table column; a player can show more than one at once (e.g. a
-  rookie stashed on taxi).
+  A `status` column gives a compact icon summary of each player's situation
+  — 🆕 rookie (no NFL experience yet, `years_exp` falsy), 🏥 injury, 🌱 taxi
+  squad, 🩹 IR/reserve — icons rather than words to stay space-efficient in
+  a table column; a player can show more than one at once (e.g. a rookie
+  stashed on taxi). `player_status_details()` pairs each icon with its
+  specific description (e.g. the real `injury_status` word, expanding a
+  cryptic Sleeper abbreviation like `PUP` where needed via
+  `INJURY_STATUS_DESCRIPTIONS`) — `player_status_flags()` is the icon-only
+  string built from it, for plain-text display (the CLI). In Streamlit,
+  this table renders as plain HTML (`show_status_table()`) instead of
+  `st.dataframe`, specifically so each status icon gets a real per-cell
+  hover tooltip with its description — `st.dataframe`'s `column_config`
+  only supports a tooltip on the column header, not per cell.
 - **Bye-week impact** and **weekly gaps** — the former (`roster_bye_conflicts`)
   shows every week with an active-roster player on bye: who's out, who fills
   in, and the resulting delta to optimal starting-lineup value versus a

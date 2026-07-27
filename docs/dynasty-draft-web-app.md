@@ -104,13 +104,18 @@ Two conventions applied consistently across every tab:
   its tests can keep referring to them normally) — only the *displayed*
   header is relabeled, via `st.dataframe`'s `column_config` and a small
   `cols()` helper (`streamlit_app.py`) that builds a `{column: st.column_config.Column(label, help=...)}`
-  dict from `(key, label)`/`(key, label, help_text)` tuples. Emoji-only
-  columns (e.g. Roster Value's `status`) use the `help` text for a legend,
-  shown as a hover tooltip on the column header — `st.dataframe` has no
-  per-cell tooltip, so this is the native way to explain an icon column
-  without cluttering every cell with words. The special `"_index"` key
-  relabels an index-as-column table's header too (e.g. Roster Needs' `pos`
-  index shows as "Pos").
+  dict from `(key, label)`/`(key, label, help_text)` tuples. The special
+  `"_index"` key relabels an index-as-column table's header too (e.g.
+  Roster Needs' `pos` index shows as "Pos").
+- **Per-cell hover tooltips need custom HTML, not `st.dataframe`.**
+  `column_config`'s `help` text only tooltips the column *header*, not
+  individual cells. Roster Value Analysis's `status` icons each need their
+  own detail (e.g. the actual `injury_status` word), so that one table
+  renders as plain HTML (`show_status_table()`) instead of the shared
+  `show_df()`/`cols()` approach — a deliberate, scoped exception, not the
+  general pattern. Cell text is `html.escape()`d; the `status` column
+  specifically wraps each icon in `<span title="...">` using
+  `dynasty_core.player_status_details()`'s (icon, description) pairs.
 - **Methodology text lives in a closed "How this works" expander**, not a
   bare `st.caption`, on every tab/section that has one (Draft Plan, Draft
   Board, Roster Value Analysis, Bye Week Impact, Weekly Gaps) — keeps the

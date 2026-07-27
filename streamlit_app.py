@@ -13,6 +13,7 @@ reachable from a phone if the user needs to prewarm it away from a terminal.
 
 from __future__ import annotations
 
+import html
 import os
 
 import pandas as pd
@@ -59,6 +60,47 @@ def cols(*specs: tuple[str, str] | tuple[str, str, str]) -> dict[str, object]:
         help_text = spec[2] if len(spec) == 3 else None
         config[key] = st.column_config.Column(label, help=help_text)
     return config
+
+
+def show_status_table(df: pd.DataFrame, empty_message: str, column_labels: dict[str, str]) -> None:
+    """Render df (must have a `status_details` column, see dynasty_core.player_status_details)
+    as a plain HTML table instead of st.dataframe, so each player's status icons get a real
+    per-cell hover tooltip with the specific detail (e.g. the actual injury_status word).
+    st.dataframe's column_config only supports a per-column tooltip (see cols()'s help text
+    elsewhere), not per-cell, so this one table can't use the shared show_df approach.
+    """
+    if df.empty:
+        st.write(empty_message)
+        return
+
+    display_cols = [c for c in df.columns if c != "status_details"]
+    header_html = "".join(
+        f"<th style='text-align:left; padding:4px 8px; "
+        f"border-bottom:1px solid rgba(128,128,128,0.4);'>{html.escape(column_labels.get(c, c))}</th>"
+        for c in display_cols
+    )
+
+    body_rows = []
+    for _, row in df.iterrows():
+        cells = []
+        for c in display_cols:
+            if c == "status":
+                details = row.get("status_details") or []
+                cell = " ".join(f'<span title="{html.escape(desc)}">{icon}</span>' for icon, desc in details)
+            else:
+                value = row[c]
+                cell = "" if pd.isna(value) else html.escape(str(value))
+            cells.append(
+                f"<td style='padding:4px 8px; border-bottom:1px solid rgba(128,128,128,0.15);'>{cell}</td>"
+            )
+        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+
+    table_html = (
+        "<div style='overflow-x:auto;'><table style='width:100%; border-collapse:collapse; "
+        f"font-size:0.9rem;'><thead><tr>{header_html}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody></table></div>"
+    )
+    st.markdown(table_html, unsafe_allow_html=True)
 
 st.set_page_config(page_title="Dynasty Rookie Draft", layout="centered")
 
@@ -339,23 +381,24 @@ with roster_tab:
             "- **Note** — weighs age against a position-aware aging cutoff (RBs decline earlier "
             "than QBs/TEs): low value + young is still a rebuild asset worth holding; low value "
             "+ aging is a real drop candidate.\n"
-            "- **Status** — 🆕 rookie (no NFL experience yet), 🏥 + a one-letter injury code, "
-            "🌱 taxi squad, 🩹 IR/reserve; a player can show more than one at once."
+            "- **Status** — 🆕 rookie, 🏥 injury, 🌱 taxi squad, 🩹 IR/reserve; a player can show "
+            "more than one at once. Hover an icon for the specific detail (e.g. the real injury "
+            "status)."
         )
-    show_df(
+    show_status_table(
         state["roster_value"],
         "(empty roster)",
-        column_config=cols(
-            ("name", "Player"),
-            ("pos", "Position"),
-            ("age", "Age"),
-            ("years_exp", "Years Exp"),
-            ("status", "Status", "🆕 Rookie (no NFL experience yet) · 🏥 + injury code · 🌱 Taxi · 🩹 IR/Reserve"),
-            ("bye", "Bye"),
-            ("value", "Value"),
-            ("adj_value", "Adj. Value"),
-            ("note", "Note"),
-        ),
+        column_labels={
+            "name": "Player",
+            "pos": "Position",
+            "age": "Age",
+            "years_exp": "Years Exp",
+            "status": "Status",
+            "bye": "Bye",
+            "value": "Value",
+            "adj_value": "Adj. Value",
+            "note": "Note",
+        },
     )
 
     st.subheader("Bye week impact")

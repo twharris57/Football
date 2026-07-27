@@ -358,25 +358,48 @@ def roster_total_capacity(league: dict) -> int:
     )
 
 
-def player_status_flags(player_id: str, info: dict, taxi_ids: set[str], reserve_ids: set[str]) -> str:
-    """Compact icon summary of a player's current situation: rookie/injured/taxi/IR.
+# Sleeper's real injury_status values include some genuinely cryptic
+# abbreviations - expanded here for the hover-tooltip detail (see
+# player_status_details). Anything not listed (e.g. "Questionable", "Out")
+# is already a plain word and passes through unchanged via .get(x, x).
+INJURY_STATUS_DESCRIPTIONS = {
+    "PUP": "Physically Unable to Perform",
+    "COV": "COVID-19",
+    "Sus": "Suspended",
+    "NA": "Not Active",
+    "DNR": "Did Not Report",
+    "IR": "Injured Reserve",
+}
 
-    Space-efficient by design (icons, not words) for a table column — pair
-    with a `column_config` `help=` tooltip explaining the legend at display
-    time (see streamlit_app.py), since st.dataframe can't show a per-cell
-    hover tooltip, only a per-column one.
+
+def player_status_details(
+    player_id: str, info: dict, taxi_ids: set[str], reserve_ids: set[str]
+) -> list[tuple[str, str]]:
+    """(icon, description) pairs for a player's current situation: rookie/injured/taxi/IR.
+
+    A player can have more than one at once (e.g. a rookie stashed on
+    taxi). Kept separate from each icon's own description, rather than
+    baked into one compact string, so a caller (see streamlit_app.py) can
+    show just the icon with the description as a hover tooltip - `st.dataframe`
+    has no per-cell tooltip, only a per-column one, so that table renders
+    this as plain HTML instead to get a real one.
     """
-    flags = []
+    details: list[tuple[str, str]] = []
     if not info.get("years_exp"):
-        flags.append("🆕")
+        details.append(("🆕", "Rookie (no NFL experience yet)"))
     injury_status = info.get("injury_status")
     if injury_status:
-        flags.append(f"🏥{injury_status[:1]}")
+        details.append(("🏥", INJURY_STATUS_DESCRIPTIONS.get(injury_status, injury_status)))
     if player_id in taxi_ids:
-        flags.append("🌱")
+        details.append(("🌱", "Taxi squad"))
     if player_id in reserve_ids:
-        flags.append("🩹")
-    return " ".join(flags)
+        details.append(("🩹", "IR / Reserve"))
+    return details
+
+
+def player_status_flags(player_id: str, info: dict, taxi_ids: set[str], reserve_ids: set[str]) -> str:
+    """Compact icon-only summary of player_status_details, for plain-text display (the CLI)."""
+    return " ".join(icon for icon, _description in player_status_details(player_id, info, taxi_ids, reserve_ids))
 
 
 def roster_value_analysis(
@@ -389,9 +412,12 @@ def roster_value_analysis(
     ranking and the low-value cutoff below both use `adj_value`, not the raw
     `value`. `bye` is included for cross-reference against
     `roster_bye_conflicts`. `status` is a compact icon summary (see
-    `player_status_flags`) - 🆕 rookie (no NFL experience yet), 🏥 + a
-    one-letter injury code (from Sleeper's real `injury_status`), 🌱 taxi
-    squad, 🩹 IR/reserve - a player can show more than one at once.
+    `player_status_flags`) - 🆕 rookie (no NFL experience yet), 🏥 injury,
+    🌱 taxi squad, 🩹 IR/reserve - a player can show more than one at once.
+    `status_details` carries the same info as (icon, description) pairs
+    (see `player_status_details`) for a caller that wants to show each
+    icon's specific detail (e.g. the real injury_status word) as a hover
+    tooltip rather than cramming it into the icon itself.
 
     The bottom quartile (min 3 players) of the roster's own value distribution
     is flagged low-value. Within that group, `note` distinguishes aging
@@ -417,6 +443,7 @@ def roster_value_analysis(
                 "age": info.get("age"),
                 "years_exp": info.get("years_exp"),
                 "status": player_status_flags(player_id, info, taxi_ids, reserve_ids),
+                "status_details": player_status_details(player_id, info, taxi_ids, reserve_ids),
                 "bye": byes.get(info.get("team")),
                 "value": value,
                 "adj_value": fc_entry.get("adj_value") if fc_entry else None,
