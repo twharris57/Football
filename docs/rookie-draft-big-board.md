@@ -178,8 +178,17 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   — confirmed directly against rosters elsewhere in the league that
   currently have IR players) — a prior version of this doc said otherwise.
   `roster_total_capacity()` (used to decide whether a drafted rookie forces
-  a drop) still deliberately excludes reserve/IR: it's a separate allotment
-  for an already-rostered, injured player, not room for a new one.
+  a drop) counts only *occupied* reserve/IR slots toward the ceiling
+  (`reserve_filled`, the roster's actual current headcount there), not the
+  league's full `reserve_slots` setting — a drafted rookie can never
+  actually be assigned to reserve (that requires a real injury
+  designation, unlike taxi), so an empty IR slot isn't room for one. An
+  earlier version added the full `reserve_slots` setting unconditionally,
+  which let a league with unused reserve slots silently skip a forced drop
+  on the first few picks of a draft plan (found via a live-draft bug
+  report, fixed 2026-07-27). The taxi squad itself is unusually generous
+  for a dynasty league — 5 slots, 3 years — more room to stash rookies
+  without a roster crunch.
 - **Roster value analysis** — full roster sorted lowest-`adj_value` first.
   Doesn't treat "low value" as "drop" outright: age is weighed in, so a
   low-value *young* player is flagged as rebuild upside to hold, while
