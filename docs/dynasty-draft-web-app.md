@@ -9,7 +9,8 @@ of requiring a terminal, and deployable to the user's Synology NAS.
 Four tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
 
 1. **Draft Plan** — the round-by-round marginal-value simulation, backup
-   alternates in expanders, weekly-gap impact.
+   alternates in expanders, a full player-projection lookup, weekly-gap
+   impact.
 2. **Lineup** — current optimal starters/bench.
 3. **Draft Board** — the full rookie class, tiered, with draft attribution.
 4. **Your Roster** — capacity, needs, value analysis, bye conflicts, weekly
@@ -20,6 +21,27 @@ An earlier "Strategy" tab (a single top-pick recommendation, computed by a
 Plan after the two turned out to disagree with each other on what to pick
 next — two answers to the same question was a real bug, not a feature; there
 is now exactly one ranking method, used everywhere.
+
+### Player projection lookup
+
+Each round's "Backup options" table only ever showed the top
+`MAX_DISPLAYED_ALTERNATES` (2) alternates — useful as a default, but not a
+way to check an arbitrary player. `dynasty_core.rank_by_marginal_value`
+already scores *every* available candidate before sorting and slicing to
+the displayed few (`multi_round_plan`'s docstring notes the ~20,000-call
+cost of that pass), so exposing the rest costs nothing extra — `top_n` is
+now just `len(candidate_ids)` for upcoming rounds, and the full ranked list
+is returned as `all_candidates_by_pick` alongside the existing
+`alternates_by_pick`. Each round's expander gets a `st.selectbox` built
+from that full list (sorted best-first, same order as the table), showing
+`Name (POS) — marginal value` per option so the number is visible without
+even opening the detail line below it. Deliberately skips
+`alternate_gap_note` for the full list — fine for 2 backups, not worth a
+per-candidate weekly-gap comparison for a ~200-player pool most of which
+nobody will ever look up. Web-only — the CLI has no interactive selectbox
+equivalent, and its `alternates_by_pick` table output is unchanged, so
+this is an intentional, scoped divergence from the "full parity" rule
+below, not an oversight.
 
 ### Sidebar league name and version footer
 

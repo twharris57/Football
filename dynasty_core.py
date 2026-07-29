@@ -34,6 +34,7 @@ FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
 YOUNG_CORE_MAX_YOE = 2
 YOUNG_CORE_NEED_THRESHOLD = 2
 LOW_VALUE_YOUNG_AGE = 24
+MAX_DISPLAYED_ALTERNATES = 2
 
 # Dynasty aging curves differ meaningfully by position - RBs decline earliest,
 # QBs latest (and often keep starting well into their mid-30s in a passing
@@ -1065,12 +1066,19 @@ def multi_round_plan(
     suggested drop was actually made — a live suggestion, not a confirmed
     transaction, labeled that way in the UI.
 
-    Also returns up to 2 backup alternates per upcoming round
-    (`alternates_by_pick`, keyed by overall_pick), each noting whether
-    picking it instead would open a weekly gap the primary pick doesn't —
-    a plain-string `notes` field meant to carry more note types later
-    (e.g. injury history, if that data ever becomes available), not just
-    this one.
+    Also returns up to MAX_DISPLAYED_ALTERNATES backup alternates per
+    upcoming round (`alternates_by_pick`, keyed by overall_pick), each
+    noting whether picking it instead would open a weekly gap the primary
+    pick doesn't — a plain-string `notes` field meant to carry more note
+    types later (e.g. injury history, if that data ever becomes available),
+    not just this one. `all_candidates_by_pick` (same keys) holds every
+    candidate rank_by_marginal_value evaluated for that round, not just the
+    displayed few - free to build, since every candidate is already scored
+    before the top-N slice happens (see the top_n comment above), and
+    lets a UI offer an on-demand lookup for any player, not only the
+    handful surfaced by default. Omits the weekly-gap `notes` field that
+    `alternates_by_pick` has, to skip an extra roster_weekly_gaps pass for
+    the whole candidate pool most of which nobody will ever look up.
 
     Finally compares the resulting hypothetical roster's weekly gaps
     against the current roster's (see roster_weekly_gaps), flagging any
@@ -1095,6 +1103,7 @@ def multi_round_plan(
 
     rounds = []
     alternates_by_pick: dict[int, pd.DataFrame] = {}
+    all_candidates_by_pick: dict[int, pd.DataFrame] = {}
 
     for pick in own_picks:
         is_completed = pick.overall_pick < current_pick_no
@@ -1104,7 +1113,13 @@ def multi_round_plan(
         if is_completed and real_pick_id:
             candidate_ids, top_n = [real_pick_id], 1
         else:
-            candidate_ids, top_n = list(available_ids), 3
+            # rank_by_marginal_value already evaluates every candidate before
+            # sorting/slicing - asking for all of them here costs nothing
+            # extra (see its docstring's ~20,000-call performance note,
+            # which already assumes every candidate is scored every round).
+            # This lets the UI offer a full player-projection lookup, not
+            # just the top few, for free.
+            candidate_ids, top_n = list(available_ids), len(available_ids)
 
         ranked = rank_by_marginal_value(
             candidate_ids,
@@ -1154,7 +1169,7 @@ def multi_round_plan(
 
         if len(ranked) > 1:
             alt_rows = []
-            for alt in ranked[1:]:
+            for alt in ranked[1:MAX_DISPLAYED_ALTERNATES + 1]:
                 alt_info = players.get(alt["player_id"], {})
                 alt_drop = alt["drop"]
                 alt_rows.append(
@@ -1171,6 +1186,30 @@ def multi_round_plan(
                 )
             alternates_by_pick[pick.overall_pick] = pd.DataFrame(alt_rows)
 
+            # Every other evaluated candidate, for on-demand lookup (a
+            # dropdown in the web UI) rather than the fixed top few above -
+            # no extra scoring cost, since rank_by_marginal_value already
+            # evaluates all of them before sorting (see the top_n comment
+            # above). Deliberately omits alternate_gap_note - fine for a
+            # couple of backups above, but a per-candidate weekly-gap
+            # comparison for the whole ~200-player pool isn't worth the cost
+            # for a lookup table most entries in which nobody will ever open.
+            candidate_rows = []
+            for candidate in ranked:
+                info = players.get(candidate["player_id"], {})
+                candidate_drop = candidate["drop"]
+                candidate_rows.append(
+                    {
+                        "player_id": candidate["player_id"],
+                        "name": info.get("full_name"),
+                        "pos": info.get("position"),
+                        "marginal_value": round(candidate["marginal_value"], 1),
+                        "drop_name": candidate_drop["name"] if candidate_drop else None,
+                        "drop_is_starter": candidate_drop["is_starter"] if candidate_drop else None,
+                    }
+                )
+            all_candidates_by_pick[pick.overall_pick] = pd.DataFrame(candidate_rows)
+
         available_ids.discard(picked_id)
         if drop:
             hypothetical_ids = [pid for pid in hypothetical_ids if pid != drop["player_id"]]
@@ -1183,6 +1222,7 @@ def multi_round_plan(
     return {
         "rounds": pd.DataFrame(rounds),
         "alternates_by_pick": alternates_by_pick,
+        "all_candidates_by_pick": all_candidates_by_pick,
         "weekly_gap_alerts": alerts.reset_index(drop=True),
     }
 

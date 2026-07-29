@@ -520,3 +520,45 @@ class TestMultiRoundPlan:
         # Adding a QB can only improve the roster's weekly gaps, never worsen
         # them - no new/worse gap alerts expected.
         assert plan["weekly_gap_alerts"].empty
+
+    def test_all_candidates_by_pick_includes_every_evaluated_option(self):
+        # rank_by_marginal_value already scores every candidate before
+        # picking a winner - all_candidates_by_pick should expose all of
+        # them (for a UI lookup), not just the one recommended pick.
+        league = {"roster_positions": ["QB", "WR", "BN"], "settings": {"taxi_slots": 0}}
+        players = {
+            "old_wr": make_player("WR", full_name="Old WR"),
+            "good_qb": make_player("QB", full_name="Good QB"),
+            "good_wr": make_player("WR", full_name="Good WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [
+                fc_entry("old_wr", 50, position="WR"),
+                fc_entry("good_qb", 300, position="QB"),
+                fc_entry("good_wr", 100, position="WR"),
+            ]
+        )
+        user_roster = {"players": ["old_wr"], "taxi": [], "reserve": []}
+        ownership = [dc.DraftPickSlot(round=1, overall_pick=1, original_roster_id=1, owner_roster_id=1)]
+        available = {"good_qb": players["good_qb"], "good_wr": players["good_wr"]}
+
+        plan = dc.multi_round_plan(
+            ownership=ownership,
+            user_roster_id=1,
+            current_pick_no=1,
+            available=available,
+            players=players,
+            fc_by_sleeper_id=fc_by_id,
+            user_roster=user_roster,
+            league=league,
+            byes={},
+            handcuffs={},
+            real_picks_by_overall={},
+        )
+
+        candidates = plan["all_candidates_by_pick"][1]
+        assert set(candidates["name"]) == {"Good QB", "Good WR"}
+        # Both evaluated candidates are present and correctly ordered by
+        # marginal value, not just the one actually recommended.
+        assert candidates.iloc[0]["name"] == "Good QB"
+        assert candidates.iloc[0]["marginal_value"] > candidates.iloc[1]["marginal_value"]

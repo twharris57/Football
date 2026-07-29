@@ -209,7 +209,9 @@ with plan_tab:
             "record of whether it was actually dropped.\n"
             "- **Bye weeks** are folded into the season average, not handled separately.\n"
             "- Each pick is collapsed by default — expand one for the full reasoning and any "
-            "backup options. Refresh after any pick lands for an updated plan."
+            "backup options. Refresh after any pick lands for an updated plan.\n"
+            "- **Player projection lookup** — every candidate considered for that pick, not just "
+            "the top few, is one dropdown click away with its own marginal value and drop."
         )
     plan = state["multi_round_plan"]
     rounds = plan["rounds"]
@@ -217,6 +219,7 @@ with plan_tab:
         st.write("(no picks owned this draft)")
     else:
         alternates_by_pick = plan["alternates_by_pick"]
+        all_candidates_by_pick = plan["all_candidates_by_pick"]
         for _, row in rounds.iterrows():
             status_icon = "✅" if row["status"] == "completed" else "🔜"
             drop_part = f" · DROP {row['drop_name']} ({row['drop_pos']})" if pd.notna(row["drop_name"]) else ""
@@ -245,6 +248,34 @@ with plan_tab:
                             ("drop_is_starter", "Drop Is Starter"),
                             ("notes", "Notes"),
                         ),
+                    )
+
+                candidates = all_candidates_by_pick.get(row["overall_pick"])
+                if candidates is not None and not candidates.empty:
+                    st.caption(
+                        "Check any other available player's projected marginal value for this pick "
+                        f"(all {len(candidates)} evaluated, best first):"
+                    )
+                    option_labels = [
+                        f"{c['name']} ({c['pos']}) — {c['marginal_value']:+.1f}"
+                        for _, c in candidates.iterrows()
+                    ]
+                    chosen = st.selectbox(
+                        "Player projection lookup",
+                        option_labels,
+                        key=f"projection_lookup_{row['overall_pick']}",
+                        label_visibility="collapsed",
+                    )
+                    selected = candidates.iloc[option_labels.index(chosen)]
+                    if pd.notna(selected["drop_name"]):
+                        drop_text = f"would drop **{selected['drop_name']}**"
+                        if selected["drop_is_starter"]:
+                            drop_text += " (a current starter)"
+                    else:
+                        drop_text = "no drop needed"
+                    st.write(
+                        f"**{selected['name']}** ({selected['pos']}): {selected['marginal_value']:+.1f} "
+                        f"marginal value — {drop_text}"
                     )
 
     st.subheader("Weekly gap impact")
