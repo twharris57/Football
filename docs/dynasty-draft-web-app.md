@@ -43,6 +43,35 @@ equivalent, and its `alternates_by_pick` table output is unchanged, so
 this is an intentional, scoped divergence from the "full parity" rule
 below, not an oversight.
 
+The displayed marginal value still comes from the cheap
+`recommend_drop()` heuristic every candidate was scored with during
+ranking (lowest-value bench player, full stop) — accurate enough to sort
+~227 candidates quickly, but not a real per-candidate answer to "what
+should I actually drop for *this* player." User feedback on an earlier
+version of this feature: showing that heuristic's drop alongside each
+candidate was actively unhelpful, since one globally-low-value player
+often "wins" as the suggested drop for every candidate regardless of
+position, making the field look broken/repetitive rather than
+informative. Once a candidate is selected, the app instead calls
+`dynasty_core.best_position_relevant_drop()` fresh (using that round's
+roster snapshot from `hypothetical_ids_by_pick`) — a real search,
+restricted to players who share a slot type with the *specific* selected
+candidate (own position, plus FLEX/SUPER_FLEX-eligible positions if the
+league's `roster_positions` actually has those slots and the candidate
+qualifies), over every resulting season-average marginal value, not just
+whichever player has the lowest raw `adj_value`. In this league SUPER_FLEX
+covers all four fantasy positions, so that restriction is effectively "any
+rostered skill player" — a correct reflection of the real slot structure,
+not a bug. This can still legitimately land on the same player as the
+cheap heuristic (verified directly: with the live roster's real bye/value
+distribution as of this writing, it does, for every candidate checked) —
+that's not a sign the fix didn't work, it means that player really is the
+optimal drop, now *proven* by search rather than assumed by a value
+shortcut. It's deliberately only computed on-demand for the one selected
+candidate, not precomputed for all ~227 — evaluating every drop option
+for every candidate during the main ranking pass would multiply that
+pass's cost by the size of the search pool.
+
 ### Sidebar league name and version footer
 
 The sidebar section header shows the actual loaded league name instead of a

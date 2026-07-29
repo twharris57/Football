@@ -267,6 +267,70 @@ class TestRecommendDropIneligibility:
         assert drop["is_starter"] is False
 
 
+class TestBestPositionRelevantDrop:
+    """Unlike recommend_drop's cheap lowest-raw-value heuristic, this should
+    (a) only ever consider players who actually share a slot type with the
+    candidate, and (b) search for the drop that maximizes the resulting
+    marginal value, not just the one with the lowest raw adj_value."""
+
+    def test_only_considers_players_sharing_a_slot_type_with_the_candidate(self):
+        # No FLEX/SUPER_FLEX in this league, so a WR candidate should only
+        # ever consider other WRs as a drop - never the bench QB, even
+        # though it has the lowest raw value on the whole roster.
+        league = {"roster_positions": ["QB", "WR", "BN"], "settings": {}}
+        players = {
+            "starter_qb": make_player("QB", full_name="Starter QB"),
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "bench_qb": make_player("QB", full_name="Bench QB"),
+            "bench_wr": make_player("WR", full_name="Bench WR"),
+            "new_wr": make_player("WR", full_name="New WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [
+                fc_entry("starter_qb", 200, position="QB"),
+                fc_entry("starter_wr", 300, position="WR"),
+                fc_entry("bench_qb", 10, position="QB"),  # global floor - must NOT be picked
+                fc_entry("bench_wr", 150, position="WR"),
+                fc_entry("new_wr", 500, position="WR"),
+            ]
+        )
+        hypothetical_ids = ["starter_qb", "starter_wr", "bench_qb", "bench_wr"]
+
+        best = dc.best_position_relevant_drop("new_wr", hypothetical_ids, players, fc_by_id, {}, league)
+
+        assert best["player_id"] == "bench_wr"
+
+    def test_picks_the_drop_with_the_greatest_marginal_gain_not_the_lowest_raw_value(self):
+        # bench_B has a higher raw value than bench_A, but shares its bye
+        # week with both the current starter AND the incoming candidate -
+        # keeping it provides zero unique bye coverage. bench_A, despite a
+        # lower raw value, is the only player available the one week
+        # starter and candidate are both out, so dropping bench_B (and
+        # keeping bench_A) yields a strictly better season average - the
+        # opposite of what a lowest-raw-value heuristic would choose.
+        league = {"roster_positions": ["WR"], "settings": {}}
+        players = {
+            "starter": make_player("WR", team="T1", full_name="Starter"),
+            "bench_a": make_player("WR", team="T3", full_name="Bench A"),
+            "bench_b": make_player("WR", team="T4", full_name="Bench B"),
+            "candidate": make_player("WR", team="T2", full_name="Candidate"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [
+                fc_entry("starter", 200, position="WR"),
+                fc_entry("bench_a", 40, position="WR"),
+                fc_entry("bench_b", 60, position="WR"),
+                fc_entry("candidate", 1000, position="WR"),
+            ]
+        )
+        byes = {"T1": 1, "T2": 1, "T3": 5, "T4": 1}
+        hypothetical_ids = ["starter", "bench_a", "bench_b"]
+
+        best = dc.best_position_relevant_drop("candidate", hypothetical_ids, players, fc_by_id, byes, league)
+
+        assert best["player_id"] == "bench_b"
+
+
 class TestPlayerStatusDetails:
     """(icon, description) pairs for a player's situation - a player can have more than one."""
 

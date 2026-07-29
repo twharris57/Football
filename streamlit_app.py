@@ -211,7 +211,10 @@ with plan_tab:
             "- Each pick is collapsed by default — expand one for the full reasoning and any "
             "backup options. Refresh after any pick lands for an updated plan.\n"
             "- **Player projection lookup** — every candidate considered for that pick, not just "
-            "the top few, is one dropdown click away with its own marginal value and drop."
+            "the top few, is one dropdown click away. Its marginal value uses the same quick "
+            "drop heuristic as the ranking above (lowest-value bench player) — the best drop "
+            "shown below it is searched specifically for that candidate instead, among players "
+            "who share a slot type with them, so it can actually differ pick to pick."
         )
     plan = state["multi_round_plan"]
     rounds = plan["rounds"]
@@ -220,6 +223,7 @@ with plan_tab:
     else:
         alternates_by_pick = plan["alternates_by_pick"]
         all_candidates_by_pick = plan["all_candidates_by_pick"]
+        hypothetical_ids_by_pick = plan["hypothetical_ids_by_pick"]
         for _, row in rounds.iterrows():
             status_icon = "✅" if row["status"] == "completed" else "🔜"
             drop_part = f" · DROP {row['drop_name']} ({row['drop_pos']})" if pd.notna(row["drop_name"]) else ""
@@ -267,16 +271,38 @@ with plan_tab:
                         label_visibility="collapsed",
                     )
                     selected = candidates.iloc[option_labels.index(chosen)]
-                    if pd.notna(selected["drop_name"]):
-                        drop_text = f"would drop **{selected['drop_name']}**"
-                        if selected["drop_is_starter"]:
-                            drop_text += " (a current starter)"
-                    else:
+                    # The best drop for THIS specific candidate, not the
+                    # cheap lowest-value-bench-player heuristic the ranking
+                    # above uses (which repeats the same answer across very
+                    # different candidates) - searched fresh here since it's
+                    # only ever needed for the one candidate picked from the
+                    # dropdown, not all of them.
+                    best_drop = dynasty_core.best_position_relevant_drop(
+                        selected["player_id"],
+                        hypothetical_ids_by_pick[row["overall_pick"]],
+                        state["players"],
+                        state["fc_by_sleeper_id"],
+                        state["byes"],
+                        state["league"],
+                        state["ineligible_ids"],
+                    )
+                    if best_drop is None:
                         drop_text = "no drop needed"
+                    else:
+                        drop_text = f"best drop: **{best_drop['name']}** ({best_drop['pos']})"
+                        if best_drop["is_starter"]:
+                            drop_text += " — a current starter"
                     st.write(
                         f"**{selected['name']}** ({selected['pos']}): {selected['marginal_value']:+.1f} "
-                        f"marginal value — {drop_text}"
+                        f"marginal value (ranking estimate) — {drop_text}"
                     )
+                    if best_drop is not None:
+                        st.caption(
+                            f"Marginal value with this specific drop: {best_drop['marginal_value']:+.1f} — "
+                            "searched only among players sharing a slot type with this candidate (own "
+                            "position, FLEX, or SUPER_FLEX as applicable), so it can differ from the "
+                            "estimate above."
+                        )
 
     st.subheader("Weekly gap impact")
     alerts = plan["weekly_gap_alerts"]
