@@ -402,8 +402,33 @@ with draft_tab:
             )
 
 with roster_tab:
+    team_names_by_id = state["team_names"]
+    user_roster_id = state["user_roster_id"]
+    roster_id_options = sorted(team_names_by_id, key=lambda rid: (rid != user_roster_id, team_names_by_id[rid]))
+    selected_roster_id = st.selectbox(
+        "Viewing team",
+        roster_id_options,
+        format_func=lambda rid: team_names_by_id[rid] + (" (you)" if rid == user_roster_id else ""),
+        key="roster_tab_team_select",
+    )
+    # Reuse the already-computed bundle for your own team (free); any other
+    # team's analysis is computed fresh here on selection - team_roster_analysis
+    # is the exact same per-roster logic gather_state already ran for you,
+    # just pointed at a different team's roster dict.
+    if selected_roster_id == user_roster_id:
+        analysis = state
+    else:
+        analysis = dynasty_core.team_roster_analysis(
+            state["rosters_by_id"][selected_roster_id],
+            state["players"],
+            state["fc_by_sleeper_id"],
+            state["byes"],
+            state["league"],
+            state["handcuffs"],
+        )
+
     st.subheader("Roster capacity")
-    cap = state["roster_capacity"]
+    cap = analysis["roster_capacity"]
     cap_col1, cap_col2, cap_col3 = st.columns(3)
     cap_col1.metric("Active roster", f"{cap['active_filled']}/{cap['active_total']}", f"{cap['active_open']} open")
     cap_col2.metric("Taxi squad", f"{cap['taxi_filled']}/{cap['taxi_total']}", f"{cap['taxi_open']} open")
@@ -413,7 +438,7 @@ with roster_tab:
 
     st.subheader("Roster needs")
     show_df(
-        state["roster_needs"],
+        analysis["roster_needs"],
         "(empty roster)",
         hide_index=False,
         column_config=cols(
@@ -424,7 +449,7 @@ with roster_tab:
             ("need", "Need"),
         ),
     )
-    needs = state["need_positions"]
+    needs = analysis["need_positions"]
     if needs:
         st.info(f"Flagged needs: {', '.join(sorted(needs))} — the big board marks rookies at these positions.")
     else:
@@ -443,7 +468,7 @@ with roster_tab:
             "status)."
         )
     show_status_table(
-        state["roster_value"],
+        analysis["roster_value"],
         "(empty roster)",
         column_labels={
             "name": "Player",
@@ -473,7 +498,7 @@ with roster_tab:
             "- **Delta size** — a small delta means the bench covers it fine; a large one is "
             "worth looking for bye-week coverage via trade."
         )
-    bye_impact = state["roster_bye_conflicts"]
+    bye_impact = analysis["roster_bye_conflicts"]
     if bye_impact.empty:
         st.write("(none)")
     else:
@@ -512,7 +537,7 @@ with roster_tab:
             "- **What it doesn't** — FLEX/SUPER_FLEX, which could pull from other positions; a "
             "rough depth signal, not a full lineup-feasibility check."
         )
-    weekly_gaps = state["roster_weekly_gaps"]
+    weekly_gaps = analysis["roster_weekly_gaps"]
     gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
     weekly_gap_cols = cols(
         ("week", "Week"), ("QB", "QB"), ("RB", "RB"), ("WR", "WR"), ("TE", "TE"), ("gap", "Gap")
@@ -524,10 +549,10 @@ with roster_tab:
         st.dataframe(weekly_gaps, hide_index=True, width="stretch", column_config=weekly_gap_cols)
 
     st.subheader("Handcuff status")
-    st.caption("Your rostered RBs who are NFL starters, and whether you also own their backup.")
+    st.caption("This team's rostered RBs who are NFL starters, and whether they also own their backup.")
     show_df(
-        state["roster_handcuffs"],
-        "(none of your RBs are current NFL starters)",
+        analysis["roster_handcuffs"],
+        "(none of this team's RBs are current NFL starters)",
         column_config=cols(
             ("starter", "Starter"), ("handcuff", "Handcuff"), ("handcuff_rostered", "Handcuff Rostered")
         ),

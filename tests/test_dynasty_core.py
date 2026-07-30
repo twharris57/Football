@@ -62,6 +62,40 @@ class TestRosterCapacity:
         assert cap["reserve_open"] == 0
 
 
+class TestTeamRosterAnalysis:
+    """team_roster_analysis should bundle every per-roster view for ANY roster,
+    not just the user's own - the basis for the Your Roster tab's team selector."""
+
+    def test_bundles_every_view_for_an_arbitrary_roster(self):
+        league = {"roster_positions": ["QB", "WR", "BN"], "settings": {"taxi_slots": 1, "reserve_slots": 1}}
+        players = {
+            "qb1": make_player("QB", team="AAA", full_name="QB One"),
+            "wr1": make_player("WR", team="AAA", full_name="WR One"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("qb1", 100, position="QB"), fc_entry("wr1", 200, position="WR")]
+        )
+        roster = {"players": ["qb1", "wr1"], "taxi": [], "reserve": []}
+
+        analysis = dc.team_roster_analysis(roster, players, fc_by_id, {}, league, {})
+
+        assert set(analysis.keys()) == {
+            "roster_needs",
+            "need_positions",
+            "roster_capacity",
+            "roster_value",
+            "roster_bye_conflicts",
+            "roster_weekly_gaps",
+            "roster_handcuffs",
+            "lineup_starters",
+            "lineup_bench",
+            "lineup_taxi",
+            "lineup_ir",
+        }
+        assert analysis["roster_capacity"]["active_filled"] == 2
+        assert set(analysis["lineup_starters"]["name"]) == {"QB One", "WR One"}
+
+
 class TestLineupBreakdown:
     """Taxi and IR/reserve players should be split out, not lumped into bench."""
 

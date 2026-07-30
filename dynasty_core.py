@@ -721,6 +721,41 @@ def roster_handcuff_status(roster: dict, players: dict[str, dict], handcuffs: di
     return pd.DataFrame(rows)
 
 
+def team_roster_analysis(
+    roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    handcuffs: dict[str, str],
+) -> dict[str, Any]:
+    """Bundle every per-roster analysis view into one call, for any team's roster.
+
+    Extracted from `gather_state`'s own user-roster computation - every
+    function it calls already took a generic `roster` dict, so the only
+    thing that ever needed to be "the user's roster" specifically was
+    which one got passed in here. Lets a UI offer a team selector (see
+    the Your Roster tab) that reuses this exact analysis for any team in
+    the league, not a second, roster-agnostic scoring model built to
+    answer a similar-sounding but different question.
+    """
+    roster_needs = roster_needs_summary(roster, players)
+    lineup_starters, lineup_bench, lineup_taxi, lineup_ir = lineup_breakdown(roster, players, fc_by_sleeper_id, league)
+    return {
+        "roster_needs": roster_needs,
+        "need_positions": need_positions(roster_needs),
+        "roster_capacity": roster_capacity(roster, league),
+        "roster_value": roster_value_analysis(roster, players, fc_by_sleeper_id, byes),
+        "roster_bye_conflicts": roster_bye_conflicts(roster, players, fc_by_sleeper_id, byes, league),
+        "roster_weekly_gaps": roster_weekly_gaps(roster, players, byes, league),
+        "roster_handcuffs": roster_handcuff_status(roster, players, handcuffs),
+        "lineup_starters": lineup_starters,
+        "lineup_bench": lineup_bench,
+        "lineup_taxi": lineup_taxi,
+        "lineup_ir": lineup_ir,
+    }
+
+
 FLEX_ELIGIBLE_POSITIONS = frozenset({"RB", "WR", "TE"})
 SUPERFLEX_ELIGIBLE_POSITIONS = frozenset({"QB", "RB", "WR", "TE"})
 
@@ -1457,8 +1492,7 @@ def gather_state(
         p["pick_no"]: p["player_id"] for p in draft_picks if p.get("roster_id") == user_roster_id and p.get("player_id")
     }
 
-    roster_needs = roster_needs_summary(user_roster, players)
-    needs = need_positions(roster_needs)
+    user_analysis = team_roster_analysis(user_roster, players, fc_by_sleeper_id, byes, league, handcuffs)
 
     recent_rows = []
     for pick in sorted(draft_picks, key=lambda p: p["pick_no"])[-5:]:
@@ -1472,15 +1506,21 @@ def gather_state(
             }
         )
 
-    big_board = build_big_board(board_pool, fc_by_sleeper_id, needs, handcuff_targets, draft_attribution)
-    roster_value = roster_value_analysis(user_roster, players, fc_by_sleeper_id, byes)
-    lineup_starters, lineup_bench, lineup_taxi, lineup_ir = lineup_breakdown(user_roster, players, fc_by_sleeper_id, league)
+    big_board = build_big_board(
+        board_pool, fc_by_sleeper_id, user_analysis["need_positions"], handcuff_targets, draft_attribution
+    )
 
     return {
         "league": league,
         "players": players,
         "fc_by_sleeper_id": fc_by_sleeper_id,
         "byes": byes,
+        "handcuffs": handcuffs,
+        # Every team's roster dict, keyed by roster_id - exposed so a UI can
+        # run team_roster_analysis() on demand for any team, not just the
+        # user's own (see the Your Roster tab's team selector).
+        "rosters_by_id": {r["roster_id"]: r for r in rosters},
+        "user_roster_id": user_roster_id,
         # Taxi/IR players from the user's real roster - never eligible for a
         # starting slot (Sleeper doesn't allow it). Exposed at this level so
         # a UI can call best_position_relevant_drop() on demand for a
@@ -1491,17 +1531,7 @@ def gather_state(
         "current_pick_no": current_pick_no,
         "picks_until_turn": picks_until_turn(ownership, user_roster_id, current_pick_no),
         "your_picks": format_your_picks(ownership, user_roster_id, current_pick_no, team_names),
-        "roster_needs": roster_needs,
-        "need_positions": needs,
-        "roster_capacity": roster_capacity(user_roster, league),
-        "roster_value": roster_value,
-        "roster_bye_conflicts": roster_bye_conflicts(user_roster, players, fc_by_sleeper_id, byes, league),
-        "roster_weekly_gaps": roster_weekly_gaps(user_roster, players, byes, league),
-        "roster_handcuffs": roster_handcuff_status(user_roster, players, handcuffs),
-        "lineup_starters": lineup_starters,
-        "lineup_bench": lineup_bench,
-        "lineup_taxi": lineup_taxi,
-        "lineup_ir": lineup_ir,
+        **user_analysis,
         "recent_picks": pd.DataFrame(recent_rows),
         "big_board": big_board,
         "multi_round_plan": multi_round_plan(

@@ -14,13 +14,44 @@ Four tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
 2. **Lineup** — current optimal starters/bench.
 3. **Draft Board** — the full rookie class, tiered, with draft attribution.
 4. **Your Roster** — capacity, needs, value analysis, bye conflicts, weekly
-   gaps, handcuffs.
+   gaps, handcuffs, for any team in the league via a selector (defaults to
+   the user's own).
 
 An earlier "Strategy" tab (a single top-pick recommendation, computed by a
 *different* algorithm than the round-by-round plan) was merged into Draft
 Plan after the two turned out to disagree with each other on what to pick
 next — two answers to the same question was a real bug, not a feature; there
 is now exactly one ranking method, used everywhere.
+
+### Team selector (Your Roster tab)
+
+User feedback: the original idea of "a player dropdown" actually meant
+*other teams in the league*, not other draft candidates (the Draft Plan
+tab's lookup, below, covers that instead) — specifically, seeing how the
+tool evaluates competitors' rosters. Every per-roster analysis function
+(`roster_needs_summary`, `roster_capacity`, `roster_value_analysis`,
+`lineup_breakdown`, `roster_bye_conflicts`, `roster_weekly_gaps`,
+`roster_handcuff_status`) already took a generic `roster` dict — the only
+thing that ever made them "the user's own" was which roster `gather_state`
+happened to pass in. `team_roster_analysis()` bundles all seven into one
+call and is now what `gather_state` itself uses internally for the user's
+roster, so there's exactly one code path, not a second roster-agnostic
+model built to answer a similar-sounding question. The tab's `st.selectbox`
+(user's own team first, then alphabetical) reuses the cached bundle for the
+user's own team for free, and calls `team_roster_analysis()` fresh
+on-demand for any other selected team — cheap enough (well under a second,
+confirmed directly) that no separate caching was needed. `gather_state`
+exposes `rosters_by_id`, `players`, `fc_by_sleeper_id`, `byes`, `handcuffs`,
+and `league` at the top level specifically so this (and the drop-search
+below) can be computed outside the main per-refresh pass.
+
+**Backlog, not built here:** a league-wide summary view (one row per team -
+value, biggest need, capacity - scannable at a glance before drilling into
+one team) was considered and explicitly deferred; see
+`.claude/PROJECT_PLAN.md`. This team-selector approach answers "how does
+the tool see this *one* team" well; it doesn't answer "which teams across
+the league are worth scouting first," which needs its own summary view,
+not just this same call repeated.
 
 ### Player projection lookup
 

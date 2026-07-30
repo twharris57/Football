@@ -98,6 +98,18 @@ signal (item 1) lands before the tools that consume it (items 3-4).
    on a rebuild-vs-contend spectrum, to identify good trade partners
    (contenders who overpay for immediate help, rebuilders who overpay for
    future assets). Pairs with item 3.
+5. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
+   longer term). A compact row per team (total roster value, biggest need,
+   capacity) to scan the whole league at a glance before drilling into one
+   team, complementing the Your Roster tab's team selector (added
+   2026-07-29), which only ever shows one team at a time. Cheaper than it
+   would have been before that selector shipped —
+   `dynasty_core.team_roster_analysis()` already runs this exact per-team
+   analysis for any roster on demand; this is "call it for all ~12 teams
+   and lay out a summary row," not new analysis logic. A natural
+   lighter-weight precursor to item 4's power/timeline read, not a
+   replacement for it — this surfaces raw stats per team, not a
+   rebuild-vs-contend classification.
 
 ## Code quality, tests & UX polish
 
