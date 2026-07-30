@@ -138,6 +138,9 @@ themselves still have none. See `testing.md` for general conventions.
 - **Toss-up**: a game with `|home_moneyline| < 150` — close to even money,
   where the odds alone don't strongly separate the two teams, so injury
   reports are checked as a tiebreaker.
+- **Dynasty league**: keeps every player on the roster year to year (no
+  re-draft) — rookies are the only new players entering the league, and only
+  via the annual rookie draft.
 - **Dynasty rebuild strategy**: the user's approach since year one is to
   accumulate young talent and accept being near the bottom of the league
   short-term, aiming to be competitive within ~2-3 years. This should bias

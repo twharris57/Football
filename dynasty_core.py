@@ -34,6 +34,7 @@ FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
 YOUNG_CORE_MAX_YOE = 2
 YOUNG_CORE_NEED_THRESHOLD = 2
 LOW_VALUE_YOUNG_AGE = 24
+MAX_DISPLAYED_ALTERNATES = 2
 
 # Dynasty aging curves differ meaningfully by position - RBs decline earliest,
 # QBs latest (and often keep starting well into their mid-30s in a passing
@@ -720,6 +721,41 @@ def roster_handcuff_status(roster: dict, players: dict[str, dict], handcuffs: di
     return pd.DataFrame(rows)
 
 
+def team_roster_analysis(
+    roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    handcuffs: dict[str, str],
+) -> dict[str, Any]:
+    """Bundle every per-roster analysis view into one call, for any team's roster.
+
+    Extracted from `gather_state`'s own user-roster computation - every
+    function it calls already took a generic `roster` dict, so the only
+    thing that ever needed to be "the user's roster" specifically was
+    which one got passed in here. Lets a UI offer a team selector (see
+    the Your Roster tab) that reuses this exact analysis for any team in
+    the league, not a second, roster-agnostic scoring model built to
+    answer a similar-sounding but different question.
+    """
+    roster_needs = roster_needs_summary(roster, players)
+    lineup_starters, lineup_bench, lineup_taxi, lineup_ir = lineup_breakdown(roster, players, fc_by_sleeper_id, league)
+    return {
+        "roster_needs": roster_needs,
+        "need_positions": need_positions(roster_needs),
+        "roster_capacity": roster_capacity(roster, league),
+        "roster_value": roster_value_analysis(roster, players, fc_by_sleeper_id, byes),
+        "roster_bye_conflicts": roster_bye_conflicts(roster, players, fc_by_sleeper_id, byes, league),
+        "roster_weekly_gaps": roster_weekly_gaps(roster, players, byes, league),
+        "roster_handcuffs": roster_handcuff_status(roster, players, handcuffs),
+        "lineup_starters": lineup_starters,
+        "lineup_bench": lineup_bench,
+        "lineup_taxi": lineup_taxi,
+        "lineup_ir": lineup_ir,
+    }
+
+
 FLEX_ELIGIBLE_POSITIONS = frozenset({"RB", "WR", "TE"})
 SUPERFLEX_ELIGIBLE_POSITIONS = frozenset({"QB", "RB", "WR", "TE"})
 
@@ -863,6 +899,83 @@ def recommend_drop(
         "adj_value": worst["adj_value"],
         "is_starter": worst["player_id"] in starter_ids,
     }
+
+
+def best_position_relevant_drop(
+    candidate_id: str,
+    hypothetical_ids: list[str],
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    ineligible_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any] | None:
+    """For one specific candidate, search which drop actually maximizes marginal value.
+
+    `recommend_drop()` (used by the main per-round ranking, for
+    performance - see `rank_by_marginal_value`) is a cheap heuristic:
+    lowest-value bench player, full stop, regardless of which candidate is
+    being added. That produces the same drop for very different
+    candidates whenever one player happens to be the roster's global
+    value floor - not useful for actually deciding what to cut for a
+    *specific* pick. This instead restricts the search to players who
+    share a slot type with the candidate (own position, plus
+    FLEX/SUPER_FLEX-eligible positions if the candidate qualifies for
+    those slots - in this league SUPER_FLEX covers all four fantasy
+    positions, so that's effectively every rostered skill player, which
+    is the correct reflection of this league's actual slot structure, not
+    an oversight), tries dropping each one, and returns whichever
+    resulting roster has the highest season-average starting value -
+    preferring bench players over starters, same as `recommend_drop`.
+
+    Deliberately NOT used inside `rank_by_marginal_value`'s per-round loop
+    over every candidate - evaluating every drop option for every one of
+    ~227 candidates would multiply that pass's cost by the size of the
+    search pool (see its own ~20,000-call performance note). Meant for
+    on-demand lookup: one candidate at a time, e.g. a UI dropdown
+    selection.
+    """
+    candidate_position = players.get(candidate_id, {}).get("position")
+    # Gated on whether the league's actual roster_positions has that slot
+    # type at all - same condition assign_starters itself uses - not just
+    # on FLEX_ELIGIBLE_POSITIONS/SUPERFLEX_ELIGIBLE_POSITIONS membership,
+    # so a league without a FLEX or SUPER_FLEX slot doesn't get a
+    # meaningless expansion for a position that could never actually share
+    # a real slot with the candidate.
+    eligible_positions = {candidate_position}
+    if "FLEX" in league["roster_positions"] and candidate_position in FLEX_ELIGIBLE_POSITIONS:
+        eligible_positions |= FLEX_ELIGIBLE_POSITIONS
+    if "SUPER_FLEX" in league["roster_positions"] and candidate_position in SUPERFLEX_ELIGIBLE_POSITIONS:
+        eligible_positions |= SUPERFLEX_ELIGIBLE_POSITIONS
+
+    rows = player_value_rows(hypothetical_ids, players, fc_by_sleeper_id)
+    eligible_rows = [r for r in rows if r["player_id"] not in ineligible_ids]
+    assignments = assign_starters(eligible_rows, league["roster_positions"])
+    starter_ids = {pid for _, pid in assignments if pid}
+
+    same_slot_ids = [pid for pid in hypothetical_ids if players.get(pid, {}).get("position") in eligible_positions]
+    bench_pool = [pid for pid in same_slot_ids if pid not in starter_ids]
+    drop_pool = bench_pool if bench_pool else same_slot_ids
+    if not drop_pool:
+        return None
+
+    baseline = season_average_starter_value(hypothetical_ids, players, fc_by_sleeper_id, byes, league, ineligible_ids)
+
+    best: dict[str, Any] | None = None
+    for drop_id in drop_pool:
+        roster_after = [pid for pid in hypothetical_ids if pid != drop_id] + [candidate_id]
+        after = season_average_starter_value(roster_after, players, fc_by_sleeper_id, byes, league, ineligible_ids)
+        marginal_value = after - baseline
+        if best is None or marginal_value > best["marginal_value"]:
+            info = players.get(drop_id, {})
+            best = {
+                "player_id": drop_id,
+                "name": info.get("full_name"),
+                "pos": info.get("position"),
+                "is_starter": drop_id in starter_ids,
+                "marginal_value": marginal_value,
+            }
+    return best
 
 
 def hypothetical_needs_and_handcuffs(
@@ -1065,12 +1178,26 @@ def multi_round_plan(
     suggested drop was actually made — a live suggestion, not a confirmed
     transaction, labeled that way in the UI.
 
-    Also returns up to 2 backup alternates per upcoming round
-    (`alternates_by_pick`, keyed by overall_pick), each noting whether
-    picking it instead would open a weekly gap the primary pick doesn't —
-    a plain-string `notes` field meant to carry more note types later
-    (e.g. injury history, if that data ever becomes available), not just
-    this one.
+    Also returns up to MAX_DISPLAYED_ALTERNATES backup alternates per
+    upcoming round (`alternates_by_pick`, keyed by overall_pick), each
+    noting whether picking it instead would open a weekly gap the primary
+    pick doesn't — a plain-string `notes` field meant to carry more note
+    types later (e.g. injury history, if that data ever becomes available),
+    not just this one. `all_candidates_by_pick` (same keys) holds every
+    candidate rank_by_marginal_value evaluated for that round, not just the
+    displayed few - free to build, since every candidate is already scored
+    before the top-N slice happens (see the top_n comment above), and
+    lets a UI offer an on-demand lookup for any player, not only the
+    handful surfaced by default. Its `drop_name`/`drop_is_starter` come
+    from the same cheap recommend_drop() heuristic the ranking itself
+    uses, not a per-candidate optimal search - a UI wanting the actual
+    best drop for one specific selected candidate should call
+    best_position_relevant_drop() instead, using this round's roster
+    snapshot from `hypothetical_ids_by_pick` (same keys again - the roster
+    as it stood entering that round, before that round's own pick was
+    applied). Omits the weekly-gap `notes` field that `alternates_by_pick`
+    has, to skip an extra roster_weekly_gaps pass for the whole candidate
+    pool most of which nobody will ever look up.
 
     Finally compares the resulting hypothetical roster's weekly gaps
     against the current roster's (see roster_weekly_gaps), flagging any
@@ -1095,16 +1222,29 @@ def multi_round_plan(
 
     rounds = []
     alternates_by_pick: dict[int, pd.DataFrame] = {}
+    all_candidates_by_pick: dict[int, pd.DataFrame] = {}
+    hypothetical_ids_by_pick: dict[int, list[str]] = {}
 
     for pick in own_picks:
         is_completed = pick.overall_pick < current_pick_no
         real_pick_id = real_picks_by_overall.get(pick.overall_pick)
         needs, handcuff_targets = hypothetical_needs_and_handcuffs(hypothetical_ids, players, handcuffs)
+        # Snapshot the roster as it stands entering this round, so a UI can
+        # later look up best_position_relevant_drop() on demand for any
+        # candidate from this specific round's context, not just whichever
+        # one this loop happens to pick.
+        hypothetical_ids_by_pick[pick.overall_pick] = list(hypothetical_ids)
 
         if is_completed and real_pick_id:
             candidate_ids, top_n = [real_pick_id], 1
         else:
-            candidate_ids, top_n = list(available_ids), 3
+            # rank_by_marginal_value already evaluates every candidate before
+            # sorting/slicing - asking for all of them here costs nothing
+            # extra (see its docstring's ~20,000-call performance note,
+            # which already assumes every candidate is scored every round).
+            # This lets the UI offer a full player-projection lookup, not
+            # just the top few, for free.
+            candidate_ids, top_n = list(available_ids), len(available_ids)
 
         ranked = rank_by_marginal_value(
             candidate_ids,
@@ -1154,7 +1294,7 @@ def multi_round_plan(
 
         if len(ranked) > 1:
             alt_rows = []
-            for alt in ranked[1:]:
+            for alt in ranked[1:MAX_DISPLAYED_ALTERNATES + 1]:
                 alt_info = players.get(alt["player_id"], {})
                 alt_drop = alt["drop"]
                 alt_rows.append(
@@ -1171,6 +1311,30 @@ def multi_round_plan(
                 )
             alternates_by_pick[pick.overall_pick] = pd.DataFrame(alt_rows)
 
+            # Every other evaluated candidate, for on-demand lookup (a
+            # dropdown in the web UI) rather than the fixed top few above -
+            # no extra scoring cost, since rank_by_marginal_value already
+            # evaluates all of them before sorting (see the top_n comment
+            # above). Deliberately omits alternate_gap_note - fine for a
+            # couple of backups above, but a per-candidate weekly-gap
+            # comparison for the whole ~200-player pool isn't worth the cost
+            # for a lookup table most entries in which nobody will ever open.
+            candidate_rows = []
+            for candidate in ranked:
+                info = players.get(candidate["player_id"], {})
+                candidate_drop = candidate["drop"]
+                candidate_rows.append(
+                    {
+                        "player_id": candidate["player_id"],
+                        "name": info.get("full_name"),
+                        "pos": info.get("position"),
+                        "marginal_value": round(candidate["marginal_value"], 1),
+                        "drop_name": candidate_drop["name"] if candidate_drop else None,
+                        "drop_is_starter": candidate_drop["is_starter"] if candidate_drop else None,
+                    }
+                )
+            all_candidates_by_pick[pick.overall_pick] = pd.DataFrame(candidate_rows)
+
         available_ids.discard(picked_id)
         if drop:
             hypothetical_ids = [pid for pid in hypothetical_ids if pid != drop["player_id"]]
@@ -1183,6 +1347,8 @@ def multi_round_plan(
     return {
         "rounds": pd.DataFrame(rounds),
         "alternates_by_pick": alternates_by_pick,
+        "all_candidates_by_pick": all_candidates_by_pick,
+        "hypothetical_ids_by_pick": hypothetical_ids_by_pick,
         "weekly_gap_alerts": alerts.reset_index(drop=True),
     }
 
@@ -1326,8 +1492,7 @@ def gather_state(
         p["pick_no"]: p["player_id"] for p in draft_picks if p.get("roster_id") == user_roster_id and p.get("player_id")
     }
 
-    roster_needs = roster_needs_summary(user_roster, players)
-    needs = need_positions(roster_needs)
+    user_analysis = team_roster_analysis(user_roster, players, fc_by_sleeper_id, byes, league, handcuffs)
 
     recent_rows = []
     for pick in sorted(draft_picks, key=lambda p: p["pick_no"])[-5:]:
@@ -1341,27 +1506,32 @@ def gather_state(
             }
         )
 
-    big_board = build_big_board(board_pool, fc_by_sleeper_id, needs, handcuff_targets, draft_attribution)
-    roster_value = roster_value_analysis(user_roster, players, fc_by_sleeper_id, byes)
-    lineup_starters, lineup_bench, lineup_taxi, lineup_ir = lineup_breakdown(user_roster, players, fc_by_sleeper_id, league)
+    big_board = build_big_board(
+        board_pool, fc_by_sleeper_id, user_analysis["need_positions"], handcuff_targets, draft_attribution
+    )
 
     return {
         "league": league,
+        "players": players,
+        "fc_by_sleeper_id": fc_by_sleeper_id,
+        "byes": byes,
+        "handcuffs": handcuffs,
+        # Every team's roster dict, keyed by roster_id - exposed so a UI can
+        # run team_roster_analysis() on demand for any team, not just the
+        # user's own (see the Your Roster tab's team selector).
+        "rosters_by_id": {r["roster_id"]: r for r in rosters},
+        "user_roster_id": user_roster_id,
+        # Taxi/IR players from the user's real roster - never eligible for a
+        # starting slot (Sleeper doesn't allow it). Exposed at this level so
+        # a UI can call best_position_relevant_drop() on demand for a
+        # specific candidate, the same ineligible_ids multi_round_plan uses
+        # internally for its own per-round simulation.
+        "ineligible_ids": frozenset(user_roster.get("taxi") or []) | frozenset(user_roster.get("reserve") or []),
         "ownership": ownership,
         "current_pick_no": current_pick_no,
         "picks_until_turn": picks_until_turn(ownership, user_roster_id, current_pick_no),
         "your_picks": format_your_picks(ownership, user_roster_id, current_pick_no, team_names),
-        "roster_needs": roster_needs,
-        "need_positions": needs,
-        "roster_capacity": roster_capacity(user_roster, league),
-        "roster_value": roster_value,
-        "roster_bye_conflicts": roster_bye_conflicts(user_roster, players, fc_by_sleeper_id, byes, league),
-        "roster_weekly_gaps": roster_weekly_gaps(user_roster, players, byes, league),
-        "roster_handcuffs": roster_handcuff_status(user_roster, players, handcuffs),
-        "lineup_starters": lineup_starters,
-        "lineup_bench": lineup_bench,
-        "lineup_taxi": lineup_taxi,
-        "lineup_ir": lineup_ir,
+        **user_analysis,
         "recent_picks": pd.DataFrame(recent_rows),
         "big_board": big_board,
         "multi_round_plan": multi_round_plan(

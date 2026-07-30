@@ -9,17 +9,99 @@ of requiring a terminal, and deployable to the user's Synology NAS.
 Four tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
 
 1. **Draft Plan** — the round-by-round marginal-value simulation, backup
-   alternates in expanders, weekly-gap impact.
+   alternates in expanders, a full player-projection lookup, weekly-gap
+   impact.
 2. **Lineup** — current optimal starters/bench.
 3. **Draft Board** — the full rookie class, tiered, with draft attribution.
 4. **Your Roster** — capacity, needs, value analysis, bye conflicts, weekly
-   gaps, handcuffs.
+   gaps, handcuffs, for any team in the league via a selector (defaults to
+   the user's own).
 
 An earlier "Strategy" tab (a single top-pick recommendation, computed by a
 *different* algorithm than the round-by-round plan) was merged into Draft
 Plan after the two turned out to disagree with each other on what to pick
 next — two answers to the same question was a real bug, not a feature; there
 is now exactly one ranking method, used everywhere.
+
+### Team selector (Your Roster tab)
+
+User feedback: the original idea of "a player dropdown" actually meant
+*other teams in the league*, not other draft candidates (the Draft Plan
+tab's lookup, below, covers that instead) — specifically, seeing how the
+tool evaluates competitors' rosters. Every per-roster analysis function
+(`roster_needs_summary`, `roster_capacity`, `roster_value_analysis`,
+`lineup_breakdown`, `roster_bye_conflicts`, `roster_weekly_gaps`,
+`roster_handcuff_status`) already took a generic `roster` dict — the only
+thing that ever made them "the user's own" was which roster `gather_state`
+happened to pass in. `team_roster_analysis()` bundles all seven into one
+call and is now what `gather_state` itself uses internally for the user's
+roster, so there's exactly one code path, not a second roster-agnostic
+model built to answer a similar-sounding question. The tab's `st.selectbox`
+(user's own team first, then alphabetical) reuses the cached bundle for the
+user's own team for free, and calls `team_roster_analysis()` fresh
+on-demand for any other selected team — cheap enough (well under a second,
+confirmed directly) that no separate caching was needed. `gather_state`
+exposes `rosters_by_id`, `players`, `fc_by_sleeper_id`, `byes`, `handcuffs`,
+and `league` at the top level specifically so this (and the drop-search
+below) can be computed outside the main per-refresh pass.
+
+**Backlog, not built here:** a league-wide summary view (one row per team -
+value, biggest need, capacity - scannable at a glance before drilling into
+one team) was considered and explicitly deferred; see
+`.claude/PROJECT_PLAN.md`. This team-selector approach answers "how does
+the tool see this *one* team" well; it doesn't answer "which teams across
+the league are worth scouting first," which needs its own summary view,
+not just this same call repeated.
+
+### Player projection lookup
+
+Each round's "Backup options" table only ever showed the top
+`MAX_DISPLAYED_ALTERNATES` (2) alternates — useful as a default, but not a
+way to check an arbitrary player. `dynasty_core.rank_by_marginal_value`
+already scores *every* available candidate before sorting and slicing to
+the displayed few (`multi_round_plan`'s docstring notes the ~20,000-call
+cost of that pass), so exposing the rest costs nothing extra — `top_n` is
+now just `len(candidate_ids)` for upcoming rounds, and the full ranked list
+is returned as `all_candidates_by_pick` alongside the existing
+`alternates_by_pick`. Each round's expander gets a `st.selectbox` built
+from that full list (sorted best-first, same order as the table), showing
+`Name (POS) — marginal value` per option so the number is visible without
+even opening the detail line below it. Deliberately skips
+`alternate_gap_note` for the full list — fine for 2 backups, not worth a
+per-candidate weekly-gap comparison for a ~200-player pool most of which
+nobody will ever look up. Web-only — the CLI has no interactive selectbox
+equivalent, and its `alternates_by_pick` table output is unchanged, so
+this is an intentional, scoped divergence from the "full parity" rule
+below, not an oversight.
+
+The displayed marginal value still comes from the cheap
+`recommend_drop()` heuristic every candidate was scored with during
+ranking (lowest-value bench player, full stop) — accurate enough to sort
+~227 candidates quickly, but not a real per-candidate answer to "what
+should I actually drop for *this* player." User feedback on an earlier
+version of this feature: showing that heuristic's drop alongside each
+candidate was actively unhelpful, since one globally-low-value player
+often "wins" as the suggested drop for every candidate regardless of
+position, making the field look broken/repetitive rather than
+informative. Once a candidate is selected, the app instead calls
+`dynasty_core.best_position_relevant_drop()` fresh (using that round's
+roster snapshot from `hypothetical_ids_by_pick`) — a real search,
+restricted to players who share a slot type with the *specific* selected
+candidate (own position, plus FLEX/SUPER_FLEX-eligible positions if the
+league's `roster_positions` actually has those slots and the candidate
+qualifies), over every resulting season-average marginal value, not just
+whichever player has the lowest raw `adj_value`. In this league SUPER_FLEX
+covers all four fantasy positions, so that restriction is effectively "any
+rostered skill player" — a correct reflection of the real slot structure,
+not a bug. This can still legitimately land on the same player as the
+cheap heuristic (verified directly: with the live roster's real bye/value
+distribution as of this writing, it does, for every candidate checked) —
+that's not a sign the fix didn't work, it means that player really is the
+optimal drop, now *proven* by search rather than assumed by a value
+shortcut. It's deliberately only computed on-demand for the one selected
+candidate, not precomputed for all ~227 — evaluating every drop option
+for every candidate during the main ranking pass would multiply that
+pass's cost by the size of the search pool.
 
 ### Sidebar league name and version footer
 
