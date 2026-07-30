@@ -161,7 +161,9 @@ try:
         st.session_state.refresh_token,
     )
 except requests.RequestException as exc:
-    st.error(f"Couldn't reach Sleeper/FantasyCalc: {exc}. Hit Refresh to try again.")
+    # gather_state() names which of the two services (Sleeper/FantasyCalc)
+    # actually failed.
+    st.error(f"{exc}. Hit Refresh to try again.")
     st.stop()
 except ValueError as exc:
     st.error(str(exc))

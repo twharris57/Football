@@ -17,6 +17,7 @@ from typing import Any, Iterator
 
 import nfl_data_py as nfl
 import pandas as pd
+import requests
 
 import fantasycalc_api as fantasycalc
 import player_scoring
@@ -683,8 +684,7 @@ def handcuff_map(season: str, force_refresh: bool = False) -> dict[str, str]:
     latest = depth[depth["dt"] == depth["dt"].max()]
     rb = latest[latest["pos_abb"] == "RB"]
 
-    ids = nfl.import_ids().dropna(subset=["gsis_id", "sleeper_id"])
-    gsis_to_sleeper = {row.gsis_id: str(int(row.sleeper_id)) for row in ids.itertuples()}
+    gsis_to_sleeper = player_scoring.gsis_to_sleeper_crosswalk()
 
     handcuffs: dict[str, str] = {}
     for _team, group in rb.groupby("team"):
@@ -1397,20 +1397,31 @@ def gather_state(
     comment above the `player_scoring.get_multipliers` call below for why
     `force_full_refresh` alone never triggers it.
     """
-    league = sleeper.get_league(league_id)
-    rosters = sleeper.get_rosters(league_id)
-    users = sleeper.get_users(league_id)
-    draft = sleeper.get_draft(league["draft_id"])
-    draft_picks = sleeper.get_draft_picks(league["draft_id"])
-    traded_picks = sleeper.get_traded_picks(league_id)
-    players = sleeper.get_players(force_refresh=force_full_refresh)
+    # Named per-service so a connectivity failure tells the user which of
+    # the two unauthenticated public APIs actually failed, instead of a
+    # single generic "Couldn't reach Sleeper/FantasyCalc" that's true of
+    # either - draft day means everyone hits both at once, so this comes up
+    # for real, not just in theory.
+    try:
+        league = sleeper.get_league(league_id)
+        rosters = sleeper.get_rosters(league_id)
+        users = sleeper.get_users(league_id)
+        draft = sleeper.get_draft(league["draft_id"])
+        draft_picks = sleeper.get_draft_picks(league["draft_id"])
+        traded_picks = sleeper.get_traded_picks(league_id)
+        players = sleeper.get_players(force_refresh=force_full_refresh)
+    except requests.RequestException as exc:
+        raise requests.RequestException(f"Couldn't reach Sleeper: {exc}") from exc
 
     num_qbs = league["roster_positions"].count("QB") + league["roster_positions"].count("SUPER_FLEX")
     num_teams = league["settings"]["num_teams"]
     ppr = league["scoring_settings"].get("rec", 0)
-    fc_values = fantasycalc.get_dynasty_values(
-        num_qbs=num_qbs, num_teams=num_teams, ppr=ppr, force_refresh=force_full_refresh
-    )
+    try:
+        fc_values = fantasycalc.get_dynasty_values(
+            num_qbs=num_qbs, num_teams=num_teams, ppr=ppr, force_refresh=force_full_refresh
+        )
+    except requests.RequestException as exc:
+        raise requests.RequestException(f"Couldn't reach FantasyCalc: {exc}") from exc
 
     # Enrichment from nfl_data_py: optional, must not break the core draft
     # board if the feed is unavailable or its schema drifts (it already has
