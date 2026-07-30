@@ -56,9 +56,31 @@ methodology.
 ## Post-draft roster & trade tooling
 
 Explicitly post-draft (user-flagged 2026-07-26). Ordered so the foundational
-signal (item 1) lands before the tools that consume it (items 3-4).
+signal (item 2) lands before the tools that consume it (items 4-5).
 
-1. [ ] **Roster needs — structural positional weakness, not just
+1. [ ] **Make "need"/strategy phase-aware — a static rule today, should
+   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
+   now `roster_needs_summary`'s `need` flag is one fixed rule for all
+   time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
+   `<= YOUNG_CORE_MAX_YOE` years of experience), and the rebuild strategy
+   described in `CLAUDE.md` ("accumulate young talent... competitive
+   within ~2-3 years") is a static description, not something the code
+   actually tracks a position in. The user's stated framework: year 1 was
+   about accumulating rookies (this project's whole existing purpose);
+   year 2 should shift toward smart trades, continuing to find promising
+   talent opportunistically — not just rookies, but free agents with a
+   sudden uptick in opportunity/fortune (this is exactly item 3's
+   in-season pickup monitoring) — and dropping deadweight with limited
+   future payoff (already partly modeled by `roster_value_analysis`'s
+   `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
+   either). Would need an explicit "what phase of the rebuild are we in"
+   input (probably just a manually-set year/phase, not inferred) that
+   shifts behavior across `need`, drop-candidate, and free-agent-flagging
+   logic, rather than one flat rule doing double duty for every year.
+   Related to but distinct from item 2 below — that's about *which
+   position* is weak; this is about *what kind of move* the team should
+   even be looking for at this point in the rebuild.
+2. [ ] **Roster needs — structural positional weakness, not just
    week-to-week gaps.** `roster_needs_summary` and `roster_weekly_gaps` both
    answer "do we have enough bodies at this position right now/this week" —
    neither answers "is this position structurally weak compared to the rest
@@ -68,8 +90,8 @@ signal (item 1) lands before the tools that consume it (items 3-4).
    value, or its value relative to starting-quality replacement level)
    rather than the current young-core headcount heuristic. A weak-position
    signal from this is exactly what should drive who to target in a trade —
-   feeds items 3 and 4 below.
-2. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
+   feeds items 4 and 5 below.
+3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
    timeline. Should extend to **in-season pickup monitoring**: when a free
@@ -90,15 +112,15 @@ signal (item 1) lands before the tools that consume it (items 3-4).
    assumes every candidate is taxi-eligible, true for rookies but not a
    general accrued-experience eligibility check against Sleeper's actual
    taxi rule — free agents won't all qualify.
-3. [ ] **Trade targets & sells** — given the rebuild strategy, flag which of
+4. [ ] **Trade targets & sells** — given the rebuild strategy, flag which of
    the user's veterans are sellable for picks, and which other teams'
-   picks/young players might be realistically available. Depends on item 1's
+   picks/young players might be realistically available. Depends on item 2's
    weak-position signal to know who to target.
-4. [ ] **League-wide power/timeline read** — place every team in the league
+5. [ ] **League-wide power/timeline read** — place every team in the league
    on a rebuild-vs-contend spectrum, to identify good trade partners
    (contenders who overpay for immediate help, rebuilders who overpay for
-   future assets). Pairs with item 3.
-5. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
+   future assets). Pairs with item 4.
+6. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
    team, complementing the Your Roster tab's team selector (added
@@ -107,7 +129,7 @@ signal (item 1) lands before the tools that consume it (items 3-4).
    `dynasty_core.team_roster_analysis()` already runs this exact per-team
    analysis for any roster on demand; this is "call it for all ~12 teams
    and lay out a summary row," not new analysis logic. A natural
-   lighter-weight precursor to item 4's power/timeline read, not a
+   lighter-weight precursor to item 5's power/timeline read, not a
    replacement for it — this surfaces raw stats per team, not a
    rebuild-vs-contend classification.
 
