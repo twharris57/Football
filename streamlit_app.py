@@ -47,18 +47,28 @@ def show_df(
     return True
 
 
-def cols(*specs: tuple[str, str] | tuple[str, str, str]) -> dict[str, object]:
+def cols(df: pd.DataFrame, *specs: tuple[str, str] | tuple[str, str, str]) -> dict[str, object]:
     """Build a column_config dict from (key, label) or (key, label, help_text) tuples.
 
     Human-readable table headers without renaming the underlying DataFrame
     columns everything else in this codebase (and its tests) refers to by
-    their plain snake_case names.
+    their plain snake_case names. `df` is only consulted for dtypes, never
+    modified - any float column (adj_value, value, avg_age, ...) gets a
+    NumberColumn capped to 2 decimal digits instead of st.dataframe's
+    default of showing whatever precision the underlying computation
+    happened to produce (e.g. adj_value's real-scoring multiplier leaves
+    values like 7827.988709). Display-only, same as the label relabeling
+    itself - the DataFrame's actual values, and everything else that reads
+    them, are untouched.
     """
     config: dict[str, object] = {}
     for spec in specs:
         key, label = spec[0], spec[1]
         help_text = spec[2] if len(spec) == 3 else None
-        config[key] = st.column_config.Column(label, help=help_text)
+        if key in df.columns and pd.api.types.is_float_dtype(df[key]):
+            config[key] = st.column_config.NumberColumn(label, help=help_text, format="%.2f")
+        else:
+            config[key] = st.column_config.Column(label, help=help_text)
     return config
 
 
@@ -89,7 +99,17 @@ def show_status_table(df: pd.DataFrame, empty_message: str, column_labels: dict[
                 cell = " ".join(f'<span title="{html.escape(desc)}">{icon}</span>' for icon, desc in details)
             else:
                 value = row[c]
-                cell = "" if pd.isna(value) else html.escape(str(value))
+                if pd.isna(value):
+                    cell = ""
+                elif isinstance(value, float):
+                    # numpy.float64 (what a pandas row actually holds) is a
+                    # float subclass, so this also catches adj_value/value/bye
+                    # - capped to 2 decimals same as every other table
+                    # (see cols()), not whatever precision the value happens
+                    # to carry (e.g. adj_value's real-scoring multiplier).
+                    cell = html.escape(f"{value:.2f}")
+                else:
+                    cell = html.escape(str(value))
             cells.append(
                 f"<td style='padding:4px 8px; border-bottom:1px solid rgba(128,128,128,0.15);'>{cell}</td>"
             )
@@ -245,6 +265,7 @@ with plan_tab:
                         hide_index=True,
                         width="stretch",
                         column_config=cols(
+                            alternates,
                             ("name", "Player"),
                             ("pos", "Position"),
                             ("marginal_value", "Marginal Value"),
@@ -314,7 +335,7 @@ with plan_tab:
             alerts,
             hide_index=True,
             width="stretch",
-            column_config=cols(("week", "Week"), ("gap_before", "Gap Before"), ("gap_after", "Gap After")),
+            column_config=cols(alerts, ("week", "Week"), ("gap_before", "Gap Before"), ("gap_after", "Gap After")),
         )
 
 with lineup_tab:
@@ -323,8 +344,10 @@ with lineup_tab:
         "account for byes or injuries when deciding who starts). A by-week/injury-aware version "
         "is a planned refinement."
     )
-    starter_cols = cols(("slot", "Slot"), ("name", "Player"), ("pos", "Position"), ("adj_value", "Value"))
-    bench_cols = cols(("name", "Player"), ("pos", "Position"), ("adj_value", "Value"))
+    starter_cols = cols(
+        state["lineup_starters"], ("slot", "Slot"), ("name", "Player"), ("pos", "Position"), ("adj_value", "Value")
+    )
+    bench_cols = cols(state["lineup_bench"], ("name", "Player"), ("pos", "Position"), ("adj_value", "Value"))
     st.subheader("Starters")
     st.dataframe(state["lineup_starters"], hide_index=True, width="stretch", column_config=starter_cols)
     st.subheader("Bench")
@@ -340,6 +363,7 @@ with draft_tab:
         state["your_picks"],
         "(none)",
         column_config=cols(
+            state["your_picks"],
             ("round", "Round"),
             ("overall_pick", "Pick #"),
             ("status", "Status"),
@@ -354,7 +378,7 @@ with draft_tab:
             hide_index=True,
             width="stretch",
             column_config=cols(
-                ("pick", "Pick #"), ("team", "Team"), ("player", "Player"), ("pos", "Position")
+                state["recent_picks"], ("pick", "Pick #"), ("team", "Team"), ("player", "Player"), ("pos", "Position")
             ),
         )
 
@@ -379,6 +403,7 @@ with draft_tab:
         st.write("(no rookies available)")
     else:
         board_cols = cols(
+            board,
             ("rank", "Rank"),
             ("name", "Player"),
             ("pos", "Position"),
@@ -442,6 +467,7 @@ with roster_tab:
         "(empty roster)",
         hide_index=False,
         column_config=cols(
+            analysis["roster_needs"],
             ("_index", "Pos"),
             ("count", "Count"),
             ("avg_age", "Avg Age"),
@@ -540,7 +566,7 @@ with roster_tab:
     weekly_gaps = analysis["roster_weekly_gaps"]
     gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
     weekly_gap_cols = cols(
-        ("week", "Week"), ("QB", "QB"), ("RB", "RB"), ("WR", "WR"), ("TE", "TE"), ("gap", "Gap")
+        weekly_gaps, ("week", "Week"), ("QB", "QB"), ("RB", "RB"), ("WR", "WR"), ("TE", "TE"), ("gap", "Gap")
     )
     if not gap_weeks.empty:
         st.warning("Weeks with a gap:")
@@ -554,7 +580,10 @@ with roster_tab:
         analysis["roster_handcuffs"],
         "(none of this team's RBs are current NFL starters)",
         column_config=cols(
-            ("starter", "Starter"), ("handcuff", "Handcuff"), ("handcuff_rostered", "Handcuff Rostered")
+            analysis["roster_handcuffs"],
+            ("starter", "Starter"),
+            ("handcuff", "Handcuff"),
+            ("handcuff_rostered", "Handcuff Rostered"),
         ),
     )
 
