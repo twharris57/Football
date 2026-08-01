@@ -217,23 +217,48 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   question instead, against an external baseline: `position_replacement_levels()`
   computes each position's league-wide replacement level — the Nth-best
   rostered player at that position across every team's roster, where N =
-  this league's dedicated starting slots at that position times the
-  number of teams, a standard value-based-drafting concept. A team's own
-  top N players at a position (matching that same slot count — deep bench
-  doesn't count, it never plays) sum to `starter_value`; `vor` is
-  `starter_value - (replacement_level * N)`, and `weak` is `vor <= 0` —
-  this position's actual starters aren't even worth what's freely
+  `_position_starter_demand()` (this league's dedicated starting slots at
+  that position, times the number of teams) — a standard value-based-drafting
+  concept. A team's own top N players at a position (same `_position_starter_demand()`
+  count — deep bench doesn't count, it never plays) sum to `starter_value`;
+  `vor` is `starter_value - (replacement_level * N)`, and `weak` is `vor <= 0`
+  — this position's actual starters aren't even worth what's freely
   available elsewhere in the league. `roster_needs_summary` and
   `positional_strength_summary` are joined on position into one
   `roster_needs` table (`team_roster_analysis`) rather than kept as two
   separate ones, since they're both "per position" views a user would want
-  side by side. Deliberately ignores FLEX/SUPER_FLEX in both the
-  replacement-level and starter-count calculations (undercounts true demand
-  at FLEX-eligible positions) — the same simplification `roster_weekly_gaps`
-  already makes for the same reason, not a new gap. Works for any team via
-  the Your Roster tab's team selector, not just the user's own — the same
-  `replacement_level` baseline (computed once per refresh across every
-  roster) applies regardless of whose roster is being viewed.
+  side by side. Works for any team via the Your Roster tab's team selector,
+  not just the user's own — the same `replacement_level` baseline (computed
+  once per refresh across every roster) applies regardless of whose roster
+  is being viewed.
+
+  **SUPER_FLEX-aware QB demand (fixed 2026-08-01, found in a same-day
+  valuation review):** the first version of `_position_starter_demand()`
+  (then inlined directly) counted only dedicated slots for every position,
+  which silently reverted QB to single-QB-league demand in this confirmed
+  superflex league — `roster_positions` has one dedicated `QB` slot and one
+  `SUPER_FLEX` slot, and the market-value layer already treats those as two
+  startable QBs (`num_qbs = count("QB") + count("SUPER_FLEX")`, passed to
+  `fantasycalc.get_dynasty_values()`), so the VOR overlay's dedicated-only
+  count was inconsistent with the market data it's built on top of.
+  `_position_starter_demand()` now adds `roster_positions.count("SUPER_FLEX")`
+  to QB's demand specifically (matching that same `num_qbs` pattern, not a
+  new assumption), which roughly doubles the QB replacement-level rank (12
+  → 24 in this league) and pulls the cutoff to a meaningfully lower, more
+  realistic value. Verified directly against live data: the league-wide
+  rank-24 QB is a real, independently-confirmed player (not a
+  self-referential artifact) — QB `vor` for the user's own roster went from
+  a coincidental ≈0 to a genuine positive surplus once the deeper, correct
+  cutoff was used. FLEX demand for RB/WR/TE is **not** covered by this fix
+  — unlike SUPER_FLEX's near-total lean toward a 2nd QB in this format,
+  FLEX splits demand across three positions with no similarly clean
+  allocation; doing it properly needs a joint model of relative positional
+  depth, not a simple per-position count. Still the same "ignores FLEX"
+  simplification `roster_weekly_gaps` already makes deliberately — a known,
+  tracked gap for those three positions, not silently expanded scope here.
+  See `.claude/conventions/valuation_principles.md` for the durable rule
+  this fix follows ("superflex inflates QB value — model it as such,
+  everywhere").
 - **Roster value analysis** — full roster sorted lowest-`adj_value` first.
   Doesn't treat "low value" as "drop" outright: age is weighed in, so a
   low-value *young* player is flagged as rebuild upside to hold, while
