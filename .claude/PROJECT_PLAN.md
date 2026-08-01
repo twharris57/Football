@@ -45,13 +45,36 @@ share-of-value metric — see the doc for why that has a real flaw). Works
 through the Your Roster tab's team selector for any team, not just the
 user's own.
 
-1. [ ] **League-wide power/timeline read** — place every team in the league
+1. [ ] **Fix VOR/replacement-level to account for SUPER_FLEX demand,
+   especially QB** (assistant valuation review, 2026-07-31) —
+   `position_replacement_levels()`/`positional_strength_summary()` set each
+   position's replacement rank as `roster_positions.count(pos) * num_teams`,
+   which only counts *dedicated* slots. For QB in this confirmed superflex
+   league (`SUPER_FLEX` is in `roster_positions`; `num_qbs` is already
+   passed to FantasyCalc as `count("QB") + count("SUPER_FLEX")` for the
+   market-value call itself), that undercounts real demand by roughly
+   half — true superflex demand is closer to 2 startable QBs per team, not
+   1, so the replacement baseline lands on a shallower, higher-value
+   cutoff than reality and systematically understates QB's VOR. This is
+   the same "ignores FLEX/SUPER_FLEX" simplification already noted in
+   `docs/rookie-draft-big-board.md` (`roster_weekly_gaps` makes the same
+   one, for the same reason), but its consequence lands hardest on exactly
+   the position this league's whole superflex/QB-scarcity premium depends
+   on getting right — see `.claude/conventions/valuation_principles.md`.
+   Worth fixing (or at minimum quantifying and documenting the bias
+   directly) before item 2 (League-wide power/timeline read) and item 3
+   (Trade targets & sells) get built on top of `vor`/`weak`, since both
+   would otherwise inherit whatever bias is baked into the
+   replacement-level baseline. The market-value layer already models
+   superflex correctly (the `num_qbs` param above) — this is about making
+   the project's own VOR overlay consistent with that, not a new concept.
+2. [ ] **League-wide power/timeline read** — place every team in the league
    on a rebuild-vs-contend spectrum, to identify good trade partners
    (contenders who overpay for immediate help, rebuilders who overpay for
    future assets). Build on the positional-value work above applied
    per-team, not a separate model — a team's overall power/timeline is
    naturally a roll-up of how strong/weak/young/old each of its positions
-   is. Feeds item 2.
+   is. Feeds item 3.
 
    **Follow up on this line of thinking when actually building it**
    (user-flagged 2026-08-01): a two-point rebuild-vs-contend spectrum is
@@ -69,29 +92,42 @@ user's own.
    season - worth deciding at build time whether that means recomputing
    fresh every refresh (cheap if it's just derived from current roster
    state, which reacts to injuries/moves already) versus something more
-   deliberate. Same lifecycle-phase concept applies to item 4's "make
+   deliberate. Same lifecycle-phase concept applies to item 5's "make
    need/strategy phase-aware" for the user's *own* team, not just other
    teams here - worth keeping the two consistent rather than solving the
    same problem two different ways.
-2. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
+
+   **Consider a continuous score, not just discrete phase labels**
+   (assistant valuation review, 2026-07-31): the three-phase framing above
+   is a good user-facing description, but implementing the underlying
+   computation as a continuous index (e.g. derived from the roster's
+   aggregate VOR and age profile once item 1 above is fixed) rather than
+   jumping straight to a fixed small set of discrete buckets would avoid
+   re-litigating "how many phases" a third time later — display labels can
+   still be thresholds on that continuous score.
+3. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
    of the user's veterans are sellable for picks, and which other teams'
    picks/young players might be realistically available. Deliberately
-   sequenced after item 1, not before: "sellable" can already lean on the
+   sequenced after item 2, not before: "sellable" can already lean on the
    positional-value work above (a valuable player at a *deep* position is
    a better sell than an equally valuable one at a *thin* one), but "what's
    realistically available" from another team still needs a real
    rebuild-vs-contend read on them, not just their lowest-value players —
-   building this before item 1 would produce a weak v1 that has to be
+   building this before item 2 would produce a weak v1 that has to be
    redone once it exists. Should extend to **trade-block monitoring**
    (user-flagged 2026-08-01): watch for players another team is actively
    shopping and score them against the current roster the same way the
-   free-agent evaluator's in-season pickup monitoring does (item 3) —
+   free-agent evaluator's in-season pickup monitoring does (item 4) —
    season-average marginal starting-lineup value, not raw trade value —
    flagging only when a specific player would be a genuine value-add, not
    every trade rumor. Needs a real signal for "this player is on the
    block" first (Sleeper doesn't expose trade discussions directly, so
    this likely means the user manually flagging a name to check rather
-   than a real feed, at least for v1).
+   than a real feed, at least for v1). A manually-flagged name here is
+   also a natural fit for item 7's contextual research check, once that
+   exists — pulling real context (usage change, injury detail, actual
+   trade buzz) beyond what Sleeper/FantasyCalc carry, for that one
+   specific player.
 
    **Sellable vs. just droppable** (user-flagged 2026-08-01): the "sellable
    veterans" side of this needs a real line between "worth trying to
@@ -104,6 +140,18 @@ user's own.
    league per item 1's VOR work) that shopping them first beats just
    cutting them for nothing. Where exactly that line sits is worth
    deciding when this is actually built, not guessed at now.
+
+   **Reuse existing signals for that line, don't invent a new one**
+   (assistant valuation review, 2026-07-31): a player is a better
+   sell-first candidate the more `positional_strength_summary`'s `vor` at
+   their position clears zero (real surplus, not just headcount) and the
+   less dropping them would open a `roster_weekly_gaps`/`gap_delta` hole —
+   both already computed elsewhere in the pipeline. Composing existing
+   signals here, rather than a new bespoke threshold, matches the
+   project's own lesson from merging the old Strategy tab into Draft Plan
+   (`docs/dynasty-draft-web-app.md`) after two separate ranking methods
+   turned out to disagree — see
+   `.claude/conventions/valuation_principles.md`.
 
    **Valuing draft picks in trades** (user-flagged 2026-08-01) — confirmed
    directly: `fantasycalc_api.get_dynasty_values()` already returns draft
@@ -118,9 +166,18 @@ user's own.
    single `2028 1st`/`2029 1st` etc. with no tier the further out it gets -
    since exact future draft slot isn't knowable in advance; that's a real
    approximation to be explicit about, not a gap to try to solve exactly.
-   Needed for item 2 (Trade targets & sells) to evaluate anything beyond
+   Needed for item 3 (Trade targets & sells) to evaluate anything beyond
    pure player-for-player trades, which is most real dynasty trade offers.
-3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
+
+   **Picks don't need the real-scoring correction** (assistant valuation
+   review, 2026-07-31): unlike players, a pick isn't tied to any real or
+   projectable statistical production, so it should use FantasyCalc's raw
+   `value` directly — not routed through `fc_value_by_sleeper_id`'s
+   per-player `adj_value` multiplier (`player_scoring.py`), which only
+   makes sense for an entity with real or combine-projected stats. Worth a
+   comment at the call site when this is built so a future edit doesn't
+   try to force picks through that pipeline by habit.
+4. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
    timeline. Should extend to **in-season pickup monitoring**: when a free
@@ -156,7 +213,18 @@ user's own.
    as currently scoped - a player can be a genuine value-add and still be
    a bad bid if it's most of the budget for a marginal upgrade with a
    bigger name likely to hit waivers in a few weeks.
-4. [ ] **Make "need"/strategy phase-aware — a static rule today, should
+
+   **Scope v1 to a threshold flag, not full opportunity-cost modeling**
+   (assistant valuation review, 2026-07-31): "spend now vs. save for
+   later" is genuinely an optimal-stopping problem with no clean
+   closed-form answer here. A reasonable v1 is flagging when a
+   recommended bid would consume more than some threshold share of
+   remaining budget for a pickup that wouldn't crack the starting lineup,
+   rather than modeling the full tradeoff up front — matches the
+   project's existing pattern of shipping a deliberately lightweight v1
+   (e.g. `POSITION_VALUE_MULTIPLIER` before the full per-player recompute)
+   over a fully general model nobody's asked for yet.
+5. [ ] **Make "need"/strategy phase-aware — a static rule today, should
    evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
    now `roster_needs_summary`'s `need` flag is one fixed rule for all
    time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
@@ -167,7 +235,7 @@ user's own.
    about accumulating rookies (this project's whole existing purpose);
    year 2 should shift toward smart trades, continuing to find promising
    talent opportunistically — not just rookies, but free agents with a
-   sudden uptick in opportunity/fortune (this is exactly item 3's
+   sudden uptick in opportunity/fortune (this is exactly item 4's
    in-season pickup monitoring) — and dropping deadweight with limited
    future payoff (already partly modeled by `roster_value_analysis`'s
    `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
@@ -178,7 +246,7 @@ user's own.
    Related to but distinct from the positional-value work above — that's
    about *which position* is weak; this is about *what kind of move* the
    team should even be looking for at this point in the rebuild.
-5. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
+6. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
    team, complementing the Your Roster tab's team selector (added
@@ -187,9 +255,28 @@ user's own.
    `dynasty_core.team_roster_analysis()` already runs this exact per-team
    analysis for any roster on demand; this is "call it for all ~12 teams
    and lay out a summary row," not new analysis logic. A natural
-   lighter-weight precursor to item 1's power/timeline read, not a
+   lighter-weight precursor to item 2's power/timeline read, not a
    replacement for it — this surfaces raw stats per team, not a
    rebuild-vs-contend classification.
+7. [ ] **Contextual research check for news/hype beyond Sleeper's data**
+   (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
+   unconfirmed) — a rare, explicitly user-triggered lookup (not a
+   background job) for one *specific* named player: pull recent context an
+   LLM-with-web-access can surface that Sleeper/FantasyCalc don't carry
+   directly — real trade buzz, a beat-reporter note on a depth-chart
+   change, injury detail beyond Sleeper's status field — to sit alongside,
+   not replace, the stats-based `adj_value`/marginal-value numbers.
+   Directly addresses a limitation named in the 2026-07-31 valuation
+   review: the whole pipeline is market-value-plus-scoring-correction, so
+   it has no way to react to a hype cycle or a fresh injury faster than
+   FantasyCalc's own market already has. Needs investigating what's
+   actually available and appropriate here before committing to an
+   implementation — treat the specific tool name as unverified, just the
+   user's working label for the idea. Natural entry points: item 3's
+   trade-block monitoring (checking one flagged name) and item 4's
+   free-agent evaluator (checking one waiver target) — not a general
+   always-on feed, and not a replacement for the stats-based ranking
+   anywhere in the pipeline.
 
 ## Valuation & data accuracy
 
@@ -204,7 +291,31 @@ methodology.
    permitting. `import_ids()` only gives a `ktc_id` crosswalk column, not
    actual KTC values — sourcing real KTC data is a separate,
    not-yet-investigated problem.
-2. [ ] **Automate `scripts/derive_position_multipliers.py` re-derivation.**
+
+   **Extra motivation, not just a nice-to-have** (assistant valuation
+   review, 2026-07-31): KTC publishes separate superflex-specific
+   rankings, which could serve as a rough external cross-check on whether
+   this project's own VOR/replacement-level signal is under-crediting QB
+   once Roster & trade tooling item 1 (above) is addressed — not a
+   substitute for fixing that math directly, but a useful independent
+   sanity check once both exist.
+2. [ ] **Derive `BASELINE_SCORING`'s `rec` value from the real `ppr` param
+   instead of hardcoding `1.0`** (assistant valuation review, 2026-07-31) —
+   `get_dynasty_values()` already sends this league's actual PPR
+   (`league["scoring_settings"]["rec"]`) to FantasyCalc, so its returned
+   market `value` is already calibrated to it. But `player_scoring.
+   BASELINE_SCORING` hardcodes `"rec": 1.0` as "FantasyCalc's assumed
+   baseline" regardless of what `ppr` was actually sent. Currently
+   harmless — this league is full PPR, so `1.0` happens to be correct —
+   but if the league's PPR setting is ever changed to anything else, the
+   per-player correction ratio would silently start conflating the
+   intended residual scoring-format delta with an unintended PPR delta
+   that FantasyCalc's own API call already priced in. Cheap fix once
+   picked up: thread the real `ppr` value into `BASELINE_SCORING`'s `rec`
+   key instead of the literal `1.0`. Not urgent while the league stays
+   full PPR — flagged in `docs/rookie-draft-big-board.md`'s "Static
+   assumptions" table in the meantime so it isn't a silent trap.
+3. [ ] **Automate `scripts/derive_position_multipliers.py` re-derivation.**
    It still has to be run by hand and its printed numbers manually copied
    into `POSITION_VALUE_MULTIPLIER`. The easy fix already done is making the
    *season selection* itself current-year-driven
@@ -219,6 +330,38 @@ methodology.
    (per-player recompute) has landed, this multiplier is a last-resort
    fallback only — worth a proper look if it still seems to matter enough to
    justify the automation.
+4. [ ] **Post-draft valuation retrospective** (assistant valuation review,
+   2026-07-31) — once the live draft itself is done and there's no
+   time-pressure to protect, revisit a few statistically-motivated
+   refinements that are real improvements but not worth the added
+   complexity mid-draft:
+   - **Shrinkage instead of a hard `QUALIFYING_VOLUME` cutoff.** A player
+     just below the volume bar gets 0% weight on their own signal; a
+     player just above it gets 100% — a discontinuity. An empirical-Bayes/
+     shrinkage blend toward the position average, weighted by sample size,
+     would be smoother and more defensible, at real added complexity cost
+     for a personal tool.
+   - **Continuous rookie play-style scoring instead of a binary
+     median-split bucket.** `_derive_rookie_buckets()` currently splits
+     each position into exactly two buckets off one metric (e.g. QB 40-yd
+     dash). A regression-based continuous score over multiple combine
+     metrics would resolve more nuance than a single median split can.
+   - **Document (done) and, if it ever looks systematically off, revisit
+     the linearity assumption in `adj_value = value * multiplier`.**
+     Applying a points-derived ratio multiplicatively to a market value
+     assumes value scales linearly with points under the counterfactual
+     scoring rule — a reasonable first-order approximation, but real
+     dynasty value is plausibly convex near the top of a position and
+     flatter near replacement. Caveat added to `docs/rookie-draft-big-board.md`
+     as part of this review.
+
+   **If college stats are ever pulled in** (user-flagged 2026-07-31) — the
+   shrinkage and continuous-bucketing refinements above are exactly where
+   that data would earn its keep: college target share, yards per route
+   run, and draft capital are all more predictive of rookie fantasy
+   outcomes than combine testing alone, and would slot into the same
+   `_derive_rookie_buckets`/multiplier machinery as additional features
+   rather than requiring a new pipeline.
 
 ## Code quality, tests & UX polish
 

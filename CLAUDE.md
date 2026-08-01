@@ -16,6 +16,7 @@ not a deployed service.
 @.claude/conventions/testing.md
 @.claude/conventions/web_guidelines.md
 @.claude/conventions/docker_guidelines.md
+@.claude/conventions/valuation_principles.md
 
 ## Architecture
 
@@ -141,6 +142,13 @@ themselves still have none. See `testing.md` for general conventions.
 - **Dynasty league**: keeps every player on the roster year to year (no
   re-draft) — rookies are the only new players entering the league, and only
   via the annual rookie draft.
+- **Superflex**: this league's `roster_positions` includes a `SUPER_FLEX`
+  slot (any of QB/RB/WR/TE eligible), on top of one dedicated `QB` slot.
+  Because a second QB is startable, QBs are meaningfully scarcer and more
+  valuable here than in a standard single-QB league — roughly two startable
+  QBs per team, not one. Any valuation or positional-scarcity logic needs to
+  account for this explicitly rather than assuming single-QB demand; see
+  `.claude/conventions/valuation_principles.md`.
 - **Dynasty rebuild strategy**: the user's approach since year one is to
   accumulate young talent and accept being near the bottom of the league
   short-term, aiming to be competitive within ~2-3 years. This should bias

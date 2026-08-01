@@ -50,6 +50,20 @@ inside the bound, so this is a defensive floor against a bad data pull, not
 a normal code path. Covered by `tests/test_player_scoring.py`
 (`TestSaneRatio`).
 
+**Modeling assumption, stated explicitly (2026-07-31 valuation review):**
+`adj_value = value * multiplier` applies a points-derived ratio
+multiplicatively to FantasyCalc's market value, which assumes dynasty value
+scales linearly with points under the counterfactual scoring rule. That's a
+reasonable first-order approximation — it's what most scoring-format
+converters do — but real dynasty value is plausibly convex near the top of
+a position (scarcity premium) and flatter near replacement, so a flat ratio
+could over-correct elite players and under-correct replacement-level ones
+at the same position. Not something this project can verify directly any
+more than `BASELINE_SCORING` itself can (see below); revisit the modeling
+here specifically if `adj_value` ever looks systematically off at one end
+of a position's range rather than uniformly. Tracked as part of the
+post-draft valuation retrospective in `.claude/PROJECT_PLAN.md`.
+
 ### Rookie play-style buckets (valuation step A)
 
 A flat position average doesn't distinguish a mobile QB from a pocket
@@ -332,6 +346,21 @@ tighter.
   them; the older functions don't yet. Hasn't visibly surfaced (today's
   taxi/IR values happen to be lower than the real bench), but is a latent
   correctness gap, not a style inconsistency.
+- `position_replacement_levels()`/`positional_strength_summary()` set each
+  position's replacement rank from *dedicated* slots only
+  (`roster_positions.count(pos) * num_teams`) — the same FLEX/SUPER_FLEX
+  simplification `roster_weekly_gaps` makes, listed above as a deliberate
+  limitation. For QB specifically, in this confirmed superflex league, that
+  simplification isn't neutral: true QB demand is closer to two startable
+  QBs per team (this project's own market-value call already knows this —
+  `num_qbs` is `count("QB") + count("SUPER_FLEX")`), so using only the
+  dedicated count sets QB's replacement baseline too high and
+  systematically understates QB's `vor`. Found via the 2026-07-31 valuation
+  review; tracked as Roster & trade tooling item 1 in
+  `.claude/PROJECT_PLAN.md`, since the upcoming power/timeline read and
+  trade-targets tooling would otherwise inherit this bias. See
+  `.claude/conventions/valuation_principles.md` for the general rule this
+  is an instance of.
 
 ## Static assumptions — revisit if the league's rules ever change
 
@@ -349,6 +378,7 @@ is a deliberate decision, not a silent bug:
 | Roster only uses QB/RB/WR/TE/FLEX/SUPER_FLEX slot types | `assign_starters`, `roster_weekly_gaps` | Any other Sleeper slot type (`WRRB_FLEX`, `REC_FLEX`, K, DEF, IDP) would be silently ignored — not assigned, not counted, no error | Extend `FLEX_ELIGIBLE_POSITIONS`/`SUPERFLEX_ELIGIBLE_POSITIONS` and the slot-processing loop for the new type |
 | `POSITION_VALUE_MULTIPLIER` (`QB: 1.175`, `TE: 1.202`) | `dynasty_core.py` | Last-resort fallback only (see step B, above) — stale numbers only matter if the whole `player_scoring.py` enrichment fails for a refresh | Re-run `scripts/derive_position_multipliers.py`; not urgent since it's a fallback, not the primary path |
 | `player_scoring.BASELINE_SCORING` (FantasyCalc's assumed scoring model) | `player_scoring.py` | The entire per-player correction ratio is only as good as this guess — FantasyCalc doesn't publish its real formula, so it can't be verified directly | No way to verify against FantasyCalc directly; revisit only if FantasyCalc publishes methodology notes, or the correction looks systematically off |
+| `BASELINE_SCORING["rec"] = 1.0`, hardcoded independent of the real `ppr` sent to FantasyCalc | `player_scoring.py` | `get_dynasty_values()` already sends this league's real PPR to FantasyCalc, so its market value is calibrated to it — but `BASELINE_SCORING` assumes `1.0` regardless. Harmless while the league stays full PPR (`rec: 1.0`); if it's ever changed, the correction ratio would silently conflate the intended residual-scoring delta with an unintended PPR delta FantasyCalc's own call already priced in (see `.claude/PROJECT_PLAN.md`, Valuation & data accuracy item 2) | Thread the real `ppr` value into `BASELINE_SCORING["rec"]` instead of the literal `1.0` |
 | `player_scoring.QUALIFYING_VOLUME` (QB ≥200 att / RB ≥100 carries / WR ≥50 targets / TE ≥30 targets) | `player_scoring.py` | Not derived from any league rule — a manual judgment call for "enough volume to trust a personalized ratio" | Revisit only if personalized ratios look noisy for borderline players |
 | `YOUNG_CORE_MAX_YOE` / `YOUNG_CORE_NEED_THRESHOLD` / `LOW_VALUE_YOUNG_AGE` / `LOW_VALUE_AGING_AGE` | `dynasty_core.py` | Subjective heuristics behind the rebuild-strategy "need"/"low value" flags, not derived from any league setting | Adjust by feel as the roster ages into (or out of) the rebuild window |
 | `max_keepers: 1` in the league's Sleeper settings | Not modeled anywhere | Appears vestigial for a dynasty-type league (Sleeper `type: 2`) — the whole roster carries over every year, not a limited keeper count, so this setting doesn't seem to apply | Revisit only if Sleeper's dynasty/keeper interaction is ever observed to actually matter |
