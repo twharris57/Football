@@ -455,6 +455,32 @@ with roster_tab:
             state["replacement_level"],
         )
 
+    st.subheader("Team timeline")
+    with st.expander("How this works"):
+        st.caption(
+            "Where this team sits on a rebuild-vs-contend spectrum, recomputed fresh "
+            "every refresh from current roster/standings state (not a fixed label - it "
+            "reacts to injuries, trades, and results automatically).\n"
+            "- **Score** — a continuous, league-wide z-scored average of three signals: "
+            "roster strength (aggregate VOR across positions), timeline direction "
+            "(value-weighted average age - older *established value* skews win-now), "
+            "and actual win percentage. Higher = more win-now, lower = more "
+            "rebuild-oriented.\n"
+            "- **Phase** — a display label bucketed from the score (rebuilding / "
+            "treading water / contending); the score itself is the real signal.\n"
+            "- **Win % before games are played** — defaults to a neutral 50%, so it "
+            "contributes nothing to the score pre-season instead of distorting it with "
+            "a meaningless small sample."
+        )
+    power = state["team_power_timeline"].loc[selected_roster_id]
+    phase_labels = {"rebuilding": "🌱 Rebuilding", "treading_water": "⚖️ Treading water", "contending": "🏆 Contending"}
+    st.metric(phase_labels.get(power["phase"], power["phase"]), f"score {power['power_score']:+.2f}")
+    st.caption(
+        f"Roster strength (VOR): {power['aggregate_vor']:+.1f} · "
+        f"Value-weighted age: {power['weighted_age']:.1f} · "
+        f"Win %: {power['win_pct']:.0%}"
+    )
+
     st.subheader("Roster capacity")
     cap = analysis["roster_capacity"]
     cap_col1, cap_col2, cap_col3 = st.columns(3)

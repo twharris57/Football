@@ -183,6 +183,99 @@ class TestPositionalStrengthSummary:
         assert summary.loc["QB", "vor"] == pytest.approx(300.0)  # 400 - (50 * 2)
 
 
+class TestWeightedAverageAge:
+    """A roster's timeline should weigh age by value, not average it flatly -
+    an old bench piece shouldn't count the same as an old franchise player."""
+
+    def test_weights_by_value_not_flat_average(self):
+        players = {
+            "old_star": make_player("WR", full_name="Old Star"),
+            "young_bench": make_player("WR", full_name="Young Bench"),
+        }
+        players["old_star"]["age"] = 30
+        players["young_bench"]["age"] = 22
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("old_star", 900), fc_entry("young_bench", 100)])
+        roster = {"players": ["old_star", "young_bench"]}
+
+        weighted = dc._weighted_average_age(roster, players, fc_by_id)
+
+        # (30*900 + 22*100) / 1000 = 29.2, not the flat average of 26.
+        assert weighted == pytest.approx(29.2)
+
+    def test_none_when_no_player_has_both_age_and_value(self):
+        players = {"p1": make_player("WR", full_name="P1")}
+        players["p1"]["age"] = None
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("p1", 100)])
+        roster = {"players": ["p1"]}
+
+        assert dc._weighted_average_age(roster, players, fc_by_id) is None
+
+
+class TestTeamPowerTimelineScores:
+    """power_score should combine roster strength (VOR), timeline (weighted
+    age), and actual record into one league-wide z-scored signal, recomputed
+    fresh from current state - not any one signal alone, and not cached."""
+
+    def test_stronger_older_winning_team_scores_higher(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {
+            "a_wr": make_player("WR", full_name="A WR"),
+            "b_wr": make_player("WR", full_name="B WR"),
+        }
+        players["a_wr"]["age"] = 29
+        players["b_wr"]["age"] = 22
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("a_wr", 900), fc_entry("b_wr", 100)])
+        rosters = [
+            {"roster_id": 1, "players": ["a_wr"], "settings": {"wins": 10, "losses": 0, "ties": 0}},
+            {"roster_id": 2, "players": ["b_wr"], "settings": {"wins": 0, "losses": 10, "ties": 0}},
+        ]
+        replacement_level = {"WR": 0.0, "QB": 0.0, "RB": 0.0, "TE": 0.0}
+
+        scores = dc.team_power_timeline_scores(rosters, players, fc_by_id, replacement_level, league)
+
+        assert scores.loc[1, "power_score"] > scores.loc[2, "power_score"]
+        assert scores.loc[1, "phase"] == "contending"
+        assert scores.loc[2, "phase"] == "rebuilding"
+
+    def test_zero_games_played_defaults_win_pct_to_neutral(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {
+            "a_wr": make_player("WR", full_name="A WR"),
+            "b_wr": make_player("WR", full_name="B WR"),
+        }
+        players["a_wr"]["age"] = 25
+        players["b_wr"]["age"] = 25
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("a_wr", 500), fc_entry("b_wr", 500)])
+        rosters = [
+            {"roster_id": 1, "players": ["a_wr"], "settings": {}},
+            {"roster_id": 2, "players": ["b_wr"], "settings": {}},
+        ]
+        replacement_level = {"WR": 0.0, "QB": 0.0, "RB": 0.0, "TE": 0.0}
+
+        scores = dc.team_power_timeline_scores(rosters, players, fc_by_id, replacement_level, league)
+
+        assert scores.loc[1, "win_pct"] == pytest.approx(0.5)
+        assert scores.loc[2, "win_pct"] == pytest.approx(0.5)
+        # Identical rosters, identical neutral win_pct - identical score, so
+        # the neutral default genuinely contributed zero variance pre-season.
+        assert scores.loc[1, "power_score"] == pytest.approx(scores.loc[2, "power_score"])
+
+    def test_single_team_league_does_not_crash(self):
+        # Population std (ddof=0) of one team is 0, not NaN - guards the
+        # single-row edge case a sample std would hit.
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {"a_wr": make_player("WR", full_name="A WR")}
+        players["a_wr"]["age"] = 25
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("a_wr", 500)])
+        rosters = [{"roster_id": 1, "players": ["a_wr"], "settings": {}}]
+        replacement_level = {"WR": 0.0, "QB": 0.0, "RB": 0.0, "TE": 0.0}
+
+        scores = dc.team_power_timeline_scores(rosters, players, fc_by_id, replacement_level, league)
+
+        assert scores.loc[1, "power_score"] == pytest.approx(0.0)
+        assert scores.loc[1, "phase"] == "treading_water"
+
+
 class TestTeamRosterAnalysis:
     """team_roster_analysis should bundle every per-roster view for ANY roster,
     not just the user's own - the basis for the Your Roster tab's team selector."""

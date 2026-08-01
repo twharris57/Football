@@ -52,66 +52,44 @@ league-wide rank-24 replacement QB is a real, independently-confirmed
 player, not a self-referential artifact). Works through the Your Roster
 tab's team selector for any team, not just the user's own.
 
-1. [ ] **League-wide power/timeline read** — place every team in the league
-   on a rebuild-vs-contend spectrum, to identify good trade partners
-   (contenders who overpay for immediate help, rebuilders who overpay for
-   future assets). Build on the positional-value work above applied
-   per-team, not a separate model — a team's overall power/timeline is
-   naturally a roll-up of how strong/weak/young/old each of its positions
-   is. Feeds item 2.
+**League-wide power/timeline read done (2026-08-01)** — see
+`docs/rookie-draft-big-board.md` for the full methodology.
+`team_power_timeline_scores()` gives every team (not just the user's own)
+a continuous, league-wide z-scored `power_score` combining aggregate VOR
+(roster strength), value-weighted average age (timeline direction), and
+actual win percentage (how the season is really going — defaults to a
+neutral 0.5 pre-season, contributing zero variance until real results
+exist) — a continuous score from the start, per the "consider a continuous
+score, not discrete phase labels" note, with `phase`
+(rebuilding/treading_water/contending) as a display-only bucketing of it.
+Recomputed fresh every refresh from already-pulled data, so it reacts to
+injuries/trades/results automatically rather than ever going stale.
+Verified directly against live data: the user's own team (a confirmed
+year-one rebuild) reads as the league's lowest score/`rebuilding`; the
+roster with the league's highest-value QB reads as `contending` — both
+consistent with what's independently known about the real league. Shown
+in the Your Roster tab (for whichever team the selector has picked) and
+the CLI.
 
-   **Follow up on this line of thinking when actually building it**
-   (user-flagged 2026-08-01): a two-point rebuild-vs-contend spectrum is
-   probably too coarse. The user's framing has at least three phases -
-   rebuilding, running for a title, and just finishing the season out at a
-   decent level (a real, distinct state - not full rebuild mode, but not
-   actively pushing for a title either) - and phase isn't fixed for a
-   season: it can shift mid-season on a real event (a team realizing
-   they're one piece away from a title run, or a season/career-ending
-   injury ending a contender's hopes). A single label computed once per
-   refresh and left alone would go stale exactly when it matters most
-   (right after the event that should have changed it). Whatever this
-   read feeds into (trade targets, in-season monitoring) should account
-   for a team's phase actually moving, not just where it started the
-   season - worth deciding at build time whether that means recomputing
-   fresh every refresh (cheap if it's just derived from current roster
-   state, which reacts to injuries/moves already) versus something more
-   deliberate. Same lifecycle-phase concept applies to item 4's "make
-   need/strategy phase-aware" for the user's *own* team, not just other
-   teams here - worth keeping the two consistent rather than solving the
-   same problem two different ways.
-
-   **Consider a continuous score, not just discrete phase labels**
-   (assistant valuation review, 2026-07-31): the three-phase framing above
-   is a good user-facing description, but implementing the underlying
-   computation as a continuous index (e.g. derived from the roster's
-   aggregate VOR and age profile, now that the SUPER_FLEX/QB fix above has
-   landed) rather than jumping straight to a fixed small set of discrete
-   buckets would avoid re-litigating "how many phases" a third time later
-   — display labels can still be thresholds on that continuous score.
-2. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
+1. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
    of the user's veterans are sellable for picks, and which other teams'
-   picks/young players might be realistically available. Deliberately
-   sequenced after item 1, not before: "sellable" can already lean on the
-   positional-value work above (a valuable player at a *deep* position is
-   a better sell than an equally valuable one at a *thin* one), but "what's
-   realistically available" from another team still needs a real
-   rebuild-vs-contend read on them, not just their lowest-value players —
-   building this before item 1 would produce a weak v1 that has to be
-   redone once it exists. Should extend to **trade-block monitoring**
-   (user-flagged 2026-08-01): watch for players another team is actively
-   shopping and score them against the current roster the same way the
-   free-agent evaluator's in-season pickup monitoring does (item 3) —
-   season-average marginal starting-lineup value, not raw trade value —
-   flagging only when a specific player would be a genuine value-add, not
-   every trade rumor. Needs a real signal for "this player is on the
-   block" first (Sleeper doesn't expose trade discussions directly, so
-   this likely means the user manually flagging a name to check rather
-   than a real feed, at least for v1). A manually-flagged name here is
-   also a natural fit for item 6's contextual research check, once that
-   exists — pulling real context (usage change, injury detail, actual
-   trade buzz) beyond what Sleeper/FantasyCalc carry, for that one
-   specific player.
+   picks/young players might be realistically available. Now that the
+   power/timeline read above is done, "what's realistically available"
+   from another team can use that real rebuild-vs-contend read on them,
+   not just their lowest-value players. Should extend to
+   **trade-block monitoring** (user-flagged 2026-08-01): watch for players
+   another team is actively shopping and score them against the current
+   roster the same way the free-agent evaluator's in-season pickup
+   monitoring does (item 2) — season-average marginal starting-lineup
+   value, not raw trade value — flagging only when a specific player would
+   be a genuine value-add, not every trade rumor. Needs a real signal for
+   "this player is on the block" first (Sleeper doesn't expose trade
+   discussions directly, so this likely means the user manually flagging a
+   name to check rather than a real feed, at least for v1). A
+   manually-flagged name here is also a natural fit for item 5's
+   contextual research check, once that exists — pulling real context
+   (usage change, injury detail, actual trade buzz) beyond what
+   Sleeper/FantasyCalc carry, for that one specific player.
 
    **Sellable vs. just droppable** (user-flagged 2026-08-01): the "sellable
    veterans" side of this needs a real line between "worth trying to
@@ -162,7 +140,7 @@ tab's team selector for any team, not just the user's own.
    makes sense for an entity with real or combine-projected stats. Worth a
    comment at the call site when this is built so a future edit doesn't
    try to force picks through that pipeline by habit.
-3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
+2. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
    timeline. Should extend to **in-season pickup monitoring**: when a free
@@ -209,7 +187,7 @@ tab's team selector for any team, not just the user's own.
    project's existing pattern of shipping a deliberately lightweight v1
    (e.g. `POSITION_VALUE_MULTIPLIER` before the full per-player recompute)
    over a fully general model nobody's asked for yet.
-4. [ ] **Make "need"/strategy phase-aware — a static rule today, should
+3. [ ] **Make "need"/strategy phase-aware — a static rule today, should
    evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
    now `roster_needs_summary`'s `need` flag is one fixed rule for all
    time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
@@ -220,7 +198,7 @@ tab's team selector for any team, not just the user's own.
    about accumulating rookies (this project's whole existing purpose);
    year 2 should shift toward smart trades, continuing to find promising
    talent opportunistically — not just rookies, but free agents with a
-   sudden uptick in opportunity/fortune (this is exactly item 3's
+   sudden uptick in opportunity/fortune (this is exactly item 2's
    in-season pickup monitoring) — and dropping deadweight with limited
    future payoff (already partly modeled by `roster_value_analysis`'s
    `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
@@ -231,7 +209,7 @@ tab's team selector for any team, not just the user's own.
    Related to but distinct from the positional-value work above — that's
    about *which position* is weak; this is about *what kind of move* the
    team should even be looking for at this point in the rebuild.
-5. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
+4. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
    team, complementing the Your Roster tab's team selector (added
@@ -240,10 +218,11 @@ tab's team selector for any team, not just the user's own.
    `dynasty_core.team_roster_analysis()` already runs this exact per-team
    analysis for any roster on demand; this is "call it for all ~12 teams
    and lay out a summary row," not new analysis logic. A natural
-   lighter-weight precursor to item 1's power/timeline read, not a
-   replacement for it — this surfaces raw stats per team, not a
-   rebuild-vs-contend classification.
-6. [ ] **Contextual research check for news/hype beyond Sleeper's data**
+   lighter-weight complement to the power/timeline read above (done
+   2026-08-01) — this surfaces raw stats per team, not a rebuild-vs-contend
+   classification, but both answer "what does this team look like" at a
+   glance.
+5. [ ] **Contextual research check for news/hype beyond Sleeper's data**
    (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
    unconfirmed) — a rare, explicitly user-triggered lookup (not a
    background job) for one *specific* named player: pull recent context an
@@ -257,8 +236,8 @@ tab's team selector for any team, not just the user's own.
    FantasyCalc's own market already has. Needs investigating what's
    actually available and appropriate here before committing to an
    implementation — treat the specific tool name as unverified, just the
-   user's working label for the idea. Natural entry points: item 2's
-   trade-block monitoring (checking one flagged name) and item 3's
+   user's working label for the idea. Natural entry points: item 1's
+   trade-block monitoring (checking one flagged name) and item 2's
    free-agent evaluator (checking one waiver target) — not a general
    always-on feed, and not a replacement for the stats-based ranking
    anywhere in the pipeline.

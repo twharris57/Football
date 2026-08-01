@@ -116,6 +116,14 @@ def print_report(state: dict[str, Any]) -> None:
     print("\n--- Your picks ---")
     print(render_df(state["your_picks"], "(none)"))
 
+    power = state["team_power_timeline"].loc[state["user_roster_id"]]
+    print(
+        f"\n--- Team timeline ---\n"
+        f"Phase: {power['phase']} (score {power['power_score']:+.2f}) - "
+        f"VOR {power['aggregate_vor']:+.1f}, weighted age {power['weighted_age']:.1f}, "
+        f"win% {power['win_pct']:.0%}"
+    )
+
     cap = state["roster_capacity"]
     print(
         f"\n--- Roster capacity ---\n"

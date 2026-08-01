@@ -72,6 +72,23 @@ apparent strength. Works through the team selector above unchanged:
 refresh in `gather_state` and passed into every `team_roster_analysis()`
 call, including the on-demand ones for other teams.
 
+### Team timeline
+
+A new "Team timeline" section sits above Roster capacity, for whichever
+team the selector above has picked — the continuous power/timeline read
+(`team_power_timeline_scores()`, see `docs/rookie-draft-big-board.md` for
+the full methodology). Unlike the VOR/Weak columns above, this isn't
+computed per-team on demand: every team's row is needed together for the
+z-scoring itself, so `gather_state` computes the whole league's table once
+and the UI just looks up `state["team_power_timeline"].loc[selected_roster_id]`
+— cheaper than the on-demand pattern, and there's no meaningful "per-team"
+version of a league-relative score anyway. Shown as an `st.metric` (phase
+label + the underlying continuous score) plus a caption breaking out the
+three component signals (VOR, weighted age, win %), so the *why* behind the
+label is always visible, not just the label itself. The CLI mirrors this
+with a plain `--- Team timeline ---` line for the user's own team, same
+underlying `state["team_power_timeline"]` table.
+
 ### Player projection lookup
 
 Each round's "Backup options" table only ever showed the top
