@@ -452,6 +452,7 @@ with roster_tab:
             state["byes"],
             state["league"],
             state["handcuffs"],
+            state["replacement_level"],
         )
 
     st.subheader("Roster capacity")
@@ -464,6 +465,22 @@ with roster_tab:
         st.warning("No open roster or taxi slots — drafting a rookie means dropping someone first.")
 
     st.subheader("Roster needs")
+    with st.expander("How this works"):
+        st.caption(
+            "Two different questions about each position, side by side:\n"
+            "- **Need** — rebuild-timeline framing: fewer than 2 players at this position have "
+            "2 years of NFL experience or less. Answers \"are we still accumulating enough young "
+            "talent here.\"\n"
+            "- **Weak** — trade-strategy framing: this position's actual starters (top players by "
+            "value, up to this league's dedicated slot count) are worth less than **VOR** "
+            "(value-over-replacement) — the value of the last startable-tier player still "
+            "rostered *anywhere* in the league at that position. A position can have plenty of "
+            "bodies (no Need flag) and still be Weak if none of them clear what's freely "
+            "available elsewhere — or vice versa, thin in bodies but strong if the few players "
+            "there are excellent.\n"
+            "- VOR compares against the whole league, not the rest of *your* roster — one elite "
+            "player elsewhere can't make another position look artificially weak by comparison."
+        )
     show_df(
         analysis["roster_needs"],
         "(empty roster)",
@@ -475,6 +492,8 @@ with roster_tab:
             ("avg_age", "Avg Age"),
             ("young_core", "Young Core"),
             ("need", "Need"),
+            ("vor", "VOR"),
+            ("weak", "Weak"),
         ),
     )
     needs = analysis["need_positions"]

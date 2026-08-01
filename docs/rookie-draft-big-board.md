@@ -189,6 +189,37 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   report, fixed 2026-07-27). The taxi squad itself is unusually generous
   for a dynasty league — 5 slots, 3 years — more room to stash rookies
   without a roster crunch.
+- **Roster needs: two different signals, not one** (valuation step toward
+  post-draft trade tooling — see `.claude/PROJECT_PLAN.md`). The original
+  `need` flag (`roster_needs_summary`) is a rebuild-*timeline* question:
+  fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
+  `<= YOUNG_CORE_MAX_YOE` years of experience — "are we still accumulating
+  enough young talent here." It says nothing about whether the position's
+  *actual value* is any good, and a same-roster "share of total value"
+  metric would have a real flaw: one elite player at any position inflates
+  its own share and makes every other position look artificially weak by
+  comparison, even if they're all fine in absolute terms. `weak` (new
+  `vor` column, `positional_strength_summary`) answers a trade-*strategy*
+  question instead, against an external baseline: `position_replacement_levels()`
+  computes each position's league-wide replacement level — the Nth-best
+  rostered player at that position across every team's roster, where N =
+  this league's dedicated starting slots at that position times the
+  number of teams, a standard value-based-drafting concept. A team's own
+  top N players at a position (matching that same slot count — deep bench
+  doesn't count, it never plays) sum to `starter_value`; `vor` is
+  `starter_value - (replacement_level * N)`, and `weak` is `vor <= 0` —
+  this position's actual starters aren't even worth what's freely
+  available elsewhere in the league. `roster_needs_summary` and
+  `positional_strength_summary` are joined on position into one
+  `roster_needs` table (`team_roster_analysis`) rather than kept as two
+  separate ones, since they're both "per position" views a user would want
+  side by side. Deliberately ignores FLEX/SUPER_FLEX in both the
+  replacement-level and starter-count calculations (undercounts true demand
+  at FLEX-eligible positions) — the same simplification `roster_weekly_gaps`
+  already makes for the same reason, not a new gap. Works for any team via
+  the Your Roster tab's team selector, not just the user's own — the same
+  `replacement_level` baseline (computed once per refresh across every
+  roster) applies regardless of whose roster is being viewed.
 - **Roster value analysis** — full roster sorted lowest-`adj_value` first.
   Doesn't treat "low value" as "drop" outright: age is weighed in, so a
   low-value *young* player is flagged as rebuild upside to hold, while

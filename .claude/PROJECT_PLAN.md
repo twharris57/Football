@@ -26,30 +26,42 @@ lives in `CLAUDE.md` and `docs/`, not here — this file is only what's left to 
 
 ## Roster & trade tooling
 
-Originally scoped as explicitly post-draft (user-flagged 2026-07-26), but
-**bumped ahead of Valuation & data accuracy 2026-07-30** — league mates are
-already discussing trades ahead of the draft itself, so this now has real,
-current urgency, unlike valuation work below, which is explicitly not
-deadline-driven. Within-group order stays roughly as sequenced before,
-with trade targets & sells promoted to the top.
+Originally scoped as explicitly post-draft (user-flagged 2026-07-26), then
+briefly reordered 2026-07-30 to put trade targets & sells first given real
+trade talk already happening pre-draft, then reordered again same day: the
+user judged that shipping trade targets & sells before the positional-value
+and team-power foundations it needs would produce a weak tool that has to
+be redone once those land, so the foundations come first. Still bumped
+ahead of Valuation & data accuracy below, which remains explicitly not
+deadline-driven.
 
-1. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
+**Positional-value foundation done (2026-07-31)** — see
+`docs/rookie-draft-big-board.md`'s "Roster needs: two different signals,
+not one" for the full methodology. `positional_strength_summary()` +
+`position_replacement_levels()` add a `vor`/`weak` value-over-replacement
+signal, joined onto the existing young-core `need` flag, using a
+league-wide replacement-level baseline (deliberately not a same-roster
+share-of-value metric — see the doc for why that has a real flaw). Works
+through the Your Roster tab's team selector for any team, not just the
+user's own.
+
+1. [ ] **League-wide power/timeline read** — place every team in the league
+   on a rebuild-vs-contend spectrum, to identify good trade partners
+   (contenders who overpay for immediate help, rebuilders who overpay for
+   future assets). Build on the positional-value work above applied
+   per-team, not a separate model — a team's overall power/timeline is
+   naturally a roll-up of how strong/weak/young/old each of its positions
+   is. Feeds item 2.
+2. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
    of the user's veterans are sellable for picks, and which other teams'
-   picks/young players might be realistically available. Don't wait on
-   item 2's structural-weakness metric to ship a first version — a v1 can
-   lean on what already exists (`roster_value_analysis`'s low-value/aging
-   flags, the current `need` heuristic) and get sharper once item 2 lands,
-   rather than blocking on it given the urgency here.
-2. [ ] **Roster needs — structural positional weakness, not just
-   week-to-week gaps.** `roster_needs_summary` and `roster_weekly_gaps` both
-   answer "do we have enough bodies at this position right now/this week" —
-   neither answers "is this position structurally weak compared to the rest
-   of the roster (or the league), such that it's worth actively shoring up
-   via trade rather than just monitoring." Would need a real
-   positional-strength metric (e.g. this position's share of total roster
-   value, or its value relative to starting-quality replacement level)
-   rather than the current young-core headcount heuristic. Sharpens item 1's
-   trade targets and item 4's power/timeline read once it lands.
+   picks/young players might be realistically available. Deliberately
+   sequenced after item 1, not before: "sellable" can already lean on the
+   positional-value work above (a valuable player at a *deep* position is
+   a better sell than an equally valuable one at a *thin* one), but "what's
+   realistically available" from another team still needs a real
+   rebuild-vs-contend read on them, not just their lowest-value players —
+   building this before item 1 would produce a weak v1 that has to be
+   redone once it exists.
 3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
@@ -71,11 +83,7 @@ with trade targets & sells promoted to the top.
    assumes every candidate is taxi-eligible, true for rookies but not a
    general accrued-experience eligibility check against Sleeper's actual
    taxi rule — free agents won't all qualify.
-4. [ ] **League-wide power/timeline read** — place every team in the league
-   on a rebuild-vs-contend spectrum, to identify good trade partners
-   (contenders who overpay for immediate help, rebuilders who overpay for
-   future assets). Pairs with item 1.
-5. [ ] **Make "need"/strategy phase-aware — a static rule today, should
+4. [ ] **Make "need"/strategy phase-aware — a static rule today, should
    evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
    now `roster_needs_summary`'s `need` flag is one fixed rule for all
    time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
@@ -94,10 +102,10 @@ with trade targets & sells promoted to the top.
    input (probably just a manually-set year/phase, not inferred) that
    shifts behavior across `need`, drop-candidate, and free-agent-flagging
    logic, rather than one flat rule doing double duty for every year.
-   Related to but distinct from item 2 — that's about *which position* is
-   weak; this is about *what kind of move* the team should even be looking
-   for at this point in the rebuild.
-6. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
+   Related to but distinct from the positional-value work above — that's
+   about *which position* is weak; this is about *what kind of move* the
+   team should even be looking for at this point in the rebuild.
+5. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
    team, complementing the Your Roster tab's team selector (added
@@ -106,7 +114,7 @@ with trade targets & sells promoted to the top.
    `dynasty_core.team_roster_analysis()` already runs this exact per-team
    analysis for any roster on demand; this is "call it for all ~12 teams
    and lay out a summary row," not new analysis logic. A natural
-   lighter-weight precursor to item 4's power/timeline read, not a
+   lighter-weight precursor to item 1's power/timeline read, not a
    replacement for it — this surfaces raw stats per team, not a
    rebuild-vs-contend classification.
 

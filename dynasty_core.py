@@ -307,6 +307,95 @@ def need_positions(roster_needs: pd.DataFrame) -> frozenset[str]:
     return frozenset(roster_needs.index[roster_needs["need"]])
 
 
+def position_replacement_levels(
+    rosters: list[dict], players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], roster_positions: list[str]
+) -> dict[str, float]:
+    """League-wide replacement-level adj_value per position - a real, external baseline
+    for "is this position structurally weak," not a same-roster-relative one.
+
+    Standard value-based-drafting concept: replacement level is the value of the last
+    startable-tier player still available - here, the Nth-best rostered player at that
+    position across the whole league, where N = dedicated starting slots at that
+    position (`roster_positions.count(pos)`) times the number of teams. Deliberately
+    ignores FLEX/SUPER_FLEX (undercounts true demand at FLEX-eligible positions) - the
+    same simplification `roster_weekly_gaps` already makes for the same reason, not a
+    new gap. Every rostered player counts toward the pool (including taxi/IR) - they're
+    not on waivers, so they correctly don't count as "available" replacement talent.
+
+    Chosen over a same-roster-relative metric (e.g. "this position's share of total
+    roster value") specifically because a share-based metric has a real, foreseeable
+    failure mode: one elite player at any position inflates that position's share and
+    makes every OTHER position look artificially weak by comparison, even if they're
+    all fine in absolute terms. Comparing against an external, league-wide baseline
+    instead means one team's roster shape can't distort its own signal.
+    """
+    pools: dict[str, list[float]] = {pos: [] for pos in FANTASY_POSITIONS}
+    for roster in rosters:
+        for player_id in roster.get("players") or []:
+            position = players.get(player_id, {}).get("position")
+            if position not in FANTASY_POSITIONS:
+                continue
+            entry = fc_by_sleeper_id.get(player_id)
+            adj_value = entry.get("adj_value") if entry else None
+            pools[position].append(adj_value if adj_value is not None else 0.0)
+
+    num_teams = len(rosters)
+    replacement_level: dict[str, float] = {}
+    for position in FANTASY_POSITIONS:
+        pool = sorted(pools[position], reverse=True)
+        if not pool:
+            replacement_level[position] = 0.0
+            continue
+        rank = max(roster_positions.count(position) * num_teams, 1)
+        replacement_level[position] = pool[rank - 1] if rank <= len(pool) else pool[-1]
+    return replacement_level
+
+
+def positional_strength_summary(
+    roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    replacement_level: dict[str, float],
+    roster_positions: list[str],
+) -> pd.DataFrame:
+    """Per-position value-over-replacement (VOR) for one roster - a value-based
+    complement to `roster_needs_summary`'s young-core-headcount `need` flag.
+
+    Answers a genuinely different question: `need` (roster_needs_summary) is about
+    the rebuild timeline - "do we have enough young assets here yet." `weak` here is
+    about trade strategy - "are this position's actual starters even worth what's
+    freely available across the league," using `position_replacement_levels`'s
+    external baseline. Only the roster's own top-N players at a position (N =
+    dedicated starting slots, same simplification as the replacement-level calc
+    itself) count toward `starter_value` - deep bench depth at a position doesn't
+    make it "strong" if it never plays.
+    """
+    by_position: dict[str, list[float]] = {pos: [] for pos in FANTASY_POSITIONS}
+    for player_id, info in roster_fantasy_players(roster, players):
+        position = info.get("position")
+        entry = fc_by_sleeper_id.get(player_id)
+        adj_value = entry.get("adj_value") if entry else None
+        by_position[position].append(adj_value if adj_value is not None else 0.0)
+
+    rows = []
+    for position in FANTASY_POSITIONS:
+        values = sorted(by_position[position], reverse=True)
+        starter_count = max(roster_positions.count(position), 1)
+        starter_value = sum(values[:starter_count])
+        rep_value = replacement_level.get(position, 0.0) * starter_count
+        rows.append(
+            {
+                "pos": position,
+                "starter_value": starter_value,
+                "replacement_value": rep_value,
+                "vor": starter_value - rep_value,
+            }
+        )
+    summary = pd.DataFrame(rows).set_index("pos")
+    summary["weak"] = summary["vor"] <= 0
+    return summary.round(1)
+
+
 def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
     """Return active-roster, taxi-squad, and IR/reserve slot usage for the given roster.
 
@@ -728,6 +817,7 @@ def team_roster_analysis(
     byes: dict[str, int],
     league: dict,
     handcuffs: dict[str, str],
+    replacement_level: dict[str, float],
 ) -> dict[str, Any]:
     """Bundle every per-roster analysis view into one call, for any team's roster.
 
@@ -738,8 +828,35 @@ def team_roster_analysis(
     the Your Roster tab) that reuses this exact analysis for any team in
     the league, not a second, roster-agnostic scoring model built to
     answer a similar-sounding but different question.
+
+    `roster_needs` carries both `roster_needs_summary`'s young-core `need`
+    flag (rebuild-timeline framing) and `positional_strength_summary`'s
+    value-over-replacement `weak` flag (trade-strategy framing) side by
+    side, joined on position - two different questions about the same
+    position, not one replacing the other. `replacement_level` is computed
+    once per refresh across every team (see `position_replacement_levels`)
+    and passed in rather than recomputed here, since it's the same
+    league-wide baseline regardless of which team's roster this call is for.
     """
     roster_needs = roster_needs_summary(roster, players)
+    if not roster_needs.empty:
+        strength = positional_strength_summary(
+            roster, players, fc_by_sleeper_id, replacement_level, league["roster_positions"]
+        )
+        # strength always covers all 4 FANTASY_POSITIONS (see
+        # positional_strength_summary), but roster_needs only has rows for
+        # positions the roster actually has a player at - an outer join adds
+        # a real, meaningful row for "zero players at this position" (should
+        # absolutely show up as both a need and weak), but leaves count/
+        # young_core/need as NaN for it, which breaks need_positions()'s
+        # boolean mask below. Recompute them post-join instead of trusting
+        # the NaN default.
+        roster_needs = roster_needs.join(strength[["vor", "weak"]], how="outer")
+        roster_needs["count"] = roster_needs["count"].fillna(0).astype(int)
+        roster_needs["young_core"] = roster_needs["young_core"].fillna(0).astype(int)
+        roster_needs["need"] = roster_needs["young_core"] < YOUNG_CORE_NEED_THRESHOLD
+        roster_needs["vor"] = roster_needs["vor"].fillna(0.0)
+        roster_needs["weak"] = roster_needs["weak"].fillna(True)
     lineup_starters, lineup_bench, lineup_taxi, lineup_ir = lineup_breakdown(roster, players, fc_by_sleeper_id, league)
     return {
         "roster_needs": roster_needs,
@@ -1503,7 +1620,10 @@ def gather_state(
         p["pick_no"]: p["player_id"] for p in draft_picks if p.get("roster_id") == user_roster_id and p.get("player_id")
     }
 
-    user_analysis = team_roster_analysis(user_roster, players, fc_by_sleeper_id, byes, league, handcuffs)
+    replacement_level = position_replacement_levels(rosters, players, fc_by_sleeper_id, league["roster_positions"])
+    user_analysis = team_roster_analysis(
+        user_roster, players, fc_by_sleeper_id, byes, league, handcuffs, replacement_level
+    )
 
     recent_rows = []
     for pick in sorted(draft_picks, key=lambda p: p["pick_no"])[-5:]:
@@ -1527,6 +1647,11 @@ def gather_state(
         "fc_by_sleeper_id": fc_by_sleeper_id,
         "byes": byes,
         "handcuffs": handcuffs,
+        # League-wide, computed once per refresh regardless of which team's
+        # roster is being viewed (see position_replacement_levels) - exposed
+        # so the Your Roster tab's team selector can pass it into an
+        # on-demand team_roster_analysis() call for any other team too.
+        "replacement_level": replacement_level,
         # Every team's roster dict, keyed by roster_id - exposed so a UI can
         # run team_roster_analysis() on demand for any team, not just the
         # user's own (see the Your Roster tab's team selector).
