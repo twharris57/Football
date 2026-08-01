@@ -490,8 +490,24 @@ def team_power_timeline_scores(
     `power_score` is the continuous z-scored average (higher = more
     win-now/contending, lower = more rebuild-oriented) - the actual signal
     to reason about. `phase` (`rebuilding`/`treading_water`/`contending`,
-    via `PHASE_THRESHOLDS`) is a display-only bucketing of it for a simple
-    label, not a separate computation.
+    via `PHASE_THRESHOLDS`) and `rank` (1 = strongest `power_score` in the
+    league) are both display-only views of it for a UI that shouldn't ask a
+    user to interpret a raw z-score cold - neither is a separate
+    computation. `games_played` is exposed alongside `win_pct` so a UI can
+    tell "this is a real record" from "nobody's played yet, this is the
+    neutral default" - the z-scored number alone can't distinguish those.
+
+    `power_score` blends two conceptually different axes - "how good is this
+    roster right now" (`aggregate_vor` + `win_pct`) and "which way is it
+    pointed" (`weighted_age`) - which means a strong/young/ascending team and
+    a weak/old/declining team can land on the same blended number despite
+    calling for opposite trade postures. `quality_score` (`aggregate_vor` +
+    `win_pct`, z-scored and averaged) and `timeline_score` (`weighted_age`,
+    z-scored) are exposed separately so a downstream consumer that needs to
+    tell those two cases apart - e.g. a future trade-target/sell evaluator -
+    can reason about them independently instead of re-deriving the same
+    z-scores from scratch. `power_score`/`phase` stay as-is for the
+    at-a-glance UI read; this is additive, not a replacement.
     """
     roster_positions = league["roster_positions"]
 
@@ -509,6 +525,11 @@ def team_power_timeline_scores(
                 "aggregate_vor": strength["vor"].sum(),
                 "weighted_age": _weighted_average_age(roster, players, fc_by_sleeper_id),
                 "win_pct": wins / games_played if games_played > 0 else 0.5,
+                # Exposed so a UI can tell "this team's win_pct is a real
+                # record" from "nobody's played yet, this is the neutral
+                # default" - the z-scored win_pct alone can't distinguish
+                # those (see the class docstring's "emergent property" note).
+                "games_played": games_played,
             }
         )
     scores = pd.DataFrame(rows).set_index("roster_id")
@@ -522,12 +543,20 @@ def team_power_timeline_scores(
         std = series.std(ddof=0)
         return (series - series.mean()) / std if std else pd.Series(0.0, index=series.index)
 
-    scores["power_score"] = (_z(scores["aggregate_vor"]) + _z(scores["weighted_age"]) + _z(scores["win_pct"])) / 3
+    vor_z, age_z, win_z = _z(scores["aggregate_vor"]), _z(scores["weighted_age"]), _z(scores["win_pct"])
+    scores["power_score"] = (vor_z + age_z + win_z) / 3
+    # Split out for consumers that need "how good" and "which way pointed"
+    # kept apart rather than blended - see the class docstring.
+    scores["quality_score"] = (vor_z + win_z) / 2
+    scores["timeline_score"] = age_z
     scores["phase"] = pd.cut(
         scores["power_score"],
         bins=[-float("inf"), PHASE_THRESHOLDS[0], PHASE_THRESHOLDS[1], float("inf")],
         labels=["rebuilding", "treading_water", "contending"],
     )
+    # Rank 1 = strongest power_score in the league - a plain "N of league
+    # size" beats asking a user to interpret a raw z-scored number cold.
+    scores["rank"] = scores["power_score"].rank(ascending=False, method="min").astype(int)
     return scores.round(2)
 
 
@@ -960,7 +989,7 @@ def team_roster_analysis(
     function it calls already took a generic `roster` dict, so the only
     thing that ever needed to be "the user's roster" specifically was
     which one got passed in here. Lets a UI offer a team selector (see
-    the Your Roster tab) that reuses this exact analysis for any team in
+    the Roster tab) that reuses this exact analysis for any team in
     the league, not a second, roster-agnostic scoring model built to
     answer a similar-sounding but different question.
 
@@ -1789,7 +1818,7 @@ def gather_state(
         "handcuffs": handcuffs,
         # League-wide, computed once per refresh regardless of which team's
         # roster is being viewed (see position_replacement_levels) - exposed
-        # so the Your Roster tab's team selector can pass it into an
+        # so the Roster tab's team selector can pass it into an
         # on-demand team_roster_analysis() call for any other team too.
         "replacement_level": replacement_level,
         # Every team's continuous power/timeline read, indexed by roster_id
@@ -1800,7 +1829,7 @@ def gather_state(
         "team_power_timeline": power_timeline,
         # Every team's roster dict, keyed by roster_id - exposed so a UI can
         # run team_roster_analysis() on demand for any team, not just the
-        # user's own (see the Your Roster tab's team selector).
+        # user's own (see the Roster tab's team selector).
         "rosters_by_id": {r["roster_id"]: r for r in rosters},
         "user_roster_id": user_roster_id,
         # Taxi/IR players from the user's real roster - never eligible for a

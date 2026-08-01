@@ -13,7 +13,7 @@ Four tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
    impact.
 2. **Lineup** — current optimal starters/bench.
 3. **Draft Board** — the full rookie class, tiered, with draft attribution.
-4. **Your Roster** — capacity, needs, value analysis, bye conflicts, weekly
+4. **Roster** — capacity, needs, value analysis, bye conflicts, weekly
    gaps, handcuffs, for any team in the league via a selector (defaults to
    the user's own).
 
@@ -23,7 +23,7 @@ Plan after the two turned out to disagree with each other on what to pick
 next — two answers to the same question was a real bug, not a feature; there
 is now exactly one ranking method, used everywhere.
 
-### Team selector (Your Roster tab)
+### Team selector (Roster tab)
 
 User feedback: the original idea of "a player dropdown" actually meant
 *other teams in the league*, not other draft candidates (the Draft Plan
@@ -88,6 +88,22 @@ three component signals (VOR, weighted age, win %), so the *why* behind the
 label is always visible, not just the label itself. The CLI mirrors this
 with a plain `--- Team timeline ---` line for the user's own team, same
 underlying `state["team_power_timeline"]` table.
+
+The `st.metric` value shows `rank`/`league_size` (e.g. "3 of 12") rather
+than the raw score — asking a user to interpret a z-score cold is worse
+than a plain rank, and the raw score plus its 0/±meaning is still one
+hover away via the metric's `help=` tooltip. Pre-season, the win %
+caption reads "no games played yet" instead of a flat 50% for every team
+(`games_played == 0`, exposed in the same table) — the raw number is real
+math (a neutral default contributing zero variance) but misleading as a
+literal win rate before any games exist, per user feedback that it read
+as everyone being tied at a coin flip rather than "nobody's played yet."
+
+A "❓ Glossary" button next to the page title opens an `st.dialog` (module
+constant `GLOSSARY` in `streamlit_app.py`) defining VOR, power score, and
+adj. value — one reachable place for the terms this section and Roster
+needs both use, rather than only inside Roster needs' own "How this
+works" expander.
 
 ### Player projection lookup
 

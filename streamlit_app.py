@@ -24,6 +24,52 @@ import dynasty_core
 
 APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
 
+# Domain jargon shown somewhere in the app without room to spell out inline
+# every time (web_guidelines.md: "explain domain abbreviations on first
+# use... a tooltip is acceptable in space-constrained contexts"). A "How
+# this works" expander already explains VOR in full sentences right where
+# it's used (Roster needs), but that requires remembering which tab/expander
+# to reopen - this glossary is the one persistent, always-one-click-away
+# reference instead, reachable from every tab via the header button below.
+# Add a term here (not a new per-section expander) whenever the app
+# introduces another acronym like this one.
+GLOSSARY: dict[str, tuple[str, str]] = {
+    "VOR": (
+        "Value Over Replacement",
+        "How much a position's actual starters exceed the value of the last "
+        "startable-tier player still rostered *anywhere else* in the league "
+        "at that position - an external, league-wide baseline, not just "
+        "\"this player/position looks low-value.\" Negative VOR (Weak) means "
+        "this position's starters don't even clear what's freely available "
+        "elsewhere in the league.",
+    ),
+    "Power score": (
+        "Team power/timeline score",
+        "A continuous, league-wide score (Roster tab) combining a "
+        "team's roster strength (VOR), timeline direction (value-weighted "
+        "average age), and actual win percentage. 0 = league average; "
+        "positive = more win-now/contending; negative = more "
+        "rebuild-oriented. Recomputed fresh every refresh, so it moves with "
+        "real injuries/trades/results instead of ever going stale.",
+    ),
+    "Adj. Value": (
+        "Adjusted Value",
+        "FantasyCalc's market value, corrected for this league's real "
+        "scoring rules (6pt passing TDs, TE reception premium, this "
+        "league's real interception/yardage rates, and more) - see the "
+        "Draft Plan tab's methodology for the full correction. Shown "
+        "alongside the raw, uncorrected Value for comparison, not in place "
+        "of it.",
+    ),
+}
+
+
+@st.dialog("Glossary")
+def _show_glossary() -> None:
+    for term, (full_name, description) in GLOSSARY.items():
+        st.markdown(f"**{term}** — *{full_name}*")
+        st.caption(description)
+
 
 def show_df(
     df: pd.DataFrame,
@@ -170,7 +216,13 @@ def load_state(
     return dynasty_core.gather_state(league_id, username, force_full_refresh, force_scoring_refresh)
 
 
-st.title("Dynasty Rookie Draft")
+title_col, glossary_col = st.columns([5, 1])
+with title_col:
+    st.title("Dynasty Rookie Draft")
+with glossary_col:
+    st.write("")  # nudge the button down to roughly vertically center with the title
+    if st.button("❓ Glossary", help="What VOR, power score, and other terms mean"):
+        _show_glossary()
 
 try:
     state = load_state(
@@ -212,7 +264,7 @@ else:
         turn_note = f" ({until_turn} pick{'s' if until_turn != 1 else ''} until your turn)"
     st.info(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}{turn_note}")
 
-plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(["Draft Plan", "Lineup", "Draft Board", "Your Roster"])
+plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(["Draft Plan", "Lineup", "Draft Board", "Roster"])
 
 with plan_tab:
     with st.expander("How this works"):
@@ -462,23 +514,36 @@ with roster_tab:
             "every refresh from current roster/standings state (not a fixed label - it "
             "reacts to injuries, trades, and results automatically).\n"
             "- **Score** — a continuous, league-wide z-scored average of three signals: "
-            "roster strength (aggregate VOR across positions), timeline direction "
-            "(value-weighted average age - older *established value* skews win-now), "
-            "and actual win percentage. Higher = more win-now, lower = more "
-            "rebuild-oriented.\n"
+            "roster strength (aggregate VOR across positions - see the Glossary above), "
+            "timeline direction (value-weighted average age - older *established value* "
+            "skews win-now), and actual win percentage. 0 = league average; positive = "
+            "more win-now, negative = more rebuild-oriented. The **rank** below it (e.g. "
+            "\"3 of 12\") is the same score, just easier to read at a glance than the raw "
+            "number.\n"
             "- **Phase** — a display label bucketed from the score (rebuilding / "
             "treading water / contending); the score itself is the real signal.\n"
             "- **Win % before games are played** — defaults to a neutral 50%, so it "
             "contributes nothing to the score pre-season instead of distorting it with "
-            "a meaningless small sample."
+            "a meaningless small sample. Shown as \"no games played yet\" instead of a "
+            "misleading 50% once the season actually starts, this will show a real record."
         )
     power = state["team_power_timeline"].loc[selected_roster_id]
+    league_size = len(state["team_power_timeline"])
     phase_labels = {"rebuilding": "🌱 Rebuilding", "treading_water": "⚖️ Treading water", "contending": "🏆 Contending"}
-    st.metric(phase_labels.get(power["phase"], power["phase"]), f"score {power['power_score']:+.2f}")
+    st.metric(
+        phase_labels.get(power["phase"], power["phase"]),
+        f"{int(power['rank'])} of {league_size}",
+        help=(
+            "Rank by power score (1 = strongest roster + timeline + record in the "
+            f"league). Raw score: {power['power_score']:+.2f} (0 = league average; "
+            "positive = more contending, negative = more rebuilding)."
+        ),
+    )
+    win_pct_text = "no games played yet" if power["games_played"] == 0 else f"{power['win_pct']:.0%}"
     st.caption(
         f"Roster strength (VOR): {power['aggregate_vor']:+.1f} · "
         f"Value-weighted age: {power['weighted_age']:.1f} · "
-        f"Win %: {power['win_pct']:.0%}"
+        f"Win %: {win_pct_text}"
     )
 
     st.subheader("Roster capacity")

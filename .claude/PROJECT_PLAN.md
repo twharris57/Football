@@ -49,7 +49,7 @@ caught that the first version silently reverted QB to single-QB-league
 demand, which would have systematically understated QB's VOR for
 everything built on top of it. Verified directly against live data (the
 league-wide rank-24 replacement QB is a real, independently-confirmed
-player, not a self-referential artifact). Works through the Your Roster
+player, not a self-referential artifact). Works through the Roster
 tab's team selector for any team, not just the user's own.
 
 **League-wide power/timeline read done (2026-08-01)** — see
@@ -68,54 +68,50 @@ Verified directly against live data: the user's own team (a confirmed
 year-one rebuild) reads as the league's lowest score/`rebuilding`; the
 roster with the league's highest-value QB reads as `contending` — both
 consistent with what's independently known about the real league. Shown
-in the Your Roster tab (for whichever team the selector has picked) and
+in the Roster tab (for whichever team the selector has picked) and
 the CLI.
 
-1. [ ] **Fix power/timeline read's quality-vs-timeline conflation before
-   item 2 (Trade targets & sells) consumes it** (assistant valuation
-   review, 2026-08-01) — `team_power_timeline_scores()`'s `power_score`
-   averages three z-scores with equal weight: `aggregate_vor` and
-   `win_pct` both answer "how good is this roster," while `weighted_age`
-   answers a different question, "which way is it pointed." Averaging
-   them together collapses that distinction — a strong, young, ascending
-   team (+vor, −age, average record) and a weak, old, declining team
-   (−vor, +age, average record) can land on the *same* `power_score` and
-   `phase` (`treading_water`), despite being close to opposite trade
-   postures. The old/weak team is exactly the fire-sale seller item 2
-   most needs to identify; the young/strong team is closer to a buy
-   target. The live-data sanity check in the commit that shipped this
-   (known-bad team scores lowest; team with the league's best QB scores
-   highest) doesn't exercise this failure mode, since all three signals
-   move the same direction in both cases — worth spot-checking a team
-   with genuinely divergent signals (old-and-bad, or a young team on a
-   hot streak) before trusting `phase` for anything automated. Doesn't
-   need a rewrite to fix: keep computing the three raw signals (already
-   exposed in the UI breakdown), but have anything downstream that needs
-   to *distinguish* teams — item 2 especially — reason about roster
-   quality (`aggregate_vor` + `win_pct`) and timeline (`weighted_age`) as
-   two separate axes rather than the blended `power_score`/`phase`.
+**Quality-vs-timeline conflation fixed (2026-08-01)** — an assistant
+valuation review caught that averaging `aggregate_vor`/`win_pct` ("how
+good is this roster") together with `weighted_age` ("which way is it
+pointed") into one `power_score` could hide a strong/young/ascending team
+and a weak/old/declining team landing on the same blended number, despite
+opposite trade postures. Rather than a rewrite, `team_power_timeline_scores()`
+now also exposes `quality_score` (`aggregate_vor` + `win_pct`, z-scored
+and averaged) and `timeline_score` (`weighted_age`, z-scored) as separate
+columns alongside the existing blended `power_score`/`phase` — so item 2
+below (Trade targets & sells) can reason about roster strength and timeline
+direction independently instead of re-deriving the same z-scores. Covered
+by `test_quality_and_timeline_axes_can_disagree_within_one_team`, which
+constructs exactly the divergent case (young/strong/winning vs.
+old/weak/losing) the review flagged.
 
-   **`win_pct` has no small-sample shrinkage** (assistant valuation
-   review, 2026-08-01): the zero-games case is handled well (neutral
-   `0.5`, correctly contributes zero variance pre-season — proven by its
-   own test), but from week 1 onward `win_pct` gets full, undiscounted
-   weight off as few as one game — a 1-0 or 0-1 start is close to a coin
-   flip, yet swings the z-score as hard as it ever will at week 10.
-   Consider shrinking `win_pct` toward `0.5` (or toward the
-   vor-implied expectation) by something like
+1. [ ] **Add small-sample shrinkage to the power/timeline read's `win_pct`**
+   (assistant valuation review, 2026-08-01) — the zero-games case is
+   handled well (neutral `0.5`, correctly contributes zero variance
+   pre-season — proven by its own test), but from week 1 onward `win_pct`
+   gets full, undiscounted weight off as few as one game — a 1-0 or 0-1
+   start is close to a coin flip, yet swings the z-score as hard as it
+   ever will at week 10. Consider shrinking `win_pct` toward `0.5` (or
+   toward the vor-implied expectation) by something like
    `games_played / (games_played + k)`, so early results contribute
    proportionally to how much they've actually resolved — and/or using
    `points_for`/point differential (likely already in Sleeper's roster
    `settings`) as a steadier alternative to binary win/loss, standard
    practice in sabermetric-style team-strength reads for the same
-   small-sample reason.
+   small-sample reason. Deferred past the current PR: it's a refinement
+   to an emergent-variance mechanic that doesn't matter until real games
+   have been played, and reweighting the formula's actual math deserves
+   its own review rather than folding into a display-clarity PR.
 2. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
    of the user's veterans are sellable for picks, and which other teams'
    picks/young players might be realistically available. Now that the
    power/timeline read above is done, "what's realistically available"
-   from another team can use that real rebuild-vs-contend read on them,
-   not just their lowest-value players — see item 1 above for a real
-   caveat on that read before consuming it directly. Should extend to
+   from another team can use that real rebuild-vs-contend read on them —
+   reason about it via the separate `quality_score`/`timeline_score` axes
+   (done above), not the blended `power_score`/`phase`, which conflates
+   "how good" with "which way pointed" (see the done-note above). Should
+   extend to
    **trade-block monitoring** (user-flagged 2026-08-01): watch for players
    another team is actively shopping and score them against the current
    roster the same way the free-agent evaluator's in-season pickup
@@ -251,7 +247,7 @@ the CLI.
 5. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
-   team, complementing the Your Roster tab's team selector (added
+   team, complementing the Roster tab's team selector (added
    2026-07-29), which only ever shows one team at a time. Cheaper than it
    would have been before that selector shipped —
    `dynasty_core.team_roster_analysis()` already runs this exact per-team

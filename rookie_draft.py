@@ -117,11 +117,15 @@ def print_report(state: dict[str, Any]) -> None:
     print(render_df(state["your_picks"], "(none)"))
 
     power = state["team_power_timeline"].loc[state["user_roster_id"]]
+    league_size = len(state["team_power_timeline"])
+    win_pct_text = "no games played yet" if power["games_played"] == 0 else f"{power['win_pct']:.0%}"
     print(
-        f"\n--- Team timeline ---\n"
-        f"Phase: {power['phase']} (score {power['power_score']:+.2f}) - "
-        f"VOR {power['aggregate_vor']:+.1f}, weighted age {power['weighted_age']:.1f}, "
-        f"win% {power['win_pct']:.0%}"
+        f"\n--- Team timeline (rebuild-vs-contend read, recomputed fresh every refresh) ---\n"
+        f"Rank {int(power['rank'])} of {league_size} - {power['phase']} "
+        f"(score {power['power_score']:+.2f}: 0=league average, + =more contending, "
+        f"- =more rebuilding)\n"
+        f"VOR (value over replacement) {power['aggregate_vor']:+.1f}, "
+        f"weighted age {power['weighted_age']:.1f}, win% {win_pct_text}"
     )
 
     cap = state["roster_capacity"]
@@ -135,7 +139,14 @@ def print_report(state: dict[str, Any]) -> None:
         f"({cap['reserve_open']} open)"
     )
 
-    print("\n--- Your roster needs ---")
+    print(
+        "\n--- Your roster needs ---\n"
+        "Need: fewer than 2 players at this position have <=2 years NFL experience "
+        "(rebuild-timeline framing). VOR (value over replacement): this position's "
+        "actual starters vs. the last startable-tier player still rostered anywhere "
+        "else in the league (trade-strategy framing) - Weak means they don't clear "
+        "it. The two can disagree: plenty of bodies but no real value, or the reverse."
+    )
     print(render_df(state["roster_needs"], "(empty roster)", index=True))
     needs = state["need_positions"]
     print(f"Flagged needs: {', '.join(sorted(needs))}" if needs else "No positions flagged as a need right now.")

@@ -236,6 +236,11 @@ class TestTeamPowerTimelineScores:
         assert scores.loc[1, "power_score"] > scores.loc[2, "power_score"]
         assert scores.loc[1, "phase"] == "contending"
         assert scores.loc[2, "phase"] == "rebuilding"
+        # Team 1 is strictly stronger, so it ranks 1st (best) in the league.
+        assert scores.loc[1, "rank"] == 1
+        assert scores.loc[2, "rank"] == 2
+        assert scores.loc[1, "games_played"] == 10
+        assert scores.loc[2, "games_played"] == 10
 
     def test_zero_games_played_defaults_win_pct_to_neutral(self):
         league = {"roster_positions": ["WR", "BN"]}
@@ -259,6 +264,10 @@ class TestTeamPowerTimelineScores:
         # Identical rosters, identical neutral win_pct - identical score, so
         # the neutral default genuinely contributed zero variance pre-season.
         assert scores.loc[1, "power_score"] == pytest.approx(scores.loc[2, "power_score"])
+        # games_played=0 is exactly the signal a UI needs to show "this win%
+        # is a placeholder, not a real record" instead of misreading it.
+        assert scores.loc[1, "games_played"] == 0
+        assert scores.loc[2, "games_played"] == 0
 
     def test_single_team_league_does_not_crash(self):
         # Population std (ddof=0) of one team is 0, not NaN - guards the
@@ -275,10 +284,43 @@ class TestTeamPowerTimelineScores:
         assert scores.loc[1, "power_score"] == pytest.approx(0.0)
         assert scores.loc[1, "phase"] == "treading_water"
 
+    def test_quality_and_timeline_axes_can_disagree_within_one_team(self):
+        # A young, strong, winning roster is exactly the case power_score
+        # alone hides: it's "quality strong" (high VOR + winning) but
+        # "timeline rebuild-pointed" (young) at the same time - two signals
+        # a trade evaluator needs to tell apart, not average together.
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {
+            "a_wr": make_player("WR", full_name="A WR"),
+            "b_wr": make_player("WR", full_name="B WR"),
+        }
+        players["a_wr"]["age"] = 22
+        players["b_wr"]["age"] = 32
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("a_wr", 900), fc_entry("b_wr", 100)])
+        rosters = [
+            {"roster_id": 1, "players": ["a_wr"], "settings": {"wins": 10, "losses": 0, "ties": 0}},
+            {"roster_id": 2, "players": ["b_wr"], "settings": {"wins": 0, "losses": 10, "ties": 0}},
+        ]
+        replacement_level = {"WR": 0.0, "QB": 0.0, "RB": 0.0, "TE": 0.0}
+
+        scores = dc.team_power_timeline_scores(rosters, players, fc_by_id, replacement_level, league)
+
+        # Team 1: strong quality (high VOR + winning) ...
+        assert scores.loc[1, "quality_score"] > 0
+        # ... but timeline says rebuild (young), not win-now - the opposite
+        # sign from quality_score, which power_score's single blended
+        # number can't surface.
+        assert scores.loc[1, "timeline_score"] < 0
+        assert scores.loc[2, "quality_score"] < 0
+        assert scores.loc[2, "timeline_score"] > 0
+        # quality_score is the average of the vor/win_pct z-scores only.
+        assert scores.loc[1, "quality_score"] == pytest.approx(-scores.loc[2, "quality_score"])
+        assert scores.loc[1, "timeline_score"] == pytest.approx(-scores.loc[2, "timeline_score"])
+
 
 class TestTeamRosterAnalysis:
     """team_roster_analysis should bundle every per-roster view for ANY roster,
-    not just the user's own - the basis for the Your Roster tab's team selector."""
+    not just the user's own - the basis for the Roster tab's team selector."""
 
     def test_bundles_every_view_for_an_arbitrary_roster(self):
         league = {"roster_positions": ["QB", "WR", "BN"], "settings": {"taxi_slots": 1, "reserve_slots": 1}}
