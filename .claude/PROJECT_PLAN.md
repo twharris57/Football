@@ -405,3 +405,13 @@ assumption changes.
    via `team_roster_analysis` and again via `team_power_timeline_scores`
    each refresh. Trivial cost at this scale (`gather_state` still
    completes in ~4s); not worth restructuring.
+5. [ ] **Review "How this works" expanders for content to extract into the
+   Glossary** (user-flagged 2026-08-01) — the Glossary dialog
+   (`streamlit_app.py`'s `GLOSSARY`) currently only covers VOR, power
+   score, and adj. value, added specifically for the power/timeline read.
+   Other sections (Roster needs, Draft Plan) still explain their own terms
+   inline inside per-section "How this works" expanders (e.g. Roster
+   needs' VOR explanation predates the Glossary and was never migrated).
+   Worth a pass to find which of those definitions are genuinely
+   reusable/cross-cutting (glossary-appropriate) vs. section-specific
+   walkthroughs that belong where they are.
