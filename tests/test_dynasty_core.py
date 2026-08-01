@@ -47,6 +47,109 @@ class TestComputePickOwnership:
         assert [p.original_roster_id for p in picks] == [1, 2, 1, 2]
 
 
+class TestPickTradeValues:
+    """Remaining current-season picks get their real slot value and owner;
+    next season's picks use the flat, non-tiered round value applied to
+    every team, since there's no real draft order for a season that hasn't
+    happened yet."""
+
+    def test_matches_remaining_current_season_picks_by_exact_slot_name_and_owner(self):
+        ownership = [
+            dc.DraftPickSlot(round=1, overall_pick=1, original_roster_id=1, owner_roster_id=1),
+            dc.DraftPickSlot(round=1, overall_pick=2, original_roster_id=2, owner_roster_id=2),
+        ]
+        fc_values = [
+            {"player": {"name": "2026 Pick 1.01", "position": "PICK"}, "value": 7000},
+            {"player": {"name": "2026 Pick 1.02", "position": "PICK"}, "value": 4000},
+        ]
+        team_names = {1: "Team One", 2: "Team Two"}
+
+        picks = dc.pick_trade_values(
+            ownership,
+            current_pick_no=2,
+            traded_picks=[],
+            num_teams=2,
+            num_rounds=1,
+            season="2026",
+            fc_values=fc_values,
+            team_names=team_names,
+        )
+
+        current_season = picks[picks["pick"].str.startswith("2026")]
+        # Pick 1.01 already happened (overall_pick 1 < current_pick_no 2) - excluded.
+        assert list(current_season["pick"]) == ["2026 Pick 1.02"]
+        assert current_season.iloc[0]["owner"] == "Team Two"
+        assert current_season.iloc[0]["value"] == pytest.approx(4000)
+
+    def test_traded_pick_is_owned_by_the_new_owner_in_ownership_input(self):
+        # owner_roster_id already reflects the trade - that's
+        # compute_pick_ownership's job upstream, this just confirms
+        # pick_trade_values passes it through rather than the original owner.
+        ownership = [dc.DraftPickSlot(round=1, overall_pick=1, original_roster_id=1, owner_roster_id=2)]
+        fc_values = [{"player": {"name": "2026 Pick 1.01", "position": "PICK"}, "value": 7000}]
+        team_names = {1: "Original Team", 2: "New Owner"}
+
+        picks = dc.pick_trade_values(
+            ownership,
+            current_pick_no=1,
+            traded_picks=[],
+            num_teams=1,
+            num_rounds=1,
+            season="2026",
+            fc_values=fc_values,
+            team_names=team_names,
+        )
+
+        assert picks.iloc[0]["owner"] == "New Owner"
+        assert picks.iloc[0]["owner_roster_id"] == 2
+
+    def test_next_season_uses_the_flat_non_tiered_round_value_for_every_team(self):
+        team_names = {1: "Team One", 2: "Team Two"}
+        fc_values = [
+            {"player": {"name": "2027 1st", "position": "PICK"}, "value": 2500},
+            {"player": {"name": "2027 1st (Early)", "position": "PICK"}, "value": 4000},
+        ]
+
+        picks = dc.pick_trade_values(
+            ownership=[],
+            current_pick_no=1,
+            traded_picks=[],
+            num_teams=2,
+            num_rounds=1,
+            season="2026",
+            fc_values=fc_values,
+            team_names=team_names,
+        )
+
+        next_season = picks[picks["pick"] == "2027 1st"]
+        # Every team's future 1st uses the same flat value - not the tiered
+        # "(Early)" bucket, which would require guessing a team's future
+        # standing this far out.
+        assert len(next_season) == 2
+        assert set(next_season["value"]) == {2500.0}
+
+    def test_traded_future_pick_is_owned_by_the_new_owner(self):
+        team_names = {1: "Team One", 2: "Team Two"}
+        traded_picks = [{"round": 1, "season": "2027", "roster_id": 1, "owner_id": 2}]
+        fc_values = [{"player": {"name": "2027 1st", "position": "PICK"}, "value": 2500}]
+
+        picks = dc.pick_trade_values(
+            ownership=[],
+            current_pick_no=1,
+            traded_picks=traded_picks,
+            num_teams=2,
+            num_rounds=1,
+            season="2026",
+            fc_values=fc_values,
+            team_names=team_names,
+        )
+
+        # Roster 1's own future pick was traded away - roster 2 now owns
+        # both its own pick and the traded-in one; roster 1 owns neither.
+        assert len(picks[picks["owner_roster_id"] == 1]) == 0
+        assert len(picks[picks["owner_roster_id"] == 2]) == 2
+
+
 class TestRosterCapacity:
     """IR/reserve players must not count against active-roster capacity, same as taxi."""
 
@@ -181,6 +284,69 @@ class TestPositionalStrengthSummary:
         # Both QBs count: 300 + 100 = 400, not just the top one (300).
         assert summary.loc["QB", "starter_value"] == pytest.approx(400.0)
         assert summary.loc["QB", "vor"] == pytest.approx(300.0)  # 400 - (50 * 2)
+
+
+class TestSellablePlayers:
+    """Sellable candidates are a surplus position's own bench depth beyond
+    its starters, not the starters themselves and not rookies - and only
+    if dropping them wouldn't open a weekly-depth hole."""
+
+    def test_flags_depth_beyond_starters_excludes_starter_and_rookie(self):
+        league = {"roster_positions": ["WR", "BN", "BN"]}
+        players = {
+            "wr1": make_player("WR", full_name="Starter WR"),
+            "wr2": make_player("WR", full_name="Depth WR"),
+            "wr3": make_player("WR", full_name="Rookie WR"),
+        }
+        players["wr1"]["years_exp"] = 5
+        players["wr2"]["years_exp"] = 3
+        players["wr3"]["years_exp"] = 0
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr1", 500, position="WR"), fc_entry("wr2", 300, position="WR"), fc_entry("wr3", 200, position="WR")]
+        )
+        roster = {"players": ["wr1", "wr2", "wr3"]}
+        replacement_level = {"WR": 50.0, "QB": 0.0, "RB": 0.0, "TE": 0.0}
+
+        sellable = dc.sellable_players(roster, players, fc_by_id, replacement_level, league, byes={})
+
+        # wr1 is the position's 1 starter (excluded even though it's the
+        # most valuable) - wr3 is depth but a rookie (excluded) - only wr2
+        # is real, sellable veteran depth.
+        assert list(sellable["name"]) == ["Depth WR"]
+        assert sellable.iloc[0]["position_vor"] == pytest.approx(450.0)  # 500 - 50
+
+    def test_excludes_a_depth_candidate_that_would_open_a_weekly_gap(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {
+            "wr1": make_player("WR", team="AAA", full_name="Starter WR"),
+            "wr2": make_player("WR", team="BBB", full_name="Depth WR"),
+        }
+        players["wr1"]["years_exp"] = 5
+        players["wr2"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("wr1", 500, position="WR"), fc_entry("wr2", 300, position="WR")])
+        roster = {"players": ["wr1", "wr2"]}
+        replacement_level = {"WR": 50.0, "QB": 0.0, "RB": 0.0, "TE": 0.0}
+        byes = {"AAA": 5}  # dropping wr2 would leave only wr1, who's on bye week 5
+
+        sellable = dc.sellable_players(roster, players, fc_by_id, replacement_level, league, byes)
+
+        assert sellable.empty
+
+    def test_no_candidates_from_a_position_that_doesnt_clear_replacement(self):
+        league = {"roster_positions": ["RB", "BN", "BN"]}
+        players = {
+            "rb1": make_player("RB", full_name="RB One"),
+            "rb2": make_player("RB", full_name="RB Two"),
+        }
+        players["rb1"]["years_exp"] = 4
+        players["rb2"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("rb1", 50, position="RB"), fc_entry("rb2", 20, position="RB")])
+        roster = {"players": ["rb1", "rb2"]}
+        replacement_level = {"RB": 200.0, "QB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        sellable = dc.sellable_players(roster, players, fc_by_id, replacement_level, league, byes={})
+
+        assert sellable.empty
 
 
 class TestWeightedAverageAge:
@@ -342,6 +508,7 @@ class TestTeamRosterAnalysis:
             "need_positions",
             "roster_capacity",
             "roster_value",
+            "sellable_players",
             "roster_bye_conflicts",
             "roster_weekly_gaps",
             "roster_handcuffs",

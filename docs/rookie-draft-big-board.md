@@ -352,6 +352,51 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   `st.dataframe`, specifically so each status icon gets a real per-cell
   hover tooltip with its description — `st.dataframe`'s `column_config`
   only supports a tooltip on the column header, not per cell.
+- **Trade targets & sells (v1)** — two composed views, not a new valuation
+  model (see `.claude/conventions/valuation_principles.md`):
+  - **`sellable_players()`** — a team's own bench depth worth shopping,
+    not just cutting. A position qualifies if its own top starters (the
+    same per-position starter count `positional_strength_summary` uses
+    for `starter_value`) clear replacement level (`vor > 0` — real
+    surplus, not just headcount); within a qualifying position, only the
+    roster's depth *beyond* those starters is a candidate — the starters
+    generating that vor are excluded, since selling an actual starter is
+    a much bigger strategic call than "there's more depth here than the
+    roster can use," deliberately left out of v1. A candidate must also
+    survive `gap_delta` against the roster with them removed — depth
+    isn't real surplus if a bye week actually needs it. Rookies are
+    excluded (`years_exp` falsy) — dynasty upside to hold, not surplus to
+    sell. Works through the Roster tab's existing team selector, so it
+    shows any team's sellable depth, not just the user's own — the same
+    reuse pattern as `team_roster_analysis` generally.
+  - **`pick_trade_values()`** — every remaining/near-future draft pick,
+    valued and owner-tagged, league-wide (not filtered by the team
+    selector, since a pick's owner is already a column). Matches
+    FantasyCalc's own pick-name string (e.g. `"2026 Pick 1.01"`,
+    `"2027 1st"`) — the only stable join key FantasyCalc exposes for
+    picks, since draft picks have no `sleeperId`-style identity of their
+    own the way players do. This season's remaining picks get an exact
+    slot value, since Sleeper's real draft object
+    (`compute_pick_ownership`) gives a real slot-to-team order to match
+    against FantasyCalc's per-slot pick curve. Next season's picks
+    (`FUTURE_PICK_YEARS_AHEAD = 1`) use FantasyCalc's flat, non-tiered
+    round value applied the same to every team — there's no real
+    projected-standings input a year out to justify guessing an
+    Early/Mid/Late tier per team, and a guess would fabricate a signal
+    rather than approximate a real one. Seasons beyond that aren't
+    included — Sleeper's `traded_picks` only ever has entries for picks
+    actually traded, so there's no real signal for "these are all the
+    picks that will ever exist" further out, and speculating one risks
+    listing picks with zero real trade activity. Uses FantasyCalc's raw
+    `value`, not `fc_value_by_sleeper_id`'s per-player `adj_value` — a
+    pick has no real or projectable statistical production for that
+    real-scoring correction to apply to.
+
+  Deliberately out of v1: selling an actual starter (not just depth), and
+  trade-block monitoring (watching for a specific player another team is
+  shopping) — both need a real strategic judgment call or a signal Sleeper
+  doesn't expose, tracked in `.claude/PROJECT_PLAN.md` rather than guessed
+  at here.
 - **Bye-week impact** and **weekly gaps** — the former (`roster_bye_conflicts`)
   shows every week with an active-roster player on bye: who's out, who fills
   in, and the resulting delta to optimal starting-lineup value versus a

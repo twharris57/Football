@@ -621,6 +621,31 @@ with roster_tab:
         },
     )
 
+    st.subheader("Sellable veterans")
+    with st.expander("How this works"):
+        st.caption(
+            "This team's own bench depth at positions with real surplus (VOR above zero - see "
+            "the Glossary above), not the starters generating that VOR - selling an actual "
+            "starter is a bigger call than \"there's more depth here than the roster can use,\" "
+            "left for a human to judge, not this list. Only shown if dropping the player "
+            "wouldn't open a weekly-depth hole. A candidate list to evaluate a specific trade "
+            "against, not a recommendation - rookies are excluded (long-term upside to hold, "
+            "not surplus to sell)."
+        )
+    show_df(
+        analysis["sellable_players"],
+        "(no sellable surplus at any position right now)",
+        column_config=cols(
+            analysis["sellable_players"],
+            ("name", "Player"),
+            ("pos", "Position"),
+            ("age", "Age"),
+            ("value", "Value"),
+            ("adj_value", "Adj. Value"),
+            ("position_vor", "Position VOR"),
+        ),
+    )
+
     st.subheader("Bye week impact")
     with st.expander("How this works"):
         st.caption(
@@ -697,6 +722,20 @@ with roster_tab:
             ("handcuff", "Handcuff"),
             ("handcuff_rostered", "Handcuff Rostered"),
         ),
+    )
+
+    st.subheader("Draft pick trade values")
+    st.caption(
+        "League-wide (not filtered to the team selected above) - every remaining pick this "
+        "season, exact-slot valued and matched to its real current owner, plus next season's "
+        "picks at a flat round value applied the same to every team (no real projected "
+        "standings this far out to justify guessing who picks early vs. late)."
+    )
+    pick_values_display = state["pick_trade_values"].drop(columns="owner_roster_id", errors="ignore")
+    show_df(
+        pick_values_display,
+        "(no picks to show)",
+        column_config=cols(pick_values_display, ("pick", "Pick"), ("owner", "Owner"), ("value", "Value")),
     )
 
 st.divider()
