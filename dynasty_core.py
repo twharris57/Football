@@ -307,6 +307,31 @@ def need_positions(roster_needs: pd.DataFrame) -> frozenset[str]:
     return frozenset(roster_needs.index[roster_needs["need"]])
 
 
+def _position_starter_demand(position: str, roster_positions: list[str]) -> int:
+    """How many players are really demanded at a position - dedicated slots, plus
+    SUPER_FLEX demand for QB specifically (see valuation_principles.md's "superflex
+    inflates QB value" rule).
+
+    QB's SUPER_FLEX add-on isn't a new guess: it's the same `count("QB") +
+    count("SUPER_FLEX")` pattern already used for the FantasyCalc market-value call
+    itself (`num_qbs`, see `gather_state`) - in a confirmed superflex league, roughly
+    two QBs per team are startable, not one, so treating SUPER_FLEX demand as
+    effectively a second QB slot matches how the market already prices it, not a new
+    assumption invented here.
+
+    FLEX demand for RB/WR/TE is deliberately NOT modeled here - unlike SUPER_FLEX's
+    near-total lean toward a 2nd QB in this format, FLEX splits demand across three
+    positions with no similarly clean allocation; doing it properly needs a joint
+    model of relative positional depth, not a simple per-position count. Same
+    "ignores FLEX" simplification `roster_weekly_gaps` already makes deliberately,
+    not silently extended scope here - tracked as a known gap, not fixed by this.
+    """
+    count = roster_positions.count(position)
+    if position == "QB":
+        count += roster_positions.count("SUPER_FLEX")
+    return max(count, 1)
+
+
 def position_replacement_levels(
     rosters: list[dict], players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], roster_positions: list[str]
 ) -> dict[str, float]:
@@ -315,12 +340,10 @@ def position_replacement_levels(
 
     Standard value-based-drafting concept: replacement level is the value of the last
     startable-tier player still available - here, the Nth-best rostered player at that
-    position across the whole league, where N = dedicated starting slots at that
-    position (`roster_positions.count(pos)`) times the number of teams. Deliberately
-    ignores FLEX/SUPER_FLEX (undercounts true demand at FLEX-eligible positions) - the
-    same simplification `roster_weekly_gaps` already makes for the same reason, not a
-    new gap. Every rostered player counts toward the pool (including taxi/IR) - they're
-    not on waivers, so they correctly don't count as "available" replacement talent.
+    position across the whole league, where N = `_position_starter_demand()` (dedicated
+    slots, plus SUPER_FLEX for QB) times the number of teams. Every rostered player
+    counts toward the pool (including taxi/IR) - they're not on waivers, so they
+    correctly don't count as "available" replacement talent.
 
     Chosen over a same-roster-relative metric (e.g. "this position's share of total
     roster value") specifically because a share-based metric has a real, foreseeable
@@ -346,7 +369,7 @@ def position_replacement_levels(
         if not pool:
             replacement_level[position] = 0.0
             continue
-        rank = max(roster_positions.count(position) * num_teams, 1)
+        rank = max(_position_starter_demand(position, roster_positions) * num_teams, 1)
         replacement_level[position] = pool[rank - 1] if rank <= len(pool) else pool[-1]
     return replacement_level
 
@@ -366,9 +389,9 @@ def positional_strength_summary(
     about trade strategy - "are this position's actual starters even worth what's
     freely available across the league," using `position_replacement_levels`'s
     external baseline. Only the roster's own top-N players at a position (N =
-    dedicated starting slots, same simplification as the replacement-level calc
-    itself) count toward `starter_value` - deep bench depth at a position doesn't
-    make it "strong" if it never plays.
+    `_position_starter_demand()`, same SUPER_FLEX-for-QB accounting as the
+    replacement-level calc itself) count toward `starter_value` - deep bench depth
+    at a position doesn't make it "strong" if it never plays.
     """
     by_position: dict[str, list[float]] = {pos: [] for pos in FANTASY_POSITIONS}
     for player_id, info in roster_fantasy_players(roster, players):
@@ -380,7 +403,7 @@ def positional_strength_summary(
     rows = []
     for position in FANTASY_POSITIONS:
         values = sorted(by_position[position], reverse=True)
-        starter_count = max(roster_positions.count(position), 1)
+        starter_count = _position_starter_demand(position, roster_positions)
         starter_value = sum(values[:starter_count])
         rep_value = replacement_level.get(position, 0.0) * starter_count
         rows.append(
