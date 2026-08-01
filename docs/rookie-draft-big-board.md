@@ -227,7 +227,7 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   `positional_strength_summary` are joined on position into one
   `roster_needs` table (`team_roster_analysis`) rather than kept as two
   separate ones, since they're both "per position" views a user would want
-  side by side. Works for any team via the Your Roster tab's team selector,
+  side by side. Works for any team via the Roster tab's team selector,
   not just the user's own — the same `replacement_level` baseline (computed
   once per refresh across every roster) applies regardless of whose roster
   is being viewed.
@@ -259,6 +259,78 @@ is deferred (see `.claude/PROJECT_PLAN.md`).
   See `.claude/conventions/valuation_principles.md` for the durable rule
   this fix follows ("superflex inflates QB value — model it as such,
   everywhere").
+- **Team timeline / power-timeline read** (`team_power_timeline_scores()`)
+  — every team's rebuild-vs-contend read, not just the user's own, and a
+  *continuous* score rather than a fixed two- or three-point label from the
+  start (the plan's own "consider a continuous score, not just discrete
+  phase labels" note) — display buckets are thresholds on the score, not a
+  separate computation. Combines three signals, each z-scored across the
+  whole league (population std, `ddof=0`, deliberately — every team here
+  genuinely *is* the whole population, not a sample, and it sidesteps the
+  single-team-league `NaN` a sample std would produce) so none can dominate
+  by raw scale alone, then averaged with equal weight — a starting judgment
+  call to revisit by feel (see `valuation_principles.md`), not a derived
+  constant:
+  - **Roster strength** — `positional_strength_summary()`'s `vor` summed
+    across positions, reusing the SUPER_FLEX-aware replacement-level work
+    directly rather than a second strength model.
+  - **Timeline direction** — `_weighted_average_age()`: value-weighted
+    average roster age, not a flat one. An old bench piece shouldn't count
+    the same as an old franchise cornerstone toward "how win-now is this
+    roster" — weighting by `adj_value` fixes that.
+  - **Actual record** — real `wins / (wins + losses + ties)` from Sleeper's
+    standings, not just projected strength: a thin roster on a hot streak
+    and a stacked roster off to a bad start are both real signals a
+    roster-composition-only read would miss entirely. Defaults to a neutral
+    `0.5` with zero games played (true pre-season/pre-draft, confirmed
+    directly) — every team ties at that same neutral value then, so the
+    term contributes zero variance and the score reduces to strength +
+    timeline alone until real results exist. Not a special case coded
+    around; an emergent property of z-scoring a constant.
+
+  Recomputed fresh every refresh from already-pulled data (no new API
+  calls) rather than cached, so it reacts to injuries, trades, and real
+  results automatically instead of ever going stale — directly addresses
+  the plan's concern that a label computed once and left alone would go
+  stale exactly when a real event (an injury, a team realizing they're one
+  piece away) should have moved it. Computed once for the whole league in
+  `gather_state` (every team's row is needed together for the z-scoring
+  itself), unlike `team_roster_analysis`'s per-team on-demand pattern — a
+  UI just looks up the selected team's row. Verified directly against live
+  data: the user's own team (a confirmed year-one rebuild, see `CLAUDE.md`)
+  reads as `rebuilding` with the lowest score in the league; the roster
+  with the league's highest-value QB reads as `contending` — both
+  consistent with what's independently known about the real league.
+
+  `rank` (1 = strongest `power_score` in the league) and `games_played`
+  are also exposed, both display-only derivatives rather than separate
+  computations — a raw z-score isn't something a user should have to
+  interpret cold, so the UI/CLI lead with "3 of 12" instead, with the raw
+  score available as a tooltip/aside for anyone who wants it.
+  `games_played == 0` is the signal a UI needs to show "no games played
+  yet" instead of a misleading flat 50% win rate before the season starts
+  — without it, every team's win% looks identical and real, not like the
+  neutral placeholder it actually is.
+
+  `power_score` blends two conceptually different axes — "how good is
+  this roster right now" (strength + record) and "which way is it
+  pointed" (timeline) — which averages away the distinction between a
+  strong/young/ascending team and a weak/old/declining one landing on the
+  same number. `quality_score` (strength + record, z-scored and averaged)
+  and `timeline_score` (timeline, z-scored) are exposed separately for
+  exactly that reason, so a downstream consumer that needs to tell those
+  two cases apart (the planned trade-target/sell evaluator) can reason
+  about them independently rather than re-deriving the same z-scores —
+  see `.claude/PROJECT_PLAN.md`'s "Roster & trade tooling" for the
+  assistant valuation review that caught this. `power_score`/`phase`
+  stay as the at-a-glance UI read; this is additive.
+
+  A **Glossary** (`GLOSSARY` dict + an `st.dialog` in `streamlit_app.py`,
+  behind a "❓ Glossary" button next to the page title) defines VOR, power
+  score, and adj. value in one reachable place — added after user feedback
+  that VOR was previously only explained inside the Roster needs section's
+  own "How this works" expander, easy to miss from anywhere else in the
+  app.
 - **Roster value analysis** — full roster sorted lowest-`adj_value` first.
   Doesn't treat "low value" as "drop" outright: age is weighed in, so a
   low-value *young* player is flagged as rebuild upside to hold, while

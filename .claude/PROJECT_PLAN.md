@@ -49,69 +49,82 @@ caught that the first version silently reverted QB to single-QB-league
 demand, which would have systematically understated QB's VOR for
 everything built on top of it. Verified directly against live data (the
 league-wide rank-24 replacement QB is a real, independently-confirmed
-player, not a self-referential artifact). Works through the Your Roster
+player, not a self-referential artifact). Works through the Roster
 tab's team selector for any team, not just the user's own.
 
-1. [ ] **League-wide power/timeline read** — place every team in the league
-   on a rebuild-vs-contend spectrum, to identify good trade partners
-   (contenders who overpay for immediate help, rebuilders who overpay for
-   future assets). Build on the positional-value work above applied
-   per-team, not a separate model — a team's overall power/timeline is
-   naturally a roll-up of how strong/weak/young/old each of its positions
-   is. Feeds item 2.
+**League-wide power/timeline read done (2026-08-01)** — see
+`docs/rookie-draft-big-board.md` for the full methodology.
+`team_power_timeline_scores()` gives every team (not just the user's own)
+a continuous, league-wide z-scored `power_score` combining aggregate VOR
+(roster strength), value-weighted average age (timeline direction), and
+actual win percentage (how the season is really going — defaults to a
+neutral 0.5 pre-season, contributing zero variance until real results
+exist) — a continuous score from the start, per the "consider a continuous
+score, not discrete phase labels" note, with `phase`
+(rebuilding/treading_water/contending) as a display-only bucketing of it.
+Recomputed fresh every refresh from already-pulled data, so it reacts to
+injuries/trades/results automatically rather than ever going stale.
+Verified directly against live data: the user's own team (a confirmed
+year-one rebuild) reads as the league's lowest score/`rebuilding`; the
+roster with the league's highest-value QB reads as `contending` — both
+consistent with what's independently known about the real league. Shown
+in the Roster tab (for whichever team the selector has picked) and
+the CLI.
 
-   **Follow up on this line of thinking when actually building it**
-   (user-flagged 2026-08-01): a two-point rebuild-vs-contend spectrum is
-   probably too coarse. The user's framing has at least three phases -
-   rebuilding, running for a title, and just finishing the season out at a
-   decent level (a real, distinct state - not full rebuild mode, but not
-   actively pushing for a title either) - and phase isn't fixed for a
-   season: it can shift mid-season on a real event (a team realizing
-   they're one piece away from a title run, or a season/career-ending
-   injury ending a contender's hopes). A single label computed once per
-   refresh and left alone would go stale exactly when it matters most
-   (right after the event that should have changed it). Whatever this
-   read feeds into (trade targets, in-season monitoring) should account
-   for a team's phase actually moving, not just where it started the
-   season - worth deciding at build time whether that means recomputing
-   fresh every refresh (cheap if it's just derived from current roster
-   state, which reacts to injuries/moves already) versus something more
-   deliberate. Same lifecycle-phase concept applies to item 4's "make
-   need/strategy phase-aware" for the user's *own* team, not just other
-   teams here - worth keeping the two consistent rather than solving the
-   same problem two different ways.
+**Quality-vs-timeline conflation fixed (2026-08-01)** — an assistant
+valuation review caught that averaging `aggregate_vor`/`win_pct` ("how
+good is this roster") together with `weighted_age` ("which way is it
+pointed") into one `power_score` could hide a strong/young/ascending team
+and a weak/old/declining team landing on the same blended number, despite
+opposite trade postures. Rather than a rewrite, `team_power_timeline_scores()`
+now also exposes `quality_score` (`aggregate_vor` + `win_pct`, z-scored
+and averaged) and `timeline_score` (`weighted_age`, z-scored) as separate
+columns alongside the existing blended `power_score`/`phase` — so item 2
+below (Trade targets & sells) can reason about roster strength and timeline
+direction independently instead of re-deriving the same z-scores. Covered
+by `test_quality_and_timeline_axes_can_disagree_within_one_team`, which
+constructs exactly the divergent case (young/strong/winning vs.
+old/weak/losing) the review flagged.
 
-   **Consider a continuous score, not just discrete phase labels**
-   (assistant valuation review, 2026-07-31): the three-phase framing above
-   is a good user-facing description, but implementing the underlying
-   computation as a continuous index (e.g. derived from the roster's
-   aggregate VOR and age profile, now that the SUPER_FLEX/QB fix above has
-   landed) rather than jumping straight to a fixed small set of discrete
-   buckets would avoid re-litigating "how many phases" a third time later
-   — display labels can still be thresholds on that continuous score.
+1. [ ] **Add small-sample shrinkage to the power/timeline read's `win_pct`**
+   (assistant valuation review, 2026-08-01) — the zero-games case is
+   handled well (neutral `0.5`, correctly contributes zero variance
+   pre-season — proven by its own test), but from week 1 onward `win_pct`
+   gets full, undiscounted weight off as few as one game — a 1-0 or 0-1
+   start is close to a coin flip, yet swings the z-score as hard as it
+   ever will at week 10. Consider shrinking `win_pct` toward `0.5` (or
+   toward the vor-implied expectation) by something like
+   `games_played / (games_played + k)`, so early results contribute
+   proportionally to how much they've actually resolved — and/or using
+   `points_for`/point differential (likely already in Sleeper's roster
+   `settings`) as a steadier alternative to binary win/loss, standard
+   practice in sabermetric-style team-strength reads for the same
+   small-sample reason. Deferred past the current PR: it's a refinement
+   to an emergent-variance mechanic that doesn't matter until real games
+   have been played, and reweighting the formula's actual math deserves
+   its own review rather than folding into a display-clarity PR.
 2. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
    of the user's veterans are sellable for picks, and which other teams'
-   picks/young players might be realistically available. Deliberately
-   sequenced after item 1, not before: "sellable" can already lean on the
-   positional-value work above (a valuable player at a *deep* position is
-   a better sell than an equally valuable one at a *thin* one), but "what's
-   realistically available" from another team still needs a real
-   rebuild-vs-contend read on them, not just their lowest-value players —
-   building this before item 1 would produce a weak v1 that has to be
-   redone once it exists. Should extend to **trade-block monitoring**
-   (user-flagged 2026-08-01): watch for players another team is actively
-   shopping and score them against the current roster the same way the
-   free-agent evaluator's in-season pickup monitoring does (item 3) —
-   season-average marginal starting-lineup value, not raw trade value —
-   flagging only when a specific player would be a genuine value-add, not
-   every trade rumor. Needs a real signal for "this player is on the
-   block" first (Sleeper doesn't expose trade discussions directly, so
-   this likely means the user manually flagging a name to check rather
-   than a real feed, at least for v1). A manually-flagged name here is
-   also a natural fit for item 6's contextual research check, once that
-   exists — pulling real context (usage change, injury detail, actual
-   trade buzz) beyond what Sleeper/FantasyCalc carry, for that one
-   specific player.
+   picks/young players might be realistically available. Now that the
+   power/timeline read above is done, "what's realistically available"
+   from another team can use that real rebuild-vs-contend read on them —
+   reason about it via the separate `quality_score`/`timeline_score` axes
+   (done above), not the blended `power_score`/`phase`, which conflates
+   "how good" with "which way pointed" (see the done-note above). Should
+   extend to
+   **trade-block monitoring** (user-flagged 2026-08-01): watch for players
+   another team is actively shopping and score them against the current
+   roster the same way the free-agent evaluator's in-season pickup
+   monitoring does (item 3) — season-average marginal starting-lineup
+   value, not raw trade value — flagging only when a specific player would
+   be a genuine value-add, not every trade rumor. Needs a real signal for
+   "this player is on the block" first (Sleeper doesn't expose trade
+   discussions directly, so this likely means the user manually flagging a
+   name to check rather than a real feed, at least for v1). A
+   manually-flagged name here is also a natural fit for item 6's
+   contextual research check, once that exists — pulling real context
+   (usage change, injury detail, actual trade buzz) beyond what
+   Sleeper/FantasyCalc carry, for that one specific player.
 
    **Sellable vs. just droppable** (user-flagged 2026-08-01): the "sellable
    veterans" side of this needs a real line between "worth trying to
@@ -234,15 +247,16 @@ tab's team selector for any team, not just the user's own.
 5. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
-   team, complementing the Your Roster tab's team selector (added
+   team, complementing the Roster tab's team selector (added
    2026-07-29), which only ever shows one team at a time. Cheaper than it
    would have been before that selector shipped —
    `dynasty_core.team_roster_analysis()` already runs this exact per-team
    analysis for any roster on demand; this is "call it for all ~12 teams
    and lay out a summary row," not new analysis logic. A natural
-   lighter-weight precursor to item 1's power/timeline read, not a
-   replacement for it — this surfaces raw stats per team, not a
-   rebuild-vs-contend classification.
+   lighter-weight complement to the power/timeline read above (done
+   2026-08-01) — this surfaces raw stats per team, not a rebuild-vs-contend
+   classification, but both answer "what does this team look like" at a
+   glance.
 6. [ ] **Contextual research check for news/hype beyond Sleeper's data**
    (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
    unconfirmed) — a rare, explicitly user-triggered lookup (not a
@@ -377,3 +391,27 @@ assumption changes.
 2. [ ] **Exclude a candidate from its own drop-simulation** in
    `recommend_drop` — theoretically possible, vanishingly unlikely to
    surface as a top pick.
+3. [ ] **`team_power_timeline_scores`'s all-teams-missing weighted-age
+   edge case** (assistant valuation review, 2026-08-01) —
+   `weighted_age.fillna(mean)` only recovers if at least one team has a
+   valid weighted age; if literally every roster in the league had zero
+   players with a positive FantasyCalc value (never observed — same class
+   of edge case the code already flags as "never observed, not
+   impossible" for the single-team version), the column would stay
+   all-`NaN` and silently propagate into every team's `power_score`. Not
+   worth guarding given the odds.
+4. [ ] **Duplicate `positional_strength_summary()` call for the user's own
+   roster** (assistant valuation review, 2026-08-01) — now computed once
+   via `team_roster_analysis` and again via `team_power_timeline_scores`
+   each refresh. Trivial cost at this scale (`gather_state` still
+   completes in ~4s); not worth restructuring.
+5. [ ] **Review "How this works" expanders for content to extract into the
+   Glossary** (user-flagged 2026-08-01) — the Glossary dialog
+   (`streamlit_app.py`'s `GLOSSARY`) currently only covers VOR, power
+   score, and adj. value, added specifically for the power/timeline read.
+   Other sections (Roster needs, Draft Plan) still explain their own terms
+   inline inside per-section "How this works" expanders (e.g. Roster
+   needs' VOR explanation predates the Glossary and was never migrated).
+   Worth a pass to find which of those definitions are genuinely
+   reusable/cross-cutting (glossary-appropriate) vs. section-specific
+   walkthroughs that belong where they are.
