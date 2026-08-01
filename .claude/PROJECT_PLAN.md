@@ -92,6 +92,18 @@ user's own.
    block" first (Sleeper doesn't expose trade discussions directly, so
    this likely means the user manually flagging a name to check rather
    than a real feed, at least for v1).
+
+   **Sellable vs. just droppable** (user-flagged 2026-08-01): the "sellable
+   veterans" side of this needs a real line between "worth trying to
+   trade" and "worth just cutting" - not the same question as the
+   existing low-value/aging drop-candidate flag in `roster_value_analysis`
+   (and `recommend_drop`/`best_position_relevant_drop`, which already
+   answer "who to drop" once a roster spot is genuinely needed). A player
+   can be too marginal to keep but still have enough real market value
+   (FantasyCalc `value`, or scarcity at a thin position elsewhere in the
+   league per item 1's VOR work) that shopping them first beats just
+   cutting them for nothing. Where exactly that line sits is worth
+   deciding when this is actually built, not guessed at now.
 3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
@@ -113,6 +125,21 @@ user's own.
    assumes every candidate is taxi-eligible, true for rookies but not a
    general accrued-experience eligibility check against Sleeper's actual
    taxi rule — free agents won't all qualify.
+
+   **FAAB budget awareness** (user-flagged 2026-08-01): this league does
+   use FAAB, not priority-only waivers (confirmed directly - league
+   `settings.waiver_budget: 100`, `waiver_type: 2`). Any real add
+   recommendation needs the bidding-budget picture, not just "is this
+   player worth adding": the user's own remaining budget
+   (`roster["settings"]["waiver_budget_used"]`, confirmed available per
+   team directly from `get_rosters()` - no separate endpoint needed),
+   ideally every other team's remaining budget too (a league where
+   everyone else is broke changes what a given player is actually worth
+   bidding), and the opportunity cost of spending it now vs. saving it for
+   a bigger add later in the season. This is a real gap in "worth an add"
+   as currently scoped - a player can be a genuine value-add and still be
+   a bad bid if it's most of the budget for a marginal upgrade with a
+   bigger name likely to hit waivers in a few weeks.
 4. [ ] **Make "need"/strategy phase-aware — a static rule today, should
    evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
    now `roster_needs_summary`'s `need` flag is one fixed rule for all
