@@ -179,7 +179,7 @@ that can't fix a bad input.
 
 ### Table presentation
 
-Two conventions applied consistently across every tab:
+Conventions applied consistently across every tab:
 
 - **Human-readable column labels.** Every table's underlying DataFrame
   keeps its plain snake_case column names (so the rest of the codebase and
@@ -189,6 +189,21 @@ Two conventions applied consistently across every tab:
   dict from `(key, label)`/`(key, label, help_text)` tuples. The special
   `"_index"` key relabels an index-as-column table's header too (e.g.
   Roster Needs' `pos` index shows as "Pos").
+- **Decimal precision capped at 2 digits, display-only** (user-flagged
+  2026-07-26). `st.dataframe` otherwise shows whatever precision the
+  underlying float happens to carry — `adj_value`'s real-scoring multiplier
+  routinely produces values like `7827.988709`. `cols()` now takes the
+  DataFrame itself (dtypes only, never mutated) and checks each column with
+  `pd.api.types.is_float_dtype` — a float column gets
+  `st.column_config.NumberColumn(format="%.2f")` instead of the plain
+  `Column` a string/int/bool column gets. Deliberately uniform across every
+  float column, including ones that are always whole numbers in practice
+  (`value`, `bye`, `big_board`'s `age`) rather than hand-picking a different
+  precision per column — simpler and more consistent than the alternative,
+  and every one of them is still correctly capped, not truncated (a real
+  `.5` still rounds to `.50`, not `.49`). The CLI mirrors this via
+  `to_string(float_format=...)` (see below) — same cap, same reasoning,
+  different mechanism since the CLI has no per-column config to hook into.
 - **Per-cell hover tooltips need custom HTML, not `st.dataframe`.**
   `column_config`'s `help` text only tooltips the column *header*, not
   individual cells. Roster Value Analysis's `status` icons each need their
@@ -198,6 +213,8 @@ Two conventions applied consistently across every tab:
   general pattern. Cell text is `html.escape()`d; the `status` column
   specifically wraps each icon in `<span title="...">` using
   `dynasty_core.player_status_details()`'s (icon, description) pairs.
+  Since this table bypasses `cols()` entirely, its own cell-rendering loop
+  separately applies the same 2-decimal cap to any `float` cell value.
 - **Methodology text lives in a closed "How this works" expander**, not a
   bare `st.caption`, on every tab/section that has one (Draft Plan, Draft
   Board, Roster Value Analysis, Bye Week Impact, Weekly Gaps) — keeps the
@@ -212,6 +229,15 @@ Thin wrapper: `print_report()` renders the same `gather_state()` output as
 plain text, `main()` adds the interactive Enter/`f`/`q` refresh loop. Kept in
 full parity with the web app deliberately — it's the tested fallback if
 Docker or the NAS has a problem on draft day.
+
+Every `DataFrame.to_string()` call passes `float_format=DISPLAY_FLOAT_FORMAT`
+(`"{:.2f}".format`) — pandas' own default (`display.precision`, 6 digits)
+otherwise prints raw values straight from the underlying computation (e.g.
+`6703.189338`). Display-only: `float_format` is a formatting callback for
+`to_string()`'s own output, not something that touches the DataFrame it's
+called on, so nothing downstream (tests, further computation) is affected.
+Same cap and reasoning as the web app's `cols()` (see above), applied
+uniformly rather than per-column for the same reason.
 
 ## Docker + CI/CD
 

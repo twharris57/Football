@@ -140,13 +140,7 @@ signal (item 2) lands before the tools that consume it (items 4-5).
    logic, but `sleeper_api.py`/`fantasycalc_api.py` (the retry/session logic
    and cache-TTL behavior itself) and the CLI's error-handling loop still
    have none. Worth building out now that draft-week time pressure is off.
-2. [ ] **Cap decimal precision in UI displays** (user-flagged 2026-07-26) —
-   value/score columns across the CLI and Streamlit tables currently show
-   whatever float precision the underlying computation happens to produce;
-   cap display to 2 decimal digits with proper rounding (not truncation)
-   everywhere a value is rendered for a human, without changing the
-   underlying stored/compared precision.
-3. [ ] **Better logging solution than `print()`** (user-flagged 2026-07-26) —
+2. [ ] **Better logging solution than `print()`** (user-flagged 2026-07-26) —
    `rookie_draft.py`'s CLI output is all `print()` today; `python_guidelines.md`
    calls for the standard `logging` module instead (levels, no `print()` for
    diagnostics). Worth a dedicated look at how much of the CLI's *report*

@@ -31,6 +31,15 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 
+# Every float column across every table (adj_value, value, age, bye, ...)
+# capped to 2 decimal digits for display - pandas' default (display.precision,
+# 6 digits) let raw values like 7827.988709 leak straight to the terminal.
+# Display-only: a formatting function passed to to_string() never touches
+# the actual DataFrame, so nothing downstream that reads these values
+# (tests, further computation) is affected.
+DISPLAY_FLOAT_FORMAT = "{:.2f}".format
+
+
 def render_df(df: pd.DataFrame, empty_message: str, *, index: bool = False) -> str:
     """Return df as a plain-text table, or empty_message if it's empty.
 
@@ -38,7 +47,7 @@ def render_df(df: pd.DataFrame, empty_message: str, *, index: bool = False) -> s
     a meaningless default index (index=False); roster_needs is grouped by
     position, where the index is the point, so it opts into index=True.
     """
-    return df.to_string(index=index) if not df.empty else empty_message
+    return df.to_string(index=index, float_format=DISPLAY_FLOAT_FORMAT) if not df.empty else empty_message
 
 
 def print_report(state: dict[str, Any]) -> None:
@@ -88,15 +97,15 @@ def print_report(state: dict[str, Any]) -> None:
             alternates = alternates_by_pick.get(row["overall_pick"])
             if alternates is not None and not alternates.empty:
                 print(f"  Backup options for pick {row['overall_pick']} (round {row['round']}):")
-                print(alternates.to_string(index=False))
+                print(alternates.to_string(index=False, float_format=DISPLAY_FLOAT_FORMAT))
     if not plan["weekly_gap_alerts"].empty:
         print("ALERT: this plan would introduce/worsen a weekly gap:")
-        print(plan["weekly_gap_alerts"].to_string(index=False))
+        print(plan["weekly_gap_alerts"].to_string(index=False, float_format=DISPLAY_FLOAT_FORMAT))
     else:
         print("This plan does not introduce any new weekly gaps.")
 
     print("\n--- Lineup (optimal current starters, value-only snapshot) ---")
-    print(state["lineup_starters"].to_string(index=False))
+    print(state["lineup_starters"].to_string(index=False, float_format=DISPLAY_FLOAT_FORMAT))
     print("Bench (top 5 by value):")
     print(render_df(state["lineup_bench"].head(5), "(empty)"))
     print("Taxi squad:")
@@ -146,7 +155,7 @@ def print_report(state: dict[str, Any]) -> None:
         "for FLEX/SUPER_FLEX, which could pull from other positions."
     )
     weekly_gaps = state["roster_weekly_gaps"]
-    print(weekly_gaps.to_string(index=False))
+    print(weekly_gaps.to_string(index=False, float_format=DISPLAY_FLOAT_FORMAT))
     gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
     if not gap_weeks.empty:
         print("Weeks with a gap:")
@@ -157,7 +166,7 @@ def print_report(state: dict[str, Any]) -> None:
 
     if not state["recent_picks"].empty:
         print("\n--- Recently drafted ---")
-        print(state["recent_picks"].to_string(index=False))
+        print(state["recent_picks"].to_string(index=False, float_format=DISPLAY_FLOAT_FORMAT))
 
     print(
         "\n--- Rookie big board (whole class - drafted players stay listed) ---\n"
@@ -175,7 +184,11 @@ def print_report(state: dict[str, Any]) -> None:
     else:
         for tier in sorted(board["tier"].unique()):
             print(f"\nTier {tier}:")
-            print(board[board["tier"] == tier].drop(columns="tier").to_string(index=False))
+            print(
+                board[board["tier"] == tier]
+                .drop(columns="tier")
+                .to_string(index=False, float_format=DISPLAY_FLOAT_FORMAT)
+            )
 
 
 def main() -> None:
