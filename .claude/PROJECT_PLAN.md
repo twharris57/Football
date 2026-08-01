@@ -71,22 +71,61 @@ consistent with what's independently known about the real league. Shown
 in the Your Roster tab (for whichever team the selector has picked) and
 the CLI.
 
-1. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
+1. [ ] **Fix power/timeline read's quality-vs-timeline conflation before
+   item 2 (Trade targets & sells) consumes it** (assistant valuation
+   review, 2026-08-01) — `team_power_timeline_scores()`'s `power_score`
+   averages three z-scores with equal weight: `aggregate_vor` and
+   `win_pct` both answer "how good is this roster," while `weighted_age`
+   answers a different question, "which way is it pointed." Averaging
+   them together collapses that distinction — a strong, young, ascending
+   team (+vor, −age, average record) and a weak, old, declining team
+   (−vor, +age, average record) can land on the *same* `power_score` and
+   `phase` (`treading_water`), despite being close to opposite trade
+   postures. The old/weak team is exactly the fire-sale seller item 2
+   most needs to identify; the young/strong team is closer to a buy
+   target. The live-data sanity check in the commit that shipped this
+   (known-bad team scores lowest; team with the league's best QB scores
+   highest) doesn't exercise this failure mode, since all three signals
+   move the same direction in both cases — worth spot-checking a team
+   with genuinely divergent signals (old-and-bad, or a young team on a
+   hot streak) before trusting `phase` for anything automated. Doesn't
+   need a rewrite to fix: keep computing the three raw signals (already
+   exposed in the UI breakdown), but have anything downstream that needs
+   to *distinguish* teams — item 2 especially — reason about roster
+   quality (`aggregate_vor` + `win_pct`) and timeline (`weighted_age`) as
+   two separate axes rather than the blended `power_score`/`phase`.
+
+   **`win_pct` has no small-sample shrinkage** (assistant valuation
+   review, 2026-08-01): the zero-games case is handled well (neutral
+   `0.5`, correctly contributes zero variance pre-season — proven by its
+   own test), but from week 1 onward `win_pct` gets full, undiscounted
+   weight off as few as one game — a 1-0 or 0-1 start is close to a coin
+   flip, yet swings the z-score as hard as it ever will at week 10.
+   Consider shrinking `win_pct` toward `0.5` (or toward the
+   vor-implied expectation) by something like
+   `games_played / (games_played + k)`, so early results contribute
+   proportionally to how much they've actually resolved — and/or using
+   `points_for`/point differential (likely already in Sleeper's roster
+   `settings`) as a steadier alternative to binary win/loss, standard
+   practice in sabermetric-style team-strength reads for the same
+   small-sample reason.
+2. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
    of the user's veterans are sellable for picks, and which other teams'
    picks/young players might be realistically available. Now that the
    power/timeline read above is done, "what's realistically available"
    from another team can use that real rebuild-vs-contend read on them,
-   not just their lowest-value players. Should extend to
+   not just their lowest-value players — see item 1 above for a real
+   caveat on that read before consuming it directly. Should extend to
    **trade-block monitoring** (user-flagged 2026-08-01): watch for players
    another team is actively shopping and score them against the current
    roster the same way the free-agent evaluator's in-season pickup
-   monitoring does (item 2) — season-average marginal starting-lineup
+   monitoring does (item 3) — season-average marginal starting-lineup
    value, not raw trade value — flagging only when a specific player would
    be a genuine value-add, not every trade rumor. Needs a real signal for
    "this player is on the block" first (Sleeper doesn't expose trade
    discussions directly, so this likely means the user manually flagging a
    name to check rather than a real feed, at least for v1). A
-   manually-flagged name here is also a natural fit for item 5's
+   manually-flagged name here is also a natural fit for item 6's
    contextual research check, once that exists — pulling real context
    (usage change, injury detail, actual trade buzz) beyond what
    Sleeper/FantasyCalc carry, for that one specific player.
@@ -140,7 +179,7 @@ the CLI.
    makes sense for an entity with real or combine-projected stats. Worth a
    comment at the call site when this is built so a future edit doesn't
    try to force picks through that pipeline by habit.
-2. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
+3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
    timeline. Should extend to **in-season pickup monitoring**: when a free
@@ -187,7 +226,7 @@ the CLI.
    project's existing pattern of shipping a deliberately lightweight v1
    (e.g. `POSITION_VALUE_MULTIPLIER` before the full per-player recompute)
    over a fully general model nobody's asked for yet.
-3. [ ] **Make "need"/strategy phase-aware — a static rule today, should
+4. [ ] **Make "need"/strategy phase-aware — a static rule today, should
    evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
    now `roster_needs_summary`'s `need` flag is one fixed rule for all
    time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
@@ -198,7 +237,7 @@ the CLI.
    about accumulating rookies (this project's whole existing purpose);
    year 2 should shift toward smart trades, continuing to find promising
    talent opportunistically — not just rookies, but free agents with a
-   sudden uptick in opportunity/fortune (this is exactly item 2's
+   sudden uptick in opportunity/fortune (this is exactly item 3's
    in-season pickup monitoring) — and dropping deadweight with limited
    future payoff (already partly modeled by `roster_value_analysis`'s
    `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
@@ -209,7 +248,7 @@ the CLI.
    Related to but distinct from the positional-value work above — that's
    about *which position* is weak; this is about *what kind of move* the
    team should even be looking for at this point in the rebuild.
-4. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
+5. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
    team, complementing the Your Roster tab's team selector (added
@@ -222,7 +261,7 @@ the CLI.
    2026-08-01) — this surfaces raw stats per team, not a rebuild-vs-contend
    classification, but both answer "what does this team look like" at a
    glance.
-5. [ ] **Contextual research check for news/hype beyond Sleeper's data**
+6. [ ] **Contextual research check for news/hype beyond Sleeper's data**
    (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
    unconfirmed) — a rare, explicitly user-triggered lookup (not a
    background job) for one *specific* named player: pull recent context an
@@ -236,8 +275,8 @@ the CLI.
    FantasyCalc's own market already has. Needs investigating what's
    actually available and appropriate here before committing to an
    implementation — treat the specific tool name as unverified, just the
-   user's working label for the idea. Natural entry points: item 1's
-   trade-block monitoring (checking one flagged name) and item 2's
+   user's working label for the idea. Natural entry points: item 2's
+   trade-block monitoring (checking one flagged name) and item 3's
    free-agent evaluator (checking one waiver target) — not a general
    always-on feed, and not a replacement for the stats-based ranking
    anywhere in the pipeline.
@@ -356,3 +395,17 @@ assumption changes.
 2. [ ] **Exclude a candidate from its own drop-simulation** in
    `recommend_drop` — theoretically possible, vanishingly unlikely to
    surface as a top pick.
+3. [ ] **`team_power_timeline_scores`'s all-teams-missing weighted-age
+   edge case** (assistant valuation review, 2026-08-01) —
+   `weighted_age.fillna(mean)` only recovers if at least one team has a
+   valid weighted age; if literally every roster in the league had zero
+   players with a positive FantasyCalc value (never observed — same class
+   of edge case the code already flags as "never observed, not
+   impossible" for the single-team version), the column would stay
+   all-`NaN` and silently propagate into every team's `power_score`. Not
+   worth guarding given the odds.
+4. [ ] **Duplicate `positional_strength_summary()` call for the user's own
+   roster** (assistant valuation review, 2026-08-01) — now computed once
+   via `team_roster_analysis` and again via `team_power_timeline_scores`
+   each refresh. Trivial cost at this scale (`gather_state` still
+   completes in ~4s); not worth restructuring.
