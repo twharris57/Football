@@ -66,6 +66,73 @@ class TestRosterCapacity:
         assert cap["reserve_open"] == 0
 
 
+class TestPositionReplacementLevels:
+    """Replacement level should be an external, league-wide baseline - the Nth-best
+    rostered player at a position, N = dedicated slots * number of teams - not
+    anything relative to a single roster."""
+
+    def test_replacement_level_is_the_nth_best_player_leaguewide(self):
+        # 1 dedicated WR slot * 2 teams = rank 2 - the 2nd-best WR leaguewide.
+        league_roster_positions = ["WR", "BN"]
+        players = {
+            "wr_a1": make_player("WR", full_name="A1"),
+            "wr_a2": make_player("WR", full_name="A2"),
+            "wr_b1": make_player("WR", full_name="B1"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [
+                fc_entry("wr_a1", 300, position="WR"),
+                fc_entry("wr_a2", 100, position="WR"),
+                fc_entry("wr_b1", 200, position="WR"),
+            ]
+        )
+        rosters = [{"players": ["wr_a1", "wr_a2"]}, {"players": ["wr_b1"]}]
+
+        levels = dc.position_replacement_levels(rosters, players, fc_by_id, league_roster_positions)
+
+        # Sorted WR pool: [300, 200, 100] - rank 2 is 200.
+        assert levels["WR"] == pytest.approx(200.0)
+
+    def test_position_with_no_rostered_players_is_zero(self):
+        levels = dc.position_replacement_levels([{"players": []}], {}, {}, ["QB", "BN"])
+
+        assert levels["TE"] == 0.0
+
+
+class TestPositionalStrengthSummary:
+    """vor/weak should reflect the roster's own top starter-count players at a
+    position against the external replacement_level baseline - not raw depth."""
+
+    def test_positive_vor_when_starters_clear_replacement_level(self):
+        league_roster_positions = ["WR", "BN"]
+        players = {
+            "wr1": make_player("WR", full_name="WR One"),
+            "wr2": make_player("WR", full_name="WR Two"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr1", 300, position="WR"), fc_entry("wr2", 100, position="WR")]
+        )
+        roster = {"players": ["wr1", "wr2"]}
+
+        summary = dc.positional_strength_summary(roster, players, fc_by_id, {"WR": 200.0}, league_roster_positions)
+
+        # Only the top 1 (dedicated WR slot count) counts toward starter_value: 300.
+        assert summary.loc["WR", "starter_value"] == pytest.approx(300.0)
+        assert summary.loc["WR", "vor"] == pytest.approx(100.0)  # 300 - 200
+        assert not summary.loc["WR", "weak"]
+
+    def test_weak_when_starters_dont_clear_replacement_level(self):
+        league_roster_positions = ["WR", "BN"]
+        players = {"wr1": make_player("WR", full_name="WR One")}
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("wr1", 50, position="WR")])
+        roster = {"players": ["wr1"]}
+
+        summary = dc.positional_strength_summary(roster, players, fc_by_id, {"WR": 200.0}, league_roster_positions)
+
+        assert summary.loc["WR", "vor"] == pytest.approx(-150.0)
+        assert summary.loc["WR", "weak"]
+
+
 class TestTeamRosterAnalysis:
     """team_roster_analysis should bundle every per-roster view for ANY roster,
     not just the user's own - the basis for the Your Roster tab's team selector."""
@@ -76,12 +143,14 @@ class TestTeamRosterAnalysis:
             "qb1": make_player("QB", team="AAA", full_name="QB One"),
             "wr1": make_player("WR", team="AAA", full_name="WR One"),
         }
-        fc_by_id = dc.fc_value_by_sleeper_id(
-            [fc_entry("qb1", 100, position="QB"), fc_entry("wr1", 200, position="WR")]
-        )
+        # position deliberately omitted from fc_entry - passing "QB" would
+        # trigger the real POSITION_VALUE_MULTIPLIER fallback (1.175x) and
+        # break this test's hand-computed vor math below.
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("qb1", 100), fc_entry("wr1", 200)])
         roster = {"players": ["qb1", "wr1"], "taxi": [], "reserve": []}
+        replacement_level = {"QB": 50.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
 
-        analysis = dc.team_roster_analysis(roster, players, fc_by_id, {}, league, {})
+        analysis = dc.team_roster_analysis(roster, players, fc_by_id, {}, league, {}, replacement_level)
 
         assert set(analysis.keys()) == {
             "roster_needs",
@@ -98,6 +167,14 @@ class TestTeamRosterAnalysis:
         }
         assert analysis["roster_capacity"]["active_filled"] == 2
         assert set(analysis["lineup_starters"]["name"]) == {"QB One", "WR One"}
+        # positional_strength_summary's vor/weak columns get joined onto
+        # roster_needs_summary's young-core need columns, not left as a
+        # separate table - two different questions about the same position.
+        needs = analysis["roster_needs"]
+        assert needs.loc["QB", "vor"] == pytest.approx(50.0)  # 100 adj_value - 50 replacement
+        assert not needs.loc["QB", "weak"]
+        assert needs.loc["WR", "vor"] == pytest.approx(150.0)  # 200 adj_value - 50 replacement
+        assert not needs.loc["WR", "weak"]
 
 
 class TestLineupBreakdown:

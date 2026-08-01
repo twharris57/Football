@@ -53,6 +53,25 @@ the tool see this *one* team" well; it doesn't answer "which teams across
 the league are worth scouting first," which needs its own summary view,
 not just this same call repeated.
 
+### Roster needs: VOR / Weak columns
+
+The "Roster needs" table gained two columns (`positional_strength_summary`,
+see `docs/rookie-draft-big-board.md` for the full methodology) alongside
+the existing young-core `Need` flag: `VOR` (value-over-replacement) and
+`Weak` (`VOR <= 0`) — a position whose actual starters aren't worth what's
+freely available anywhere else in the league. `team_roster_analysis()`
+joins this onto the existing `roster_needs` table rather than adding a
+separate one, since they're two answers about the same position a user
+would want side by side, not competing views. The "How this works"
+expander spells out why they can disagree (plenty of bodies but no real
+value, or the reverse) and why VOR compares against the whole league
+rather than the rest of the team's own roster specifically — the latter
+would make one elite player elsewhere distort every other position's
+apparent strength. Works through the team selector above unchanged:
+`replacement_level` (the league-wide baseline) is computed once per
+refresh in `gather_state` and passed into every `team_roster_analysis()`
+call, including the on-demand ones for other teams.
+
 ### Player projection lookup
 
 Each round's "Backup options" table only ever showed the top
