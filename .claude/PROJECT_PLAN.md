@@ -104,6 +104,22 @@ user's own.
    league per item 1's VOR work) that shopping them first beats just
    cutting them for nothing. Where exactly that line sits is worth
    deciding when this is actually built, not guessed at now.
+
+   **Valuing draft picks in trades** (user-flagged 2026-08-01) — confirmed
+   directly: `fantasycalc_api.get_dynasty_values()` already returns draft
+   picks (`position: "PICK"`) on the same value scale as players, in every
+   pull this project already makes — currently silently discarded
+   everywhere by the `FANTASY_POSITIONS` (QB/RB/WR/TE-only) filter, not
+   something needing a new API integration. This year's remaining picks
+   (`2026 Pick 1.01`, etc.) could get an exact value once matched to real
+   ownership via the existing `compute_pick_ownership`/`traded_picks`
+   machinery (round + owner already tracked there). Future years are only
+   ever generic buckets - `2027 1st (Early/Mid/Late)`, flattening to a
+   single `2028 1st`/`2029 1st` etc. with no tier the further out it gets -
+   since exact future draft slot isn't knowable in advance; that's a real
+   approximation to be explicit about, not a gap to try to solve exactly.
+   Needed for item 2 (Trade targets & sells) to evaluate anything beyond
+   pure player-for-player trades, which is most real dynasty trade offers.
 3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
