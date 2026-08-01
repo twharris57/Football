@@ -61,7 +61,16 @@ user's own.
    realistically available" from another team still needs a real
    rebuild-vs-contend read on them, not just their lowest-value players —
    building this before item 1 would produce a weak v1 that has to be
-   redone once it exists.
+   redone once it exists. Should extend to **trade-block monitoring**
+   (user-flagged 2026-08-01): watch for players another team is actively
+   shopping and score them against the current roster the same way the
+   free-agent evaluator's in-season pickup monitoring does (item 3) —
+   season-average marginal starting-lineup value, not raw trade value —
+   flagging only when a specific player would be a genuine value-add, not
+   every trade rumor. Needs a real signal for "this player is on the
+   block" first (Sleeper doesn't expose trade discussions directly, so
+   this likely means the user manually flagging a name to check rather
+   than a real feed, at least for v1).
 3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
