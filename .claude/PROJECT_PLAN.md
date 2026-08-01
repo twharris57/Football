@@ -24,10 +24,96 @@ lives in `CLAUDE.md` and `docs/`, not here — this file is only what's left to 
    4. Use it through the actual live draft. The CLI (`rookie_draft.py`, no
       Docker) remains the safer fallback regardless of how the deploy goes.
 
+## Roster & trade tooling
+
+Originally scoped as explicitly post-draft (user-flagged 2026-07-26), but
+**bumped ahead of Valuation & data accuracy 2026-07-30** — league mates are
+already discussing trades ahead of the draft itself, so this now has real,
+current urgency, unlike valuation work below, which is explicitly not
+deadline-driven. Within-group order stays roughly as sequenced before,
+with trade targets & sells promoted to the top.
+
+1. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
+   of the user's veterans are sellable for picks, and which other teams'
+   picks/young players might be realistically available. Don't wait on
+   item 2's structural-weakness metric to ship a first version — a v1 can
+   lean on what already exists (`roster_value_analysis`'s low-value/aging
+   flags, the current `need` heuristic) and get sharper once item 2 lands,
+   rather than blocking on it given the urgency here.
+2. [ ] **Roster needs — structural positional weakness, not just
+   week-to-week gaps.** `roster_needs_summary` and `roster_weekly_gaps` both
+   answer "do we have enough bodies at this position right now/this week" —
+   neither answers "is this position structurally weak compared to the rest
+   of the roster (or the league), such that it's worth actively shoring up
+   via trade rather than just monitoring." Would need a real
+   positional-strength metric (e.g. this position's share of total roster
+   value, or its value relative to starting-quality replacement level)
+   rather than the current young-core headcount heuristic. Sharpens item 1's
+   trade targets and item 4's power/timeline read once it lands.
+3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
+   decisions outside the draft: which available free agents are worth an
+   add, and which current roster players are droppable, given the rebuild
+   timeline. Should extend to **in-season pickup monitoring**: when a free
+   agent's situation changes materially — signs with a new team, wins a
+   starting job, a depth-chart move opens up volume — score their marginal
+   value against the current roster the same way the draft plan does
+   (season-average marginal starting-lineup value, not raw trade value) and
+   flag it when it would actually crack the lineup or clearly outvalue a
+   bench/taxi piece worth cutting. This reuses `rank_by_marginal_value`/
+   `recommend_drop` almost as-is once free agents are the candidate pool
+   instead of the rookie class — the main new inputs are pulling league free
+   agents from Sleeper and some signal for "something changed" (a
+   depth-chart delta week over week would probably be enough to start; no
+   news/transactions feed needed on day one). Ties into injury-status
+   awareness too, since a starter's injury is often exactly what opens the
+   depth-chart move worth reacting to. Needs **taxi-squad eligibility
+   modeling** first (or alongside): `roster_total_capacity()` currently
+   assumes every candidate is taxi-eligible, true for rookies but not a
+   general accrued-experience eligibility check against Sleeper's actual
+   taxi rule — free agents won't all qualify.
+4. [ ] **League-wide power/timeline read** — place every team in the league
+   on a rebuild-vs-contend spectrum, to identify good trade partners
+   (contenders who overpay for immediate help, rebuilders who overpay for
+   future assets). Pairs with item 1.
+5. [ ] **Make "need"/strategy phase-aware — a static rule today, should
+   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
+   now `roster_needs_summary`'s `need` flag is one fixed rule for all
+   time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
+   `<= YOUNG_CORE_MAX_YOE` years of experience), and the rebuild strategy
+   described in `CLAUDE.md` ("accumulate young talent... competitive
+   within ~2-3 years") is a static description, not something the code
+   actually tracks a position in. The user's stated framework: year 1 was
+   about accumulating rookies (this project's whole existing purpose);
+   year 2 should shift toward smart trades, continuing to find promising
+   talent opportunistically — not just rookies, but free agents with a
+   sudden uptick in opportunity/fortune (this is exactly item 3's
+   in-season pickup monitoring) — and dropping deadweight with limited
+   future payoff (already partly modeled by `roster_value_analysis`'s
+   `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
+   either). Would need an explicit "what phase of the rebuild are we in"
+   input (probably just a manually-set year/phase, not inferred) that
+   shifts behavior across `need`, drop-candidate, and free-agent-flagging
+   logic, rather than one flat rule doing double duty for every year.
+   Related to but distinct from item 2 — that's about *which position* is
+   weak; this is about *what kind of move* the team should even be looking
+   for at this point in the rebuild.
+6. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
+   longer term). A compact row per team (total roster value, biggest need,
+   capacity) to scan the whole league at a glance before drilling into one
+   team, complementing the Your Roster tab's team selector (added
+   2026-07-29), which only ever shows one team at a time. Cheaper than it
+   would have been before that selector shipped —
+   `dynasty_core.team_roster_analysis()` already runs this exact per-team
+   analysis for any roster on demand; this is "call it for all ~12 teams
+   and lay out a summary row," not new analysis logic. A natural
+   lighter-weight precursor to item 4's power/timeline read, not a
+   replacement for it — this surfaces raw stats per team, not a
+   rebuild-vs-contend classification.
+
 ## Valuation & data accuracy
 
-Not deadline-driven the way draft-week readiness is — this is about improving
-accuracy for ongoing dynasty decisions (trades, future drafts), not a hard
+Not deadline-driven the way the group above now is (see 2026-07-30 note) —
+this is about improving accuracy for ongoing dynasty decisions, not a hard
 cutoff. E (multiplier data pooled across 3 seasons), B (full per-player
 scoring recompute), and A (finer position/play-style multiplier buckets,
 rescoped to rookies only) are done — see `docs/rookie-draft-big-board.md` for
@@ -52,86 +138,6 @@ methodology.
    (per-player recompute) has landed, this multiplier is a last-resort
    fallback only — worth a proper look if it still seems to matter enough to
    justify the automation.
-
-## Post-draft roster & trade tooling
-
-Explicitly post-draft (user-flagged 2026-07-26). Ordered so the foundational
-signal (item 2) lands before the tools that consume it (items 4-5).
-
-1. [ ] **Make "need"/strategy phase-aware — a static rule today, should
-   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
-   now `roster_needs_summary`'s `need` flag is one fixed rule for all
-   time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
-   `<= YOUNG_CORE_MAX_YOE` years of experience), and the rebuild strategy
-   described in `CLAUDE.md` ("accumulate young talent... competitive
-   within ~2-3 years") is a static description, not something the code
-   actually tracks a position in. The user's stated framework: year 1 was
-   about accumulating rookies (this project's whole existing purpose);
-   year 2 should shift toward smart trades, continuing to find promising
-   talent opportunistically — not just rookies, but free agents with a
-   sudden uptick in opportunity/fortune (this is exactly item 3's
-   in-season pickup monitoring) — and dropping deadweight with limited
-   future payoff (already partly modeled by `roster_value_analysis`'s
-   `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
-   either). Would need an explicit "what phase of the rebuild are we in"
-   input (probably just a manually-set year/phase, not inferred) that
-   shifts behavior across `need`, drop-candidate, and free-agent-flagging
-   logic, rather than one flat rule doing double duty for every year.
-   Related to but distinct from item 2 below — that's about *which
-   position* is weak; this is about *what kind of move* the team should
-   even be looking for at this point in the rebuild.
-2. [ ] **Roster needs — structural positional weakness, not just
-   week-to-week gaps.** `roster_needs_summary` and `roster_weekly_gaps` both
-   answer "do we have enough bodies at this position right now/this week" —
-   neither answers "is this position structurally weak compared to the rest
-   of the roster (or the league), such that it's worth actively shoring up
-   via trade rather than just monitoring." Would need a real
-   positional-strength metric (e.g. this position's share of total roster
-   value, or its value relative to starting-quality replacement level)
-   rather than the current young-core headcount heuristic. A weak-position
-   signal from this is exactly what should drive who to target in a trade —
-   feeds items 4 and 5 below.
-3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
-   decisions outside the draft: which available free agents are worth an
-   add, and which current roster players are droppable, given the rebuild
-   timeline. Should extend to **in-season pickup monitoring**: when a free
-   agent's situation changes materially — signs with a new team, wins a
-   starting job, a depth-chart move opens up volume — score their marginal
-   value against the current roster the same way the draft plan does
-   (season-average marginal starting-lineup value, not raw trade value) and
-   flag it when it would actually crack the lineup or clearly outvalue a
-   bench/taxi piece worth cutting. This reuses `rank_by_marginal_value`/
-   `recommend_drop` almost as-is once free agents are the candidate pool
-   instead of the rookie class — the main new inputs are pulling league free
-   agents from Sleeper and some signal for "something changed" (a
-   depth-chart delta week over week would probably be enough to start; no
-   news/transactions feed needed on day one). Ties into injury-status
-   awareness too, since a starter's injury is often exactly what opens the
-   depth-chart move worth reacting to. Needs **taxi-squad eligibility
-   modeling** first (or alongside): `roster_total_capacity()` currently
-   assumes every candidate is taxi-eligible, true for rookies but not a
-   general accrued-experience eligibility check against Sleeper's actual
-   taxi rule — free agents won't all qualify.
-4. [ ] **Trade targets & sells** — given the rebuild strategy, flag which of
-   the user's veterans are sellable for picks, and which other teams'
-   picks/young players might be realistically available. Depends on item 2's
-   weak-position signal to know who to target.
-5. [ ] **League-wide power/timeline read** — place every team in the league
-   on a rebuild-vs-contend spectrum, to identify good trade partners
-   (contenders who overpay for immediate help, rebuilders who overpay for
-   future assets). Pairs with item 4.
-6. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
-   longer term). A compact row per team (total roster value, biggest need,
-   capacity) to scan the whole league at a glance before drilling into one
-   team, complementing the Your Roster tab's team selector (added
-   2026-07-29), which only ever shows one team at a time. Cheaper than it
-   would have been before that selector shipped —
-   `dynasty_core.team_roster_analysis()` already runs this exact per-team
-   analysis for any roster on demand; this is "call it for all ~12 teams
-   and lay out a summary row," not new analysis logic. A natural
-   lighter-weight precursor to item 5's power/timeline read, not a
-   replacement for it — this surfaces raw stats per team, not a
-   rebuild-vs-contend classification.
 
 ## Code quality, tests & UX polish
 
