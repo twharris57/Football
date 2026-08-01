@@ -52,6 +52,27 @@ user's own.
    per-team, not a separate model — a team's overall power/timeline is
    naturally a roll-up of how strong/weak/young/old each of its positions
    is. Feeds item 2.
+
+   **Follow up on this line of thinking when actually building it**
+   (user-flagged 2026-08-01): a two-point rebuild-vs-contend spectrum is
+   probably too coarse. The user's framing has at least three phases -
+   rebuilding, running for a title, and just finishing the season out at a
+   decent level (a real, distinct state - not full rebuild mode, but not
+   actively pushing for a title either) - and phase isn't fixed for a
+   season: it can shift mid-season on a real event (a team realizing
+   they're one piece away from a title run, or a season/career-ending
+   injury ending a contender's hopes). A single label computed once per
+   refresh and left alone would go stale exactly when it matters most
+   (right after the event that should have changed it). Whatever this
+   read feeds into (trade targets, in-season monitoring) should account
+   for a team's phase actually moving, not just where it started the
+   season - worth deciding at build time whether that means recomputing
+   fresh every refresh (cheap if it's just derived from current roster
+   state, which reacts to injuries/moves already) versus something more
+   deliberate. Same lifecycle-phase concept applies to item 4's "make
+   need/strategy phase-aware" for the user's *own* team, not just other
+   teams here - worth keeping the two consistent rather than solving the
+   same problem two different ways.
 2. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
    of the user's veterans are sellable for picks, and which other teams'
    picks/young players might be realistically available. Deliberately
