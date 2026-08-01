@@ -206,7 +206,8 @@ def main() -> None:
             # A hiccup here shouldn't kill the whole session - everyone hits
             # Sleeper/FantasyCalc at once on draft day, so a transient error
             # is expected, not exceptional. Let the user retry or bail.
-            print(f"\nCouldn't reach Sleeper/FantasyCalc: {exc}")
+            # gather_state() names which of the two services actually failed.
+            print(f"\n{exc}")
             if args.once:
                 raise
             choice = input("[Enter] retry  |  q = quit: ").strip().lower()

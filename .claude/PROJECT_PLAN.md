@@ -149,12 +149,6 @@ signal (item 2) lands before the tools that consume it (items 4-5).
    `logging` versus staying as direct terminal output, since the report is
    the CLI's actual product, not a diagnostic — evaluate in its own feature
    branch rather than folding into unrelated work.
-3. [ ] **Dedupe/log on `gsis_id` collisions** in the ID-crosswalk join
-   (`player_scoring.py:417-418`, `dynasty_core.py:686-687`) — both build a
-   `{gsis_id: sleeper_id}` dict via a plain dict comprehension, which
-   silently keeps only the last row on a collision instead of flagging one.
-4. [ ] **Split the generic "Couldn't reach Sleeper/FantasyCalc" error
-   message** to name which service actually failed.
 
 ## Deferred / low priority
 

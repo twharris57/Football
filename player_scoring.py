@@ -413,8 +413,33 @@ def _season_totals_by_player(weekly: pd.DataFrame) -> pd.DataFrame:
     return weekly.groupby(["player_id", "player_name", "season", "position"], as_index=False)[stat_cols].sum()
 
 
-def _gsis_to_sleeper() -> dict[str, str]:
+def gsis_to_sleeper_crosswalk() -> dict[str, str]:
+    """{gsis_id: sleeper_id} crosswalk from nfl_data_py's ID table.
+
+    Shared with dynasty_core.handcuff_map, which needs the identical
+    mapping - a single implementation instead of two copies of the same
+    collision handling below.
+
+    The plain dict comprehension keeps whichever row comes last for a
+    colliding gsis_id - arbitrary but deterministic. Logs (doesn't fail)
+    when that collision is a genuine conflict (the same gsis_id mapping to
+    more than one distinct sleeper_id) - a data-quality problem in the
+    upstream crosswalk this project can't fix at the source, not something
+    to silently paper over. Checked directly: 5 duplicate gsis_id rows
+    exist in a real pull, but all agree on the same sleeper_id (harmless
+    duplicate source rows) - a real conflict has never been observed, but
+    would previously have been invisible if one ever occurred.
+    """
     ids = nfl.import_ids().dropna(subset=["gsis_id", "sleeper_id"])
+    distinct_targets = ids.groupby("gsis_id")["sleeper_id"].nunique()
+    conflicts = distinct_targets[distinct_targets > 1]
+    if not conflicts.empty:
+        logger.warning(
+            "nfl_data_py's ID crosswalk has %d gsis_id value(s) mapping to more than one "
+            "sleeper_id - using whichever row comes last for each: %s",
+            len(conflicts),
+            ", ".join(conflicts.index[:5]),
+        )
     return {row.gsis_id: str(int(row.sleeper_id)) for row in ids.itertuples()}
 
 
@@ -443,7 +468,7 @@ def _derive_multipliers(scoring_settings: dict[str, float], current_season: str)
         lambda row: _stat_points(row, BASELINE_SCORING, row["position"]), axis=1
     )
 
-    gsis_to_sleeper = _gsis_to_sleeper()
+    gsis_to_sleeper = gsis_to_sleeper_crosswalk()
 
     per_player: dict[str, float] = {}
     position_average: dict[str, float] = {}

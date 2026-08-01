@@ -290,6 +290,32 @@ before this, flagged as a real gap given it's non-trivial custom logic
 about to be trusted for real roster decisions. See
 `docs/rookie-draft-big-board.md` for what's actually covered.
 
+A connectivity failure now names which of the two upstream services
+actually failed, instead of one generic "Couldn't reach Sleeper/FantasyCalc"
+that's true either way — real on draft day, when everyone hits both
+unauthenticated public APIs at once. `gather_state()` wraps its Sleeper
+calls and its one FantasyCalc call in their own `try`/`except
+requests.RequestException`, re-raising with a `"Couldn't reach Sleeper: ..."`
+/ `"Couldn't reach FantasyCalc: ..."` prefix — same exception type, so the
+CLI/Streamlit `except requests.RequestException` handlers didn't need to
+change, just stop adding their own now-redundant generic prefix on top.
+Covered by `tests/test_dynasty_core.py`'s `TestGatherStateConnectivityErrors`,
+which monkeypatches `sleeper_api`/`fantasycalc_api` directly — the one place
+in that test file testing.md's "mock only external services you do not
+control" applies, since everything else there is pure logic over synthetic
+data with no real boundary to mock.
+
+Separately, the `{gsis_id: sleeper_id}` crosswalk `player_scoring.py` and
+`dynasty_core.handcuff_map` each built from `nfl_data_py`'s ID table used
+to be two copies of the same plain dict comprehension, which silently kept
+whichever row came last on a collision — not a currently-live bug (a direct
+check found 5 duplicate `gsis_id` rows in the real data, all agreeing on the
+same `sleeper_id`), but invisible if a genuine conflict (two different
+`sleeper_id`s for one `gsis_id`) ever occurred. Consolidated into one
+function, `player_scoring.gsis_to_sleeper_crosswalk()`, which logs a warning
+listing any `gsis_id` with more than one distinct `sleeper_id` before
+falling back to the same last-row-wins behavior.
+
 ### Verified before merge (not just written and hoped)
 
 - `docker compose build && up` locally: image builds, container reports
