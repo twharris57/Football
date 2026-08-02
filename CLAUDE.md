@@ -58,8 +58,7 @@ not a deployed service.
   builds and pushes the image to GHCR (`ghcr.io/twharris57/football-dynasty-draft`)
   on every push to `main`. `docker-compose.deploy.yml` only ever pulls that prebuilt
   image, it never builds on-device — it's this repo's **deployment reference**: the
-  canonical, still-runnable description of what the image needs (see
-  `../nas-configs/.claude/conventions/app_deployment_reference.md`). The actual NAS
+  canonical, still-runnable description of what the image needs. The actual NAS
   deployment lives in `../nas-configs` (`football/football-compose.yaml`), adapted from
   this file — keep this one accurate as deployment needs change; that's the signal
   nas-configs' copy may need re-syncing. Local dev (`docker-compose.yml`) still builds
