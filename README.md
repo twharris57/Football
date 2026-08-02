@@ -6,9 +6,11 @@ a Sleeper dynasty fantasy football team.
 - **Confidence pool picker** — pulls schedule, odds, and injury data via
   `nfl_data_py` and ranks each week's games by confidence to assign points.
   See `football.py` and `football_enhanced.py`.
-- **Dynasty league tools** — pulls league data from the Sleeper API to help
-  with rookie drafts and trade decisions during a multi-year rebuild. In
-  progress on `feature/rookie-draft-strategy`.
+- **Dynasty league tools** — pulls league data from Sleeper and FantasyCalc
+  to help with rookie drafts, roster/trade decisions, and a league-wide
+  power/timeline read during a multi-year rebuild. Available as a CLI
+  (`rookie_draft.py`) and a Streamlit web dashboard (`streamlit_app.py`),
+  deployable via Docker.
 
 ## Setup
 

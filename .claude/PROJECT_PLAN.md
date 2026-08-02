@@ -6,6 +6,21 @@ important first). When a task is completed, write it up as a design doc in
 Durable background (league identity, rebuild strategy, valuation methodology)
 lives in `CLAUDE.md` and `docs/`, not here — this file is only what's left to do.
 
+**Item IDs**: every open item carries a permanent `<SECTION>-<n>` tag in its
+own heading (`NB` = Now — blocking, `RT` = Roster & trade tooling, `VA` =
+Valuation & data accuracy, `CQ` = Code quality/tests/UX, `DL` = Deferred/low
+priority) — e.g. `RT-3`. Assigned once, in document order, and never reused
+or renumbered, even after the item it names is completed and removed —
+matching how `VA`'s items were already informally lettered A-E before this
+convention was written down (`A`/`B`/`E` are done and gone; `D` survives as
+`VA-1`). Cross-reference other items by this tag (`see RT-3`), never by list
+position (`item 2`) — a positional reference silently points at the wrong
+item the moment anything above it is inserted, reordered, or removed. A new
+item gets the next unused number for its section's prefix, appended wherever
+priority order actually puts it in the list — position and ID are
+independent. The ephemeral "Current branch — fix before merge" section is
+exempt (cleared on every merge, so nothing outlives it to cross-reference).
+
 ## Current branch — fix before merge
 
 Findings from reviewing the *active* branch's own not-yet-merged work —
@@ -14,42 +29,15 @@ merges" is never mixed in with "someday" work. Ephemeral by design: cleared
 out when the branch merges, not carried forward as history (the merged PR's
 description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
-below as a normal backlog item, same as any other deferred work. Empty
-when no branch is currently mid-review.
+below as a normal backlog item, same as any other deferred work.
 
-**`feature/trade-targets-and-sells` (PR #18), reviewed 2026-08-01:**
-
-1. [x] **`sellable_players()` can flag a real FLEX starter as "surplus
-   depth"** — fixed 2026-08-01: within `sellable_players()`, the
-   protected (non-sellable) range for each `FLEX_ELIGIBLE_POSITIONS`
-   position now adds the roster's `FLEX` slot count on top of
-   `_position_starter_demand()`'s dedicated-slot count, reserving the
-   whole FLEX count against every eligible position rather than guessing
-   which one actually fills it. Scoped to this feature's own depth
-   calculation only — `positional_strength_summary`'s `vor` and
-   `gap_delta`'s weekly-gap check still don't model FLEX, same
-   already-documented simplification as before, not expanded here.
-   Verified against live data (this league has 3 FLEX slots): several
-   real FLEX-range starters (e.g. Matthew Golden, Tyler Allgeier) that
-   were incorrectly flagged before the fix are correctly excluded after.
-   Covered by `test_reserves_flex_range_from_depth_when_league_has_a_flex_slot`.
-2. [x] **Verify `_future_pick_owners`'s `roster_id` range assumption
-   against live data** — confirmed 2026-08-01: `sorted(r["roster_id"] for
-   r in rosters) == list(range(1, num_teams + 1))` holds for this league.
-   Noted in `docs/rookie-draft-big-board.md`'s "Static assumptions" table
-   (what breaks if it's ever wrong, and the fix if so).
-3. [x] **`pick_trade_values` should raise a `data_warnings` entry on an
-   all-empty `value` column** — fixed 2026-08-01: `gather_state` now
-   appends a `data_warnings` entry when `pick_values["value"].isna().all()`,
-   matching every other silent-fallback path (byes, handcuffs, scoring
-   multipliers). Covered by
-   `test_unmatched_pick_names_leave_value_empty_not_an_error`, which
-   proves the precondition the check relies on (an unmatched pick name
-   degrades to `NaN`, doesn't raise).
+*Empty — no branch is currently mid-review. (PR #18's findings, previously
+listed here, cleared out on merge — see that PR's description for the
+historical record.)*
 
 ## Now — blocking
 
-1. [ ] **Synology NAS deploy + live-draft verification** — blocks calling the
+1. [ ] **NB-1: Synology NAS deploy + live-draft verification** — blocks calling the
    dashboard fully done. Everything else from the pre-draft hardening review
    is done — see `docs/rookie-draft-big-board.md` and
    `docs/dynasty-draft-web-app.md` for the full methodology/implementation
@@ -76,58 +64,13 @@ be redone once those land, so the foundations come first. Still bumped
 ahead of Valuation & data accuracy below, which remains explicitly not
 deadline-driven.
 
-**Positional-value foundation done (2026-07-31, SUPER_FLEX/QB fix
-2026-08-01)** — see `docs/rookie-draft-big-board.md`'s "Roster needs: two
-different signals, not one" for the full methodology.
-`positional_strength_summary()` + `position_replacement_levels()` add a
-`vor`/`weak` value-over-replacement signal, joined onto the existing
-young-core `need` flag, using a league-wide replacement-level baseline
-(deliberately not a same-roster share-of-value metric — see the doc for
-why that has a real flaw). `_position_starter_demand()` counts SUPER_FLEX
-as extra QB demand specifically (matching the `num_qbs` pattern already
-used for the FantasyCalc market-value call) — a same-day valuation review
-caught that the first version silently reverted QB to single-QB-league
-demand, which would have systematically understated QB's VOR for
-everything built on top of it. Verified directly against live data (the
-league-wide rank-24 replacement QB is a real, independently-confirmed
-player, not a self-referential artifact). Works through the Roster
-tab's team selector for any team, not just the user's own.
+**Positional-value foundation (VOR/replacement-level, SUPER_FLEX-aware QB
+demand) and the league-wide power/timeline read (`power_score`, split into
+independent `quality_score`/`timeline_score` axes) are done** — see
+`docs/rookie-draft-big-board.md`'s "Roster needs" and "Team timeline /
+power-timeline read" sections for the full methodology.
 
-**League-wide power/timeline read done (2026-08-01)** — see
-`docs/rookie-draft-big-board.md` for the full methodology.
-`team_power_timeline_scores()` gives every team (not just the user's own)
-a continuous, league-wide z-scored `power_score` combining aggregate VOR
-(roster strength), value-weighted average age (timeline direction), and
-actual win percentage (how the season is really going — defaults to a
-neutral 0.5 pre-season, contributing zero variance until real results
-exist) — a continuous score from the start, per the "consider a continuous
-score, not discrete phase labels" note, with `phase`
-(rebuilding/treading_water/contending) as a display-only bucketing of it.
-Recomputed fresh every refresh from already-pulled data, so it reacts to
-injuries/trades/results automatically rather than ever going stale.
-Verified directly against live data: the user's own team (a confirmed
-year-one rebuild) reads as the league's lowest score/`rebuilding`; the
-roster with the league's highest-value QB reads as `contending` — both
-consistent with what's independently known about the real league. Shown
-in the Roster tab (for whichever team the selector has picked) and
-the CLI.
-
-**Quality-vs-timeline conflation fixed (2026-08-01)** — an assistant
-valuation review caught that averaging `aggregate_vor`/`win_pct` ("how
-good is this roster") together with `weighted_age` ("which way is it
-pointed") into one `power_score` could hide a strong/young/ascending team
-and a weak/old/declining team landing on the same blended number, despite
-opposite trade postures. Rather than a rewrite, `team_power_timeline_scores()`
-now also exposes `quality_score` (`aggregate_vor` + `win_pct`, z-scored
-and averaged) and `timeline_score` (`weighted_age`, z-scored) as separate
-columns alongside the existing blended `power_score`/`phase` — so Trade
-targets & sells (below) can reason about roster strength and timeline
-direction independently instead of re-deriving the same z-scores. Covered
-by `test_quality_and_timeline_axes_can_disagree_within_one_team`, which
-constructs exactly the divergent case (young/strong/winning vs.
-old/weak/losing) the review flagged.
-
-1. [ ] **Add small-sample shrinkage to the power/timeline read's `win_pct`**
+1. [ ] **RT-1: Add small-sample shrinkage to the power/timeline read's `win_pct`**
    (assistant valuation review, 2026-08-01) — the zero-games case is
    handled well (neutral `0.5`, correctly contributes zero variance
    pre-season — proven by its own test), but from week 1 onward `win_pct`
@@ -144,22 +87,10 @@ old/weak/losing) the review flagged.
    to an emergent-variance mechanic that doesn't matter until real games
    have been played, and reweighting the formula's actual math deserves
    its own review rather than folding into a display-clarity PR.
-**Trade targets & sells v1 done (2026-08-01)** — see
-`docs/rookie-draft-big-board.md` for the full methodology.
-`sellable_players()` flags a roster's own bench depth at positions with
-real surplus (`positional_strength_summary`'s `vor > 0`, not the starters
-generating that vor - selling an actual starter was deliberately scoped
-out, see the doc) that wouldn't open a weekly-depth hole if dropped
-(`gap_delta`), composing existing signals per the "reuse existing
-signals" note rather than a new threshold. `pick_trade_values()` matches
-this season's remaining picks to FantasyCalc's exact per-slot value via
-real ownership (`compute_pick_ownership`), and next season's picks to a
-flat, non-tiered round value applied the same to every team - both use
-FantasyCalc's raw `value`, not the per-player real-scoring `adj_value`
-correction, per the "picks don't need the real-scoring correction" note.
-Both apply through the Roster tab's existing team selector (sellable
-players) or league-wide (pick values) — no new UI surface. Verified
-directly against live data.
+
+**Trade targets & sells v1 (`sellable_players()`, `pick_trade_values()`) is
+done** — see `docs/rookie-draft-big-board.md`'s "Trade targets & sells"
+section for the full methodology.
 
 Deliberately out of v1, not forgotten:
 - **Selling starters, not just depth** — the "sellable vs. just
@@ -185,20 +116,20 @@ Deliberately out of v1, not forgotten:
   decision (extend the exclusion, or leave it and rely on the human)
   rather than an unexamined inconsistency between the two features.
 
-1. [ ] **Trade-block monitoring** (user-flagged 2026-08-01, scoped out of
+1. [ ] **RT-2: Trade-block monitoring** (user-flagged 2026-08-01, scoped out of
    the v1 above) — watch for players another team is actively shopping
    and score them against the current roster the same way the free-agent
-   evaluator's in-season pickup monitoring does (item 2) — season-average
+   evaluator's in-season pickup monitoring does (RT-3) — season-average
    marginal starting-lineup value, not raw trade value — flagging only
    when a specific player would be a genuine value-add, not every trade
    rumor. Needs a real signal for "this player is on the block" first
    (Sleeper doesn't expose trade discussions directly, so this likely
    means the user manually flagging a name to check rather than a real
    feed, at least for v1). A manually-flagged name here is also a natural
-   fit for item 5's contextual research check, once that exists — pulling
+   fit for RT-6's contextual research check, once that exists — pulling
    real context (usage change, injury detail, actual trade buzz) beyond
    what Sleeper/FantasyCalc carry, for that one specific player.
-2. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
+2. [ ] **RT-3: Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
    timeline. Should extend to **in-season pickup monitoring**: when a free
@@ -245,7 +176,7 @@ Deliberately out of v1, not forgotten:
    project's existing pattern of shipping a deliberately lightweight v1
    (e.g. `POSITION_VALUE_MULTIPLIER` before the full per-player recompute)
    over a fully general model nobody's asked for yet.
-3. [ ] **Make "need"/strategy phase-aware — a static rule today, should
+3. [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
    evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
    now `roster_needs_summary`'s `need` flag is one fixed rule for all
    time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
@@ -256,7 +187,7 @@ Deliberately out of v1, not forgotten:
    about accumulating rookies (this project's whole existing purpose);
    year 2 should shift toward smart trades, continuing to find promising
    talent opportunistically — not just rookies, but free agents with a
-   sudden uptick in opportunity/fortune (this is exactly item 2's
+   sudden uptick in opportunity/fortune (this is exactly RT-3's
    in-season pickup monitoring) — and dropping deadweight with limited
    future payoff (already partly modeled by `roster_value_analysis`'s
    `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
@@ -267,7 +198,7 @@ Deliberately out of v1, not forgotten:
    Related to but distinct from the positional-value work above — that's
    about *which position* is weak; this is about *what kind of move* the
    team should even be looking for at this point in the rebuild.
-4. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
+4. [ ] **RT-5: League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
    team, complementing the Roster tab's team selector (added
@@ -280,7 +211,7 @@ Deliberately out of v1, not forgotten:
    2026-08-01) — this surfaces raw stats per team, not a rebuild-vs-contend
    classification, but both answer "what does this team look like" at a
    glance.
-5. [ ] **Contextual research check for news/hype beyond Sleeper's data**
+5. [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
    (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
    unconfirmed) — a rare, explicitly user-triggered lookup (not a
    background job) for one *specific* named player: pull recent context an
@@ -294,8 +225,8 @@ Deliberately out of v1, not forgotten:
    FantasyCalc's own market already has. Needs investigating what's
    actually available and appropriate here before committing to an
    implementation — treat the specific tool name as unverified, just the
-   user's working label for the idea. Natural entry points: item 1's
-   trade-block monitoring (checking one flagged name) and item 2's
+   user's working label for the idea. Natural entry points: RT-2's
+   trade-block monitoring (checking one flagged name) and RT-3's
    free-agent evaluator (checking one waiver target) — not a general
    always-on feed, and not a replacement for the stats-based ranking
    anywhere in the pipeline.
@@ -309,7 +240,7 @@ scoring recompute), and A (finer position/play-style multiplier buckets,
 rescoped to rookies only) are done — see `docs/rookie-draft-big-board.md` for
 methodology.
 
-1. [ ] **D — blend in KeepTradeCut as a second market source**, time
+1. [ ] **VA-1 (formerly "D"): blend in KeepTradeCut as a second market source**, time
    permitting. `import_ids()` only gives a `ktc_id` crosswalk column, not
    actual KTC values — sourcing real KTC data is a separate,
    not-yet-investigated problem.
@@ -322,7 +253,7 @@ methodology.
    not a substitute for that fix, which already landed, but a useful
    independent sanity check on how well-calibrated it turned out once KTC
    data exists to compare against.
-2. [ ] **Derive `BASELINE_SCORING`'s `rec` value from the real `ppr` param
+2. [ ] **VA-2: Derive `BASELINE_SCORING`'s `rec` value from the real `ppr` param
    instead of hardcoding `1.0`** (assistant valuation review, 2026-07-31) —
    `get_dynasty_values()` already sends this league's actual PPR
    (`league["scoring_settings"]["rec"]`) to FantasyCalc, so its returned
@@ -338,7 +269,7 @@ methodology.
    key instead of the literal `1.0`. Not urgent while the league stays
    full PPR — flagged in `docs/rookie-draft-big-board.md`'s "Static
    assumptions" table in the meantime so it isn't a silent trap.
-3. [ ] **Automate `scripts/derive_position_multipliers.py` re-derivation.**
+3. [ ] **VA-3: Automate `scripts/derive_position_multipliers.py` re-derivation.**
    It still has to be run by hand and its printed numbers manually copied
    into `POSITION_VALUE_MULTIPLIER`. The easy fix already done is making the
    *season selection* itself current-year-driven
@@ -353,7 +284,7 @@ methodology.
    (per-player recompute) has landed, this multiplier is a last-resort
    fallback only — worth a proper look if it still seems to matter enough to
    justify the automation.
-4. [ ] **Post-draft valuation retrospective** (assistant valuation review,
+4. [ ] **VA-4: Post-draft valuation retrospective** (assistant valuation review,
    2026-07-31) — once the live draft itself is done and there's no
    time-pressure to protect, revisit a few statistically-motivated
    refinements that are real improvements but not worth the added
@@ -388,12 +319,12 @@ methodology.
 
 ## Code quality, tests & UX polish
 
-1. [ ] **Broader test coverage.** `tests/test_dynasty_core.py` and
+1. [ ] **CQ-1: Broader test coverage.** `tests/test_dynasty_core.py` and
    `tests/test_player_scoring.py` cover the core ranking/lineup/valuation
    logic, but `sleeper_api.py`/`fantasycalc_api.py` (the retry/session logic
    and cache-TTL behavior itself) and the CLI's error-handling loop still
    have none. Worth building out now that draft-week time pressure is off.
-2. [ ] **Better logging solution than `print()`** (user-flagged 2026-07-26) —
+2. [ ] **CQ-2: Better logging solution than `print()`** (user-flagged 2026-07-26) —
    `rookie_draft.py`'s CLI output is all `print()` today; `python_guidelines.md`
    calls for the standard `logging` module instead (levels, no `print()` for
    diagnostics). Worth a dedicated look at how much of the CLI's *report*
@@ -402,19 +333,37 @@ methodology.
    `logging` versus staying as direct terminal output, since the report is
    the CLI's actual product, not a diagnostic — evaluate in its own feature
    branch rather than folding into unrelated work.
+3. [ ] **CQ-3: Move Docker image tagging to real semantic versioning**
+   (user-flagged 2026-08-01) — the image is currently tagged only `:latest`
+   and `:<short-sha>` (`.github/workflows/docker-publish.yml`), and the
+   Streamlit footer displays that same short SHA (`GIT_SHA` build arg) to
+   confirm a NAS deployment picked up a new image — see
+   `docs/dynasty-draft-web-app.md`'s "Sidebar league name and version
+   footer" and "Docker + CI/CD" sections. A hash is fine for proving the
+   deployed image matches a specific commit, but it's not a meaningful
+   sequence — there's no way to eyeball "is the NAS running the latest
+   real release" or "did this deploy move forward or roll back" the way a
+   bumped `v1.3.0` would show at a glance. Would need: a version number
+   maintained somewhere (a `VERSION` file, matching the pattern the sibling
+   `Finance-Dashboards` project already uses, noted in the Docker section
+   above as a deliberate divergence to revisit), a tagging step in
+   `docker-publish.yml` alongside (not necessarily instead of) the existing
+   `:latest`/`:<short-sha>` tags, and the footer showing the version number
+   with the short SHA alongside it for the precise-commit case, not instead
+   of it.
 
 ## Deferred / low priority
 
 Judged not worth the time right now; revisit only if the underlying
 assumption changes.
 
-1. [ ] **Handcuff proxy false-positive risk** — depth-chart rank 2 has real
+1. [ ] **DL-1: Handcuff proxy false-positive risk** — depth-chart rank 2 has real
    false-positive risk in modern RB committees. Informational field only,
    not worth revisiting.
-2. [ ] **Exclude a candidate from its own drop-simulation** in
+2. [ ] **DL-2: Exclude a candidate from its own drop-simulation** in
    `recommend_drop` — theoretically possible, vanishingly unlikely to
    surface as a top pick.
-3. [ ] **`team_power_timeline_scores`'s all-teams-missing weighted-age
+3. [ ] **DL-3: `team_power_timeline_scores`'s all-teams-missing weighted-age
    edge case** (assistant valuation review, 2026-08-01) —
    `weighted_age.fillna(mean)` only recovers if at least one team has a
    valid weighted age; if literally every roster in the league had zero
@@ -423,12 +372,12 @@ assumption changes.
    impossible" for the single-team version), the column would stay
    all-`NaN` and silently propagate into every team's `power_score`. Not
    worth guarding given the odds.
-4. [ ] **Duplicate `positional_strength_summary()` call for the user's own
+4. [ ] **DL-4: Duplicate `positional_strength_summary()` call for the user's own
    roster** (assistant valuation review, 2026-08-01) — now computed once
    via `team_roster_analysis` and again via `team_power_timeline_scores`
    each refresh. Trivial cost at this scale (`gather_state` still
    completes in ~4s); not worth restructuring.
-5. [ ] **Review "How this works" expanders for content to extract into the
+5. [ ] **DL-5: Review "How this works" expanders for content to extract into the
    Glossary** (user-flagged 2026-08-01) — the Glossary dialog
    (`streamlit_app.py`'s `GLOSSARY`) currently only covers VOR, power
    score, and adj. value, added specifically for the power/timeline read.

@@ -183,26 +183,15 @@ def pick_trade_values(
 ) -> pd.DataFrame:
     """Every remaining/near-future rookie-draft pick, valued and matched to its real current owner.
 
-    Uses FantasyCalc's raw pick `value` directly, not routed through
-    `fc_value_by_sleeper_id`'s per-player real-scoring `adj_value` - a pick
-    has no real or projectable statistical production for that correction
-    to apply to (see valuation_principles.md). Matched by FantasyCalc's own
-    pick-name string (e.g. "2026 Pick 1.01", "2027 1st") since that's the
-    only stable join key FantasyCalc exposes for picks - brittle to a
-    naming-convention change on their end, and a mismatch there wouldn't
-    raise, just leave `value` empty for everything, so a season showing
-    an all-empty `value` column is worth a spot-check against FantasyCalc's
-    actual pick names.
-
-    This season's remaining picks (`overall_pick >= current_pick_no`) get
-    an exact slot value, since Sleeper's real draft object gives a real
-    slot-to-team order (`ownership`/`compute_pick_ownership`) to match
-    against FantasyCalc's per-slot pick curve. Next season's picks
-    (`FUTURE_PICK_YEARS_AHEAD`) use FantasyCalc's flat, non-tiered round
-    value applied the same way to every team - there's no real
-    projected-standings input this far out to justify guessing an
-    Early/Mid/Late tier per team, and a guess would fabricate a signal
-    rather than approximate a real one.
+    Uses FantasyCalc's raw pick `value`, not `adj_value` (a pick has no
+    statistical production for the real-scoring correction to apply to).
+    Matched by FantasyCalc's own pick-name string (e.g. "2026 Pick 1.01",
+    "2027 1st") — a naming-convention change on their end wouldn't raise,
+    just leave `value` empty for everything, so an all-empty `value` column
+    is worth a spot-check against FantasyCalc's actual pick names. See
+    docs/rookie-draft-big-board.md's "Trade targets & sells" section for the
+    full methodology (why this season vs. next season are valued
+    differently, and why seasons beyond that aren't included).
     """
     pick_value_by_name = {
         entry["player"]["name"]: entry["value"] for entry in fc_values if entry["player"].get("position") == "PICK"
@@ -272,12 +261,12 @@ def roster_fantasy_players(roster: dict, players: dict[str, dict]) -> Iterator[t
 
 
 def _resolve_multiplier(sleeper_id: str, position: str, multipliers: dict[str, Any]) -> float:
-    """Personalized multiplier (see player_scoring.py) if this player has enough real NFL
-    history to trust one; else this year's rookie class's play-style-bucket average, if this
-    player is a rookie with a matched combine profile (see player_scoring._derive_rookie_buckets,
-    valuation step A); else that position's flat average from the same pooled data; else the
-    hardcoded POSITION_VALUE_MULTIPLIER, used only if the whole nfl_data_py enrichment failed
-    for this refresh (see gather_state)."""
+    """Resolve this player's real-scoring multiplier via the fallback chain:
+    per-player ratio → rookie play-style-bucket average → flat position
+    average → hardcoded `POSITION_VALUE_MULTIPLIER`. See
+    docs/rookie-draft-big-board.md's "Valuation" section for the full
+    methodology.
+    """
     per_player = multipliers.get("per_player", {})
     rookie_bucket = multipliers.get("rookie_bucket", {})
     position_average = multipliers.get("position_average", {})
@@ -321,24 +310,17 @@ def build_big_board(
     """Rank the rookie class by dynasty value into tiers, for display.
 
     `rookie_pool_` is the whole class (see `rookie_pool`), not just
-    undrafted players — once picked, a player stays on the board rather
-    than disappearing, annotated via `draft_attribution`
-    (player_id -> (round, team_name)) so the board still shows who took
-    whom. `rank` is a continuous value order across the whole class
-    (drafted and undrafted together), not just "your priority order" — use
-    `drafted_round`/`drafted_by` (both empty if still undrafted) to see
-    what's actually still on the board.
-
-    `value` is FantasyCalc's raw number; `adj_value` applies the QB/TE
-    scoring-mismatch correction (see POSITION_VALUE_MULTIPLIER) and is what
-    determines sort order and `rank`. `tier` is FantasyCalc's own global
-    tier across *all* dynasty-relevant players, not rookie-specific and not
-    adjusted — gaps in the tier sequence here are veterans/other rookies not
-    in this filtered view. `fits_need` flags whether the player's position
-    is currently a roster need (see `roster_needs_summary`) — a rough
-    prioritization signal, not a single "correct" pick. `handcuff_to` names
-    the roster's own RB starter this rookie would handcuff, if any (see
-    `handcuff_map`).
+    undrafted players — a drafted player stays on the board, annotated via
+    `draft_attribution` (player_id -> (round, team_name)), rather than
+    disappearing. `rank` is value order across the whole class; use
+    `drafted_round`/`drafted_by` (both empty if undrafted) to see what's
+    actually still available. `value` is FantasyCalc's raw number;
+    `adj_value` (real-scoring corrected, see docs/rookie-draft-big-board.md's
+    "Valuation" section) determines sort order and `rank`. `tier` is
+    FantasyCalc's own global tier across all dynasty-relevant players, not
+    rookie-specific or adjusted. `fits_need` flags a current roster need
+    (`roster_needs_summary`); `handcuff_to` names the roster's own RB
+    starter this rookie would handcuff (`handcuff_map`).
     """
     handcuff_targets = handcuff_targets or {}
     draft_attribution = draft_attribution or {}
@@ -412,23 +394,12 @@ def need_positions(roster_needs: pd.DataFrame) -> frozenset[str]:
 
 
 def _position_starter_demand(position: str, roster_positions: list[str]) -> int:
-    """How many players are really demanded at a position - dedicated slots, plus
-    SUPER_FLEX demand for QB specifically (see valuation_principles.md's "superflex
-    inflates QB value" rule).
-
-    QB's SUPER_FLEX add-on isn't a new guess: it's the same `count("QB") +
-    count("SUPER_FLEX")` pattern already used for the FantasyCalc market-value call
-    itself (`num_qbs`, see `gather_state`) - in a confirmed superflex league, roughly
-    two QBs per team are startable, not one, so treating SUPER_FLEX demand as
-    effectively a second QB slot matches how the market already prices it, not a new
-    assumption invented here.
-
-    FLEX demand for RB/WR/TE is deliberately NOT modeled here - unlike SUPER_FLEX's
-    near-total lean toward a 2nd QB in this format, FLEX splits demand across three
-    positions with no similarly clean allocation; doing it properly needs a joint
-    model of relative positional depth, not a simple per-position count. Same
-    "ignores FLEX" simplification `roster_weekly_gaps` already makes deliberately,
-    not silently extended scope here - tracked as a known gap, not fixed by this.
+    """How many players are really demanded at a position: dedicated slots, plus
+    SUPER_FLEX demand for QB specifically (matching the market-value call's own
+    `num_qbs`), since roughly two QBs per team are startable in this superflex
+    league, not one. FLEX demand for RB/WR/TE is deliberately not modeled — see
+    `.claude/conventions/valuation_principles.md`'s "superflex inflates QB value"
+    rule and docs/rookie-draft-big-board.md's "Roster needs" section.
     """
     count = roster_positions.count(position)
     if position == "QB":
@@ -439,22 +410,14 @@ def _position_starter_demand(position: str, roster_positions: list[str]) -> int:
 def position_replacement_levels(
     rosters: list[dict], players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], roster_positions: list[str]
 ) -> dict[str, float]:
-    """League-wide replacement-level adj_value per position - a real, external baseline
-    for "is this position structurally weak," not a same-roster-relative one.
-
-    Standard value-based-drafting concept: replacement level is the value of the last
-    startable-tier player still available - here, the Nth-best rostered player at that
-    position across the whole league, where N = `_position_starter_demand()` (dedicated
-    slots, plus SUPER_FLEX for QB) times the number of teams. Every rostered player
-    counts toward the pool (including taxi/IR) - they're not on waivers, so they
-    correctly don't count as "available" replacement talent.
-
-    Chosen over a same-roster-relative metric (e.g. "this position's share of total
-    roster value") specifically because a share-based metric has a real, foreseeable
-    failure mode: one elite player at any position inflates that position's share and
-    makes every OTHER position look artificially weak by comparison, even if they're
-    all fine in absolute terms. Comparing against an external, league-wide baseline
-    instead means one team's roster shape can't distort its own signal.
+    """League-wide replacement-level adj_value per position — the value of the
+    Nth-best rostered player at that position across the whole league, where
+    N = `_position_starter_demand()` times the number of teams. Every
+    rostered player counts toward the pool (including taxi/IR — they're not
+    on waivers). An external baseline rather than a same-roster-relative
+    metric deliberately, so one elite player elsewhere can't distort another
+    position's apparent strength. See docs/rookie-draft-big-board.md's
+    "Roster needs" section for the full rationale.
     """
     pools: dict[str, list[float]] = {pos: [] for pos in FANTASY_POSITIONS}
     for roster in rosters:
@@ -485,17 +448,15 @@ def positional_strength_summary(
     replacement_level: dict[str, float],
     roster_positions: list[str],
 ) -> pd.DataFrame:
-    """Per-position value-over-replacement (VOR) for one roster - a value-based
-    complement to `roster_needs_summary`'s young-core-headcount `need` flag.
+    """Per-position value-over-replacement (VOR) for one roster.
 
-    Answers a genuinely different question: `need` (roster_needs_summary) is about
-    the rebuild timeline - "do we have enough young assets here yet." `weak` here is
-    about trade strategy - "are this position's actual starters even worth what's
-    freely available across the league," using `position_replacement_levels`'s
-    external baseline. Only the roster's own top-N players at a position (N =
-    `_position_starter_demand()`, same SUPER_FLEX-for-QB accounting as the
-    replacement-level calc itself) count toward `starter_value` - deep bench depth
-    at a position doesn't make it "strong" if it never plays.
+    A value-based complement to `roster_needs_summary`'s young-core `need`
+    flag: `need` is a rebuild-timeline question, `weak` (`vor <= 0`) is a
+    trade-strategy one, against `position_replacement_levels`'s external
+    baseline. Only the roster's own top-N players at a position (N =
+    `_position_starter_demand()`) count toward `starter_value` — deep bench
+    depth doesn't make a position "strong" if it never plays. See
+    docs/rookie-draft-big-board.md's "Roster needs" section.
     """
     by_position: dict[str, list[float]] = {pos: [] for pos in FANTASY_POSITIONS}
     for player_id, info in roster_fantasy_players(roster, players):
@@ -563,55 +524,19 @@ def team_power_timeline_scores(
 ) -> pd.DataFrame:
     """Continuous rebuild-vs-contend read for every team in the league, indexed by roster_id.
 
-    Combines three signals, each z-scored across the whole league (population
-    std, `ddof=0` - correct here since every team *is* the population, not a
-    sample, and it also sidesteps the single-team-league NaN edge case a
-    sample std would hit) so none of them can dominate just by being on a
-    bigger numeric scale, then averaged with equal weight - a starting
-    judgment call (see `valuation_principles.md`), not a derived constant:
-
-    - **`aggregate_vor`** — this team's `positional_strength_summary().vor`
-      summed across positions: current on-paper roster strength, reusing the
-      SUPER_FLEX-aware replacement-level work directly rather than a second
-      strength model.
-    - **`weighted_age`** — `_weighted_average_age()`: timeline direction:
-      older *established value* skews win-now, younger skews rebuild.
-    - **`win_pct`** — actual `wins / (wins + losses + ties)` from Sleeper's
-      real standings: how the season is actually going, not just projected
-      strength - a thin roster on a hot streak and a stacked roster off to a
-      bad start are both real signals this alone captures. Defaults to a
-      neutral `0.5` with zero games played (pre-season/pre-draft): every
-      team ties at the same neutral value then, so this term contributes
-      zero variance and the score reduces to `aggregate_vor`/`weighted_age`
-      alone until real results exist - not a special case to code around,
-      an emergent property of z-scoring a constant.
-
-    Recomputed fresh from current roster/standings state every call (cheap -
-    no new API calls, everything here is already pulled elsewhere in
-    `gather_state`) rather than cached, so it reacts to injuries, trades, and
-    real results automatically instead of ever going stale.
-
-    `power_score` is the continuous z-scored average (higher = more
-    win-now/contending, lower = more rebuild-oriented) - the actual signal
-    to reason about. `phase` (`rebuilding`/`treading_water`/`contending`,
-    via `PHASE_THRESHOLDS`) and `rank` (1 = strongest `power_score` in the
-    league) are both display-only views of it for a UI that shouldn't ask a
-    user to interpret a raw z-score cold - neither is a separate
-    computation. `games_played` is exposed alongside `win_pct` so a UI can
-    tell "this is a real record" from "nobody's played yet, this is the
-    neutral default" - the z-scored number alone can't distinguish those.
-
-    `power_score` blends two conceptually different axes - "how good is this
-    roster right now" (`aggregate_vor` + `win_pct`) and "which way is it
-    pointed" (`weighted_age`) - which means a strong/young/ascending team and
-    a weak/old/declining team can land on the same blended number despite
-    calling for opposite trade postures. `quality_score` (`aggregate_vor` +
-    `win_pct`, z-scored and averaged) and `timeline_score` (`weighted_age`,
-    z-scored) are exposed separately so a downstream consumer that needs to
-    tell those two cases apart - e.g. a future trade-target/sell evaluator -
-    can reason about them independently instead of re-deriving the same
-    z-scores from scratch. `power_score`/`phase` stay as-is for the
-    at-a-glance UI read; this is additive, not a replacement.
+    Combines three signals — `aggregate_vor` (roster strength),
+    `weighted_age` (timeline direction), `win_pct` (actual record, neutral
+    `0.5` pre-season) — each z-scored across the league (population std,
+    `ddof=0`) and averaged into `power_score`. `quality_score`
+    (strength + record) and `timeline_score` (age alone) are also exposed
+    separately, since blending both axes into one number can hide a
+    strong/young team and a weak/old team landing on the same score.
+    `phase` and `rank` are display-only derivatives of `power_score`;
+    `games_played` lets a UI distinguish a real record from the neutral
+    pre-season default. Recomputed fresh every call from already-pulled
+    data, never cached. Full methodology and rationale for each design
+    choice in docs/rookie-draft-big-board.md's "Team timeline /
+    power-timeline read" section.
     """
     roster_positions = league["roster_positions"]
 
@@ -700,27 +625,16 @@ def roster_total_capacity(league: dict, reserve_filled: int = 0) -> int:
     """Return the combined active-roster + taxi-squad + occupied-reserve slot count.
 
     Used to decide whether adding a player genuinely requires a drop, for
-    simulated/hypothetical rosters — those are tracked as a flat player-id
-    list (see multi_round_plan) with no active/taxi/reserve split, so this
-    is the "is there room *anywhere*" signal rather than a precise slot
-    type. A newly-drafted rookie is never assumed to land on reserve (that
-    requires a real injury designation, unlike taxi, which any rookie
-    qualifies for) - so `reserve_filled` (the roster's actual current IR
-    headcount, passed by the caller, not the league's full `reserve_slots`
-    setting) is added to the ceiling only to properly account for *existing*
-    IR occupants, not to manufacture room for a new player who could never
-    actually be assigned there. A previous version added the full
-    `reserve_slots` setting unconditionally - fixed an earlier bug (an
-    existing IR occupant's headcount silently eating into active/taxi
-    capacity) but overcorrected: with reserve_slots > 0 and nobody actually
-    on IR, that inflated the ceiling by empty slots no rookie could ever
-    occupy, silently skipping the drop that should have been forced on
-    the first `reserve_slots` picks (found via a live draft-plan bug
-    report: the first 2 picks had no drop associated, in a league with 2
-    reserve slots and no one on IR). Rookies are assumed taxi-eligible
-    (true for every candidate in this draft, since they're all entering
-    their first season) — a general accrued-experience eligibility check
-    is deferred (see PROJECT_PLAN.md).
+    simulated/hypothetical rosters — those are a flat player-id list (see
+    `multi_round_plan`) with no active/taxi/reserve split, so this is the
+    "is there room *anywhere*" signal. `reserve_filled` (the roster's
+    actual current IR headcount, passed by the caller — not the league's
+    full `reserve_slots` setting) accounts only for *existing* IR occupants:
+    a newly-drafted rookie can never land on reserve (that requires a real
+    injury designation), so an empty IR slot must not read as room for one.
+    Rookies are assumed taxi-eligible (true for every candidate in this
+    draft) — a general accrued-experience eligibility check is deferred
+    (see `.claude/PROJECT_PLAN.md`).
     """
     return len(league["roster_positions"]) + league["settings"].get("taxi_slots", 0) + reserve_filled
 
@@ -772,27 +686,17 @@ def player_status_flags(player_id: str, info: dict, taxi_ids: set[str], reserve_
 def roster_value_analysis(
     roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], byes: dict[str, int] | None = None
 ) -> pd.DataFrame:
-    """Rank the roster by dynasty value (lowest first) to surface drop candidates.
+    """Rank the roster by dynasty value (lowest `adj_value` first) to surface drop candidates.
 
-    Uses the same FantasyCalc values as the rookie big board, with the same
-    real-scoring correction applied (see `fc_value_by_sleeper_id`) —
-    ranking and the low-value cutoff below both use `adj_value`, not the raw
-    `value`. `bye` is included for cross-reference against
-    `roster_bye_conflicts`. `status` is a compact icon summary (see
-    `player_status_flags`) - 🆕 rookie (no NFL experience yet), 🏥 injury,
-    🌱 taxi squad, 🩹 IR/reserve - a player can show more than one at once.
-    `status_details` carries the same info as (icon, description) pairs
-    (see `player_status_details`) for a caller that wants to show each
-    icon's specific detail (e.g. the real injury_status word) as a hover
-    tooltip rather than cramming it into the icon itself.
-
-    The bottom quartile (min 3 players) of the roster's own value distribution
-    is flagged low-value. Within that group, `note` distinguishes aging
-    players (real drop candidates) from young ones (still rebuild assets,
-    worth holding for optionality per this team's stated strategy) rather
-    than treating "low value" as "drop" outright. "Aging" is position-aware
-    (see `LOW_VALUE_AGING_AGE`) — RBs decline earlier than QBs/TEs in
-    dynasty value, so one flat age cutoff would misjudge either end.
+    `status` is a compact icon summary (see `player_status_flags`) — 🆕
+    rookie, 🏥 injury, 🌱 taxi, 🩹 IR/reserve, more than one possible at once;
+    `status_details` carries the same info as (icon, description) pairs for
+    a caller that wants per-icon hover detail. The bottom quartile (min 3
+    players) of the roster's own value distribution is flagged low-value;
+    `note` distinguishes aging players (real drop candidates) from young
+    ones (rebuild upside, hold) rather than treating "low value" as "drop"
+    outright — the aging cutoff is position-aware (`LOW_VALUE_AGING_AGE`),
+    since RBs decline earlier than QBs/TEs in dynasty value.
     """
     byes = byes or {}
     taxi_ids = set(roster.get("taxi") or [])
@@ -908,22 +812,13 @@ def roster_bye_conflicts(
     """For each week with an active-roster player on bye, show who's out, who fills
     in, and the resulting delta to optimal starting-lineup value.
 
-    Replaces a plain "2+ players share a bye" headcount with the number that
-    actually matters: two players sharing a bye at a deep position can be a
-    non-issue, while a single bye at a thin one can cost real lineup value -
-    a -500 week and a -5000 week are very different situations, and only the
-    delta itself tells them apart. Only active-roster players are eligible
-    for starting slots here (unlike `lineup_breakdown` and the marginal-
-    value machinery, which don't yet exclude taxi/reserve - see
-    PROJECT_PLAN.md), since a taxi or IR player can't actually be started to
-    cover a bye on Sleeper.
-
-    `starters_out`/`fillers` are the at-a-glance pair (a bye'd player who was
-    actually starting, and who replaces them) - `bench_out` is a separate
-    column for bench players who happen to be on bye too but weren't
-    starting anyway, so they don't affect `lineup_delta`. Meant to keep a
-    collapsed UI view (see streamlit_app.py) to just the two columns that
-    matter, with `bench_out` available for an expanded "show the rest" view.
+    A delta rather than a plain "N players share a bye" headcount, since a
+    shared bye at a deep position can be a non-issue while a single bye at a
+    thin one costs real lineup value. Only active-roster players are
+    eligible for starting slots (taxi/reserve excluded — they can't be
+    started to cover a bye). `starters_out`/`fillers` are the at-a-glance
+    pair; `bench_out` is separate (bye'd players who weren't starting
+    anyway, so they don't move `lineup_delta`) for an expanded UI view.
     """
     taxi_ids = set(roster.get("taxi") or [])
     reserve_ids = set(roster.get("reserve") or [])
@@ -1088,38 +983,19 @@ def sellable_players(
 ) -> pd.DataFrame:
     """Rostered bench depth worth shopping for trade value, not just cutting for nothing.
 
-    Composes signals already computed elsewhere rather than inventing a new
-    threshold (see valuation_principles.md's "one valuation strategy, used
-    everywhere"): a position's real surplus is its own actual starters
-    clearing replacement level (`positional_strength_summary`'s `vor > 0` -
-    not just headcount), and within a surplus position, "sellable" means the
-    roster's own depth *beyond* what's needed to start there - not the
-    starters generating that vor. Selling an actual starter is a much
-    bigger strategic call than "there's more depth here than the roster can
-    use," and was deliberately left out of this v1 (see PROJECT_PLAN.md).
-
-    Unlike `positional_strength_summary`'s `starter_value` (which only
-    counts dedicated slots - a deliberate, documented simplification for
-    that calculation, see valuation_principles.md), the *protected* range
-    excluded from "depth" here also reserves this roster's `FLEX` slots for
-    every FLEX-eligible position (`FLEX_ELIGIBLE_POSITIONS`), since a real
-    weekly FLEX starter (e.g. a team's RB3, with 2 dedicated RB slots plus
-    a FLEX) would otherwise get flagged as sellable "surplus" - a mistake
-    with real consequences (a bad real trade), not just analytical
-    imprecision, so this deliberately reserves the whole FLEX count against
-    every eligible position rather than trying to guess which position
-    actually fills it on this specific roster.
-
-    A candidate must also survive dropping them without opening a
-    weekly-depth hole (`gap_delta` against the roster with them removed) -
-    depth isn't real surplus if a bye week actually needs it. Rookies (no
-    NFL experience yet, `years_exp` falsy) are excluded - "veterans" per
-    this feature's scope, and a rookie's dynasty value is long-term upside
-    to hold, not surplus to sell off a strong position.
-
-    A candidate list for a human to evaluate a specific trade against,
-    sorted by trade value (`adj_value`) descending - not a final "sell this
-    player" recommendation.
+    A position qualifies if its own starters clear replacement level
+    (`positional_strength_summary`'s `vor > 0`); within a qualifying
+    position, "sellable" is the roster's depth beyond what's needed to
+    start there — reserving this roster's `FLEX` slot count against every
+    FLEX-eligible position too, unlike `starter_value`'s dedicated-slot-only
+    count, so a real weekly FLEX starter isn't misflagged as surplus. A
+    candidate must also survive `gap_delta` (dropping them can't open a
+    weekly-depth hole), and rookies are excluded (dynasty upside to hold,
+    not surplus to sell). Deliberately excludes actual starters — that's a
+    bigger strategic call, left for a human to judge against a specific
+    offer. Returns a candidate list sorted by `adj_value`, not a
+    recommendation. Full rationale in docs/rookie-draft-big-board.md's
+    "Trade targets & sells" section.
     """
     roster_positions = league["roster_positions"]
     strength = positional_strength_summary(roster, players, fc_by_sleeper_id, replacement_level, roster_positions)
@@ -1174,22 +1050,15 @@ def team_roster_analysis(
 ) -> dict[str, Any]:
     """Bundle every per-roster analysis view into one call, for any team's roster.
 
-    Extracted from `gather_state`'s own user-roster computation - every
-    function it calls already took a generic `roster` dict, so the only
-    thing that ever needed to be "the user's roster" specifically was
-    which one got passed in here. Lets a UI offer a team selector (see
-    the Roster tab) that reuses this exact analysis for any team in
-    the league, not a second, roster-agnostic scoring model built to
-    answer a similar-sounding but different question.
-
-    `roster_needs` carries both `roster_needs_summary`'s young-core `need`
-    flag (rebuild-timeline framing) and `positional_strength_summary`'s
-    value-over-replacement `weak` flag (trade-strategy framing) side by
-    side, joined on position - two different questions about the same
-    position, not one replacing the other. `replacement_level` is computed
-    once per refresh across every team (see `position_replacement_levels`)
-    and passed in rather than recomputed here, since it's the same
-    league-wide baseline regardless of which team's roster this call is for.
+    Every function it calls already takes a generic `roster` dict — this is
+    the one code path both `gather_state`'s own user-roster computation and
+    the Roster tab's team selector use, rather than a second,
+    roster-agnostic model. `roster_needs` joins `roster_needs_summary`'s
+    young-core `need` flag and `positional_strength_summary`'s
+    value-over-replacement `weak` flag on position — two different
+    questions about the same position. `replacement_level` is the
+    league-wide baseline computed once per refresh (`position_replacement_levels`)
+    and passed in, not recomputed here.
     """
     roster_needs = roster_needs_summary(roster, players)
     if not roster_needs.empty:
@@ -1245,20 +1114,16 @@ def player_value_rows(player_ids: list[str], players: dict[str, dict], fc_by_sle
 
 
 def assign_starters(player_rows: list[dict], roster_positions: list[str]) -> list[tuple[str, str | None]]:
-    """Assign players to starting slots, most-restrictive slot first.
+    """Assign players to starting slots, most-restrictive slot first (QB/RB/WR/TE,
+    then FLEX, then SUPER_FLEX).
 
-    Provably optimal for this league's nested slot eligibility: QB's single
-    dedicated slot is a subset of SUPER_FLEX's eligible positions, and
-    RB/WR/TE dedicated slots are a subset of FLEX's, which is in turn a
-    subset of SUPER_FLEX's — filling the most-restrictive slots first with
-    the single best remaining value at each step is optimal for this nested
-    ("laminar") structure, not just a heuristic (a greedy exchange argument
-    applies: filling a less-restrictive slot first could only ever waste a
-    flexible slot's optionality on a player who had nowhere else to go).
-
-    Returns one (slot_label, player_id) pair per starting slot in
-    roster_positions (excluding bench), in QB/RB/WR/TE/FLEX/SUPER_FLEX
-    order; player_id is None if no eligible player remains for that slot.
+    Provably optimal for this league's nested slot eligibility — QB's
+    dedicated slot ⊂ SUPER_FLEX's eligible set, RB/WR/TE dedicated ⊂
+    FLEX's ⊂ SUPER_FLEX's — via a standard greedy exchange argument, not
+    just a heuristic. See docs/rookie-draft-big-board.md's "Ranking"
+    section for the full proof sketch. Returns one (slot_label, player_id)
+    pair per starting slot in `roster_positions` (excluding bench);
+    player_id is None if no eligible player remains for that slot.
     """
     remaining = sorted(
         (r for r in player_rows if r["pos"] in FANTASY_POSITIONS),
@@ -1288,16 +1153,11 @@ def lineup_breakdown(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return (starters, bench, taxi, ir) for the roster's optimal lineup by current value.
 
-    A snapshot assessment, not week-specific — doesn't yet account for byes
-    or injuries when deciding who starts (a by-week/injury-aware version is
-    a planned refinement, not built here). Taxi-squad and IR/reserve players
-    are both in `roster["players"]` alongside the real bench, so they're
-    split out by cross-referencing `roster["taxi"]`/`roster["reserve"]`
-    (both plain player_id lists, same shape - confirmed directly against
-    the live league, including rosters with IR players populated) rather
-    than left lumped into "bench". They're also excluded from the starter
-    assignment itself - Sleeper doesn't allow starting a taxi/IR player, so
-    they must not be eligible to "win" a slot here regardless of value.
+    A snapshot, not week- or injury-aware (a planned refinement). Taxi and
+    IR/reserve players are in `roster["players"]` alongside the real bench,
+    so they're split out via `roster["taxi"]`/`roster["reserve"]` (plain
+    player_id lists) and excluded from the starter assignment itself —
+    Sleeper doesn't allow starting them.
     """
     taxi_ids = set(roster.get("taxi") or [])
     reserve_ids = set(roster.get("reserve") or [])
@@ -1384,27 +1244,16 @@ def best_position_relevant_drop(
     """For one specific candidate, search which drop actually maximizes marginal value.
 
     `recommend_drop()` (used by the main per-round ranking, for
-    performance - see `rank_by_marginal_value`) is a cheap heuristic:
-    lowest-value bench player, full stop, regardless of which candidate is
-    being added. That produces the same drop for very different
-    candidates whenever one player happens to be the roster's global
-    value floor - not useful for actually deciding what to cut for a
-    *specific* pick. This instead restricts the search to players who
-    share a slot type with the candidate (own position, plus
-    FLEX/SUPER_FLEX-eligible positions if the candidate qualifies for
-    those slots - in this league SUPER_FLEX covers all four fantasy
-    positions, so that's effectively every rostered skill player, which
-    is the correct reflection of this league's actual slot structure, not
-    an oversight), tries dropping each one, and returns whichever
-    resulting roster has the highest season-average starting value -
-    preferring bench players over starters, same as `recommend_drop`.
-
-    Deliberately NOT used inside `rank_by_marginal_value`'s per-round loop
-    over every candidate - evaluating every drop option for every one of
-    ~227 candidates would multiply that pass's cost by the size of the
-    search pool (see its own ~20,000-call performance note). Meant for
-    on-demand lookup: one candidate at a time, e.g. a UI dropdown
-    selection.
+    performance) is a cheap heuristic — lowest-value bench player, full
+    stop — that can suggest the same drop for very different candidates.
+    This instead restricts the search to players who share a slot type
+    with the candidate (own position, plus FLEX/SUPER_FLEX-eligible
+    positions if the candidate qualifies), tries dropping each, and
+    returns whichever resulting roster has the highest season-average
+    starting value. Deliberately not used inside `rank_by_marginal_value`'s
+    per-round loop — evaluating every drop option for every candidate would
+    multiply that pass's cost by the search pool size. Meant for on-demand
+    lookup (one candidate at a time, e.g. a UI dropdown selection).
     """
     candidate_position = players.get(candidate_id, {}).get("position")
     # Gated on whether the league's actual roster_positions has that slot
@@ -1473,21 +1322,12 @@ def season_average_starter_value(
 ) -> float:
     """Average optimal starting-lineup value across all 18 weeks, excluding bye'd players each week.
 
-    This is the season-long analog of `lineup_breakdown`'s single snapshot.
-    Every player misses exactly one week (their own bye), so this doesn't
-    inherently favor or penalize any one player for having a bye at all —
-    what it does capture is the *interaction*: a pickup whose bye lines up
-    with an already-thin position contributes less across the season than
-    the same value at a position with real depth behind it, and a pickup
-    that specifically covers a weak spot during a bye week contributes
-    more. Weekly-gap *detection* is handled separately (roster_weekly_gaps)
-    — this is about getting the season-long value comparison right, not
-    about re-deriving gap alerts.
-
-    `ineligible_ids` (the roster's current taxi/IR players) never win a
-    starting slot here regardless of value - Sleeper doesn't allow starting
-    them. Doesn't attempt to model taxi/active transitions for newly
-    simulated candidates mid-draft-plan - see PROJECT_PLAN.md.
+    The season-long analog of `lineup_breakdown`'s single snapshot: every
+    player misses exactly one week (their own bye), so this captures the
+    *interaction* of a bye with positional depth, not a blanket bye
+    penalty. `ineligible_ids` (taxi/IR players) never win a starting slot
+    here, matching Sleeper's own rule. See docs/rookie-draft-big-board.md's
+    "Ranking" section for the full rationale.
     """
     rows = player_value_rows(player_ids, players, fc_by_sleeper_id)
     eligible_rows = [r for r in rows if r["player_id"] not in ineligible_ids]
@@ -1517,31 +1357,17 @@ def rank_by_marginal_value(
 ) -> list[dict]:
     """Rank candidates by season-average marginal starting-lineup value, not raw trade value.
 
-    For each candidate: simulate adding them (and, only if the roster is
-    already at total capacity, making the resulting recommended drop), and
-    measure how much the roster's season-average starting value (see
-    season_average_starter_value) goes up. A drop is never forced just
-    because a candidate was evaluated — a player added to genuinely open
-    roster/taxi room (see roster_total_capacity) doesn't cost anything, so
-    no drop is simulated and the marginal value isn't understated by an
-    unnecessary cut. A modestly valued player at a genuinely weak position
-    can beat a highly valued player who wouldn't even crack the starting
-    lineup — this ranks by projected lineup impact, not market price. Bye
-    weeks are already folded into the season average, not handled as a
-    separate adjustment.
-
-    `exclude_from_drop` protects specific players (e.g. picked in an
-    earlier round of the same multi-round plan) from being recommended for
-    drop here. `ineligible_ids` (the roster's current taxi/IR players) are
-    never assignable to a starting slot in the simulation - passed through
-    to both `season_average_starter_value` and `recommend_drop`.
-    `reserve_filled` (the roster's actual current IR headcount, not the
-    league's full `reserve_slots` setting - see `roster_total_capacity`)
-    keeps a drafted rookie, who can never actually be assigned to reserve,
-    from being treated as if empty IR slots were open room for them.
+    For each candidate: simulate adding them (only forcing the resulting
+    `recommend_drop()` if the roster is already at total capacity — see
+    `roster_total_capacity`), and measure the delta to
+    `season_average_starter_value`. `exclude_from_drop` protects specific
+    players (e.g. picked in an earlier round of the same multi-round plan)
+    from being recommended for drop; `ineligible_ids` (current taxi/IR
+    players) are never assignable to a starting slot in the simulation.
     Returns up to `top_n` entries (player_id, marginal_value, drop), sorted
     best first — the first is the recommended pick, the rest are backup
-    options for the draft plan's alternates.
+    alternates. Full rationale in docs/rookie-draft-big-board.md's
+    "Ranking" section.
     """
     if not candidate_ids:
         return []
@@ -1627,52 +1453,28 @@ def multi_round_plan(
 ) -> dict[str, Any]:
     """Plan for every pick the user owns this draft — what to pick and drop, and why.
 
-    Ranks candidates by season-average MARGINAL starting-lineup value (see
-    rank_by_marginal_value), not raw trade value — a modest player at a
-    genuinely weak position can outrank a highly valued player who
-    wouldn't even crack the starting lineup. Bye weeks are folded directly
-    into that season average (season_average_starter_value), so a player
-    isn't over- or under-weighted just because of when their bye falls.
+    Ranks candidates by season-average marginal starting-lineup value
+    (`rank_by_marginal_value`), not raw trade value. Rounds already played
+    (`overall_pick < current_pick_no`) show the real player Sleeper
+    recorded, scored the same way retroactively rather than a stale
+    recommendation; a drop is still suggested for those rounds too, since
+    Sleeper has no record of whether one was actually made. Upcoming
+    rounds are simulated assuming no other team's picks happen in between,
+    recomputed fresh every refresh.
 
-    Rounds already played (`overall_pick < current_pick_no`) show the REAL
-    player Sleeper recorded for that pick — scored the same marginal-value
-    way retroactively, for a consistent "how much did this add" number —
-    not a stale recommendation, so advancing rounds never hides what
-    happened last round. Upcoming rounds are simulated: assumes "if these
-    were your only remaining picks, back to back, on the board as it looks
-    right now" — does NOT simulate the other ~11 teams' picks in between.
-    Recomputed fresh on every refresh, so it stays accurate as the real
-    draft progresses.
-
-    A drop is still recommended for already-played rounds too (using the
-    running hypothetical roster) since Sleeper has no record of whether a
-    suggested drop was actually made — a live suggestion, not a confirmed
-    transaction, labeled that way in the UI.
-
-    Also returns up to MAX_DISPLAYED_ALTERNATES backup alternates per
-    upcoming round (`alternates_by_pick`, keyed by overall_pick), each
-    noting whether picking it instead would open a weekly gap the primary
-    pick doesn't — a plain-string `notes` field meant to carry more note
-    types later (e.g. injury history, if that data ever becomes available),
-    not just this one. `all_candidates_by_pick` (same keys) holds every
-    candidate rank_by_marginal_value evaluated for that round, not just the
-    displayed few - free to build, since every candidate is already scored
-    before the top-N slice happens (see the top_n comment above), and
-    lets a UI offer an on-demand lookup for any player, not only the
-    handful surfaced by default. Its `drop_name`/`drop_is_starter` come
-    from the same cheap recommend_drop() heuristic the ranking itself
-    uses, not a per-candidate optimal search - a UI wanting the actual
-    best drop for one specific selected candidate should call
-    best_position_relevant_drop() instead, using this round's roster
-    snapshot from `hypothetical_ids_by_pick` (same keys again - the roster
-    as it stood entering that round, before that round's own pick was
-    applied). Omits the weekly-gap `notes` field that `alternates_by_pick`
-    has, to skip an extra roster_weekly_gaps pass for the whole candidate
-    pool most of which nobody will ever look up.
-
-    Finally compares the resulting hypothetical roster's weekly gaps
-    against the current roster's (see roster_weekly_gaps), flagging any
-    week where the full plan would introduce or worsen a dedicated-slot gap.
+    Returns up to `MAX_DISPLAYED_ALTERNATES` backup alternates per upcoming
+    round (`alternates_by_pick`, keyed by `overall_pick`), each noting
+    whether picking it instead would open a weekly gap the primary pick
+    doesn't. `all_candidates_by_pick` (same keys) holds every candidate
+    evaluated for that round, not just the displayed few — free to expose
+    since `rank_by_marginal_value` already scores all of them; its
+    `drop_name`/`drop_is_starter` come from the same cheap heuristic as the
+    ranking, not a per-candidate optimal search (a UI wanting that should
+    call `best_position_relevant_drop()` with `hypothetical_ids_by_pick`'s
+    snapshot for that round instead). Finally compares the resulting
+    hypothetical roster's weekly gaps against the current roster's,
+    flagging any week the full plan would newly break. Full rationale in
+    docs/rookie-draft-big-board.md's "Draft plan" section.
     """
     own_picks = sorted((p for p in ownership if p.owner_roster_id == user_roster_id), key=lambda p: p.overall_pick)
 

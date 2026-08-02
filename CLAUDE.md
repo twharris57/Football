@@ -70,7 +70,9 @@ not a deployed service.
 - `team_metadata_batch.py` needs a real OpenWeatherMap API key to function and
   is currently non-functional / not integrated into the picking flow.
 - Dynasty tools depend on two external, unauthenticated public APIs (Sleeper,
-  FantasyCalc) with no SLA — no retry/backoff logic exists yet.
+  FantasyCalc) with no SLA. Both clients mount a `Retry` adapter (3 retries,
+  exponential backoff on connection errors/429/5xx) rather than a bare
+  `requests.get`, but there's still no SLA to rely on.
 
 ## Project Structure
 
@@ -82,13 +84,16 @@ football.ipynb           Notebook version of football.py for interactive experim
 sleeper_api.py           Sleeper API client + local players-dataset cache
 fantasycalc_api.py       FantasyCalc dynasty trade-value client
 dynasty_core.py          Shared dynasty logic: big board, roster analysis, lineup, marginal-value draft plan
+player_scoring.py        Per-player real-scoring correction (league scoring_settings vs. FantasyCalc's assumed baseline)
+scripts/                 One-off/derivation scripts, e.g. derive_position_multipliers.py (rookie play-style bucket ratios)
 rookie_draft.py          Rookie draft big board CLI, with interactive refresh loop
 streamlit_app.py         Rookie draft big board web dashboard (same logic as the CLI)
+tests/                   pytest suite: test_dynasty_core.py, test_player_scoring.py
 Dockerfile               Image for streamlit_app.py (python:3.12-slim, non-root)
 docker-compose.yml       Local dev: builds the image from source
 docker-compose.deploy.yml  NAS deploy: pulls the prebuilt GHCR image, never builds on-device
 .env.example             Template for docker-compose.deploy.yml's HOST_PORT
-.github/workflows/       CI: docker-publish.yml builds+pushes to GHCR on push to main
+.github/workflows/       CI: ci.yml runs pytest on every PR; docker-publish.yml builds+pushes to GHCR on push to main
 requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, streamlit, ...)
 .claude/                 Claude Code conventions, commands, and PROJECT_PLAN.md
 docs/                    Design docs for completed features
@@ -111,14 +116,16 @@ streamlit run streamlit_app.py # dynasty rookie draft big board, web dashboard
 
 docker compose up --build      # local: build and run the dashboard in Docker
 
-pytest tests/ -v                # dynasty_core.py's ranking/lineup logic (runs in CI on every PR)
+pytest tests/ -v                # ranking/lineup/valuation logic (runs in CI on every PR)
 ```
 
 Test coverage is intentionally narrow so far: `tests/test_dynasty_core.py` covers
 `assign_starters`, the capacity-aware drop logic, `season_average_starter_value`'s
-bye-week handling, and `roster_weekly_gaps`, all against synthetic data (no real
-API calls). The confidence-pool scripts and the Sleeper/FantasyCalc clients
-themselves still have none. See `testing.md` for general conventions.
+bye-week handling, and `roster_weekly_gaps`; `tests/test_player_scoring.py` covers
+the per-player real-scoring correction's `_sane_ratio` guard and multiplier
+fallback chain. Both run against synthetic data (no real API calls). The
+confidence-pool scripts and the Sleeper/FantasyCalc clients themselves still
+have none. See `testing.md` for general conventions.
 
 ## Available Skills
 

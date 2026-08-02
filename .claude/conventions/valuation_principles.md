@@ -39,12 +39,12 @@ position this league's scarcity premium depends on getting right.
   `fantasycalc.get_dynasty_values()`) is `roster_positions.count("QB") +
   roster_positions.count("SUPER_FLEX")`, not just the dedicated count.
 - Any **home-grown positional-value logic built on top of the market
-  value** (replacement level, VOR, a future power/timeline read, "sellable
+  value** (replacement level, VOR, the power/timeline read, "sellable
   vs. droppable" thresholds) needs to carry the same superflex-aware demand
   through, not just count dedicated slots. `position_replacement_levels()`
-  currently does *not* do this (tracked in `.claude/PROJECT_PLAN.md`,
-  Roster & trade tooling item 1) — treat that as the reference example of
-  the failure mode to avoid next time, not a one-off bug.
+  originally didn't do this — fixed via `_position_starter_demand()` (see
+  `dynasty_core.py`) — treat that as the reference example of the failure
+  mode to avoid next time, not a one-off bug.
 - More generally: whenever a metric here needs "how many players are
   really demanded at this position," start from `roster_positions` and
   include `FLEX`/`SUPER_FLEX` eligibility, not just the position's own
@@ -148,6 +148,6 @@ Before trusting a hardcoded value as harmless, check whether it's coupled
 to something that *is* pulled live elsewhere in the same computation — a
 hardcoded number that happens to match today's live value can silently stop
 matching if that live value ever changes (see `BASELINE_SCORING`'s `rec: 1.0`
-vs. the real `ppr` param sent to FantasyCalc, `.claude/PROJECT_PLAN.md`
-Valuation & data accuracy item 2, found only because this happened to be
-audited, not because anything would have failed loudly).
+vs. the real `ppr` param sent to FantasyCalc, `.claude/PROJECT_PLAN.md`'s
+`VA-2`, found only because this happened to be audited, not because
+anything would have failed loudly).
