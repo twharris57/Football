@@ -47,6 +47,32 @@ ratios land in `[1.08, 1.61]`, comfortably inside the bound, so this is a
 defensive floor against a bad data pull, not a normal code path. Covered by
 `tests/test_player_scoring.py` (`TestSaneRatio`).
 
+**The correction never lowers value for RB/WR/TE, and empirically hasn't
+for QB either.** For RB/WR/TE, every scoring-rule difference this league's
+`scoring_settings` add on top of `BASELINE_SCORING` — first-down bonuses,
+long-play bonuses, the TE premium — is strictly additive; there's no
+category `real` scores that `baseline` doesn't. That makes `ratio ≥ 1` a
+structural guarantee for those three positions, not an empirical
+coincidence — `real_points` can never fall below `baseline_points` when
+every rule difference only adds. QB is the one position with a genuine
+downward term (the INT penalty and pick-six penalty exist in `real` but not
+`baseline`), so a sub-1.0 ratio is theoretically possible there — nothing
+in `_sane_ratio()`'s `[0.5, 2.0]` bounds would prevent it, only a ratio
+below `0.5` gets rejected. It just hasn't happened: even the lowest-ratio
+QB in the real 3-season pool sits at 1.23, since the 6pt-vs-4pt TD bump and
+this league's higher passing-yardage rate are large, broad-based lifts that
+dwarf the INT/pick-six penalty increase for any QB with real starting
+volume. A QB with an extreme INT/pick-six-to-production ratio, while still
+clearing the 200-attempt qualifying bar, could in principle be the first
+case where `adj_value < value`.
+
+Because there's no renormalization step, this also isn't a zero-sum
+reallocation — the correction doesn't shift value *from* one position *to*
+another. It inflates every position's `adj_value`, just by different
+amounts (position-average ratios: QB ~1.40, TE ~1.32, RB ~1.17, WR ~1.15).
+What actually shifts is *relative* standing — QB/TE's share of total value
+rises while RB/WR's falls — not any player's absolute number moving down.
+
 **Modeling assumption:** `adj_value = value * multiplier` applies a
 points-derived ratio multiplicatively to FantasyCalc's market value, which
 assumes dynasty value scales linearly with points under the counterfactual
