@@ -31,6 +31,30 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
+**`feature/free-agent-evaluator` (RT-3), reviewed 2026-08-02:**
+
+1. [x] `free_agent_pool()` (`dynasty_core.py`) computed free-agent
+   membership independently of `rookie_pool()`/`gather_state`'s `available`
+   rookie pool, so this season's not-yet-drafted rookies — real NFL `team`
+   set, not on any fantasy roster — passed its membership test and showed
+   up on the "Free agents" board as a waiver-add candidate, even though
+   they're only actually obtainable through the ongoing startup rookie
+   draft, not free agency. User-caught live (Jeremiyah Love, a rookie still
+   in this league's active startup draft, showing up in the Free agents
+   board), the exact kind of thing this PR's own test suite didn't exercise
+   (`TestFreeAgentPool`/`TestFreeAgentBoard` never constructed a
+   pending-draft rookie in the candidate pool). Fixed 2026-08-02
+   (`de554a4`): `free_agent_pool()` takes a new `draft_eligible_rookie_ids`
+   parameter; `gather_state()` passes it the same `available` set already
+   computed for the draft plan itself (no new logic, no new API calls),
+   gated on whether the startup draft still has picks remaining — empty set
+   once the draft is complete, so a still-undrafted rookie becomes a real
+   free agent again automatically, no special-casing needed. Verified: both
+   directions now covered by `TestFreeAgentPool` (excluded mid-draft;
+   reappears once an empty set is passed) and the full suite (88 passed).
+   See `valuation_principles.md`'s new "Mutually exclusive candidate pools"
+   rule.
+
 **`feature/win-pct-shrinkage` (RT-1), reviewed 2026-08-02:**
 
 1. [x] `_shrunk_win_pct()` overwrites the `win_pct` column that

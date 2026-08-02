@@ -178,3 +178,39 @@ consumer expects the untransformed value — especially a display label
 that names the field literally ("Win %", "Value", "Rank") — expose both
 under distinct names rather than letting one name's meaning silently
 depend on which caller reads it.
+
+## Mutually exclusive candidate pools must derive from each other's membership
+
+This project has several "candidate pool" functions that enumerate a slice
+of the same underlying player universe — `rookie_pool()` (this year's
+class), `free_agent_pool()` (every non-rostered player), `available`
+(rookies not yet drafted this session). Some of these are supposed to be
+mutually exclusive in the real world even when nothing in the data forces
+it: a player can't simultaneously be "available to draft" and "available to
+add off waivers." `free_agent_pool()` (RT-3, 2026-08-02) computed its
+membership independently of the rookie-draft pool — checking only
+`rostered_player_ids` — so a rookie still in this league's active startup
+draft (real NFL `team` set, not yet on any fantasy roster, so not excluded
+by anything `free_agent_pool()` checked) showed up on the Free agents board
+as a waiver-wire add, when the only real way to acquire them was the
+draft in progress. Caught live (a specific rookie visibly on both boards at
+once), not by the test suite — `TestFreeAgentPool`/`TestFreeAgentBoard`
+never constructed a pending-draft rookie in the candidate pool, only
+rostered/no-team/non-fantasy-position exclusions.
+
+Fixed by threading the draft's own `available` pool into `free_agent_pool()`
+as an explicit `draft_eligible_rookie_ids` exclusion, gated on whether the
+startup draft still has picks remaining — not a second, independent
+rookie-eligibility check, reusing the one `gather_state` already computes.
+
+**The rule**: when two candidate-pool functions are supposed to be
+mutually exclusive in reality (draftable vs. addable, sellable vs.
+protected, etc.), don't let each compute membership solely from its own
+"what excludes you" checklist against the raw player universe. Have the
+narrower/more-temporary pool (here, "still draftable this session") flow
+into the other's exclusion set explicitly, and re-check whenever a new
+candidate-pool feature is added whether it overlaps an existing one's
+real-world exclusivity window. Test coverage for a candidate-pool function
+should include at least one case from every *other* pool that's supposed to
+be mutually exclusive with it, not just the pool's own internal exclusion
+rules.
