@@ -247,3 +247,36 @@ eligibility also zero out the accounting for the past. Watch for this
 shape elsewhere: anywhere "is there room for X" is modeled by zeroing an
 entire slot category's *capacity* rather than just closing off further
 *entry* into it.
+
+## Exclusion filters change the outcome for everyone else, not just the excluded entity
+
+`recommend_drop()`'s `exclude_ids` parameter is meant to protect specific
+players from being *chosen* as the recommended cut (earlier-round draft
+picks in `multi_round_plan`'s `exclude_from_drop`; a trade's own incoming
+players in `evaluate_trade()`'s new `recommended_drops`, RT-13,
+2026-08-02 review). But it filters those players out of `rows` *before*
+`assign_starters()` runs — removing them from the competition used to
+decide who counts as a "starter" at all, not just from the pool of
+candidates eligible to be cut. Removing a competitor can only ever help
+the remaining candidates win a slot, never hurt them, so an existing
+droppable player can read as `is_starter: True` when, in the real roster
+(protected players correctly seated), they'd actually be bench. The
+reverse can't happen — a real starter never gets mislabeled bench by this
+mechanism — so the error only ever overstates a cut's severity. Live in
+`recommend_drop()` since before this review, but only a rare edge case
+until `evaluate_trade()` made `exclude_ids` non-empty on essentially every
+call and started surfacing `is_starter` as a direct user-facing warning
+tag rather than an internal comparison.
+
+**The rule**: "protect this entity from being selected" and "remove this
+entity from the field" are different operations. A filter meant only to
+protect a candidate from being *chosen* by a downstream ranking/assignment
+step must still let that candidate *participate* in whatever competitive
+step determines outcomes for everyone else — otherwise every other
+participant's computed status (starter/bench, winner/loser, eligible/
+ineligible) is quietly computed against a smaller field than reality.
+Apply the exclusion at the final selection step, not by stripping the
+candidate out of the shared computation upstream of it. Watch for this
+shape wherever a "protect X from Y" parameter is implemented as "delete X
+before computing Y," rather than "compute Y normally, then skip X when Y's
+result is applied."
