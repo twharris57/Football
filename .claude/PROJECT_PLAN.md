@@ -19,46 +19,33 @@ when no branch is currently mid-review.
 
 **`feature/trade-targets-and-sells` (PR #18), reviewed 2026-08-01:**
 
-1. [ ] **`sellable_players()` can flag a real FLEX starter as "surplus
-   depth"** — `starter_count` (`_position_starter_demand()`) only counts
-   *dedicated* RB/WR/TE slots, same as `positional_strength_summary`'s
-   `vor` and `gap_delta`'s weekly-gap check — neither guardrail this
-   feature relies on accounts for FLEX. A team's real, weekly FLEX starter
-   (e.g. RB3 on a roster with 2 dedicated RB slots plus a `FLEX` slot) can
-   pass both checks and get listed as "sellable," directly contradicting
-   this feature's own stated intent ("not the starters generating that
-   vor"). The SUPER_FLEX fix from the prior PR doesn't cover this — it was
-   deliberately scoped to QB only, since FLEX splits demand across three
-   positions with no similarly clean allocation (see
-   `.claude/conventions/valuation_principles.md`). Needs a real decision
-   before this ships: at minimum, exclude a position's likely-FLEX-range
-   from "depth" when the league has a `FLEX` slot, or clearly caveat the
-   list in the UI until a proper fix lands — this is the one finding in
-   this PR that could actually cause a bad real-world trade, not just an
-   analytical imprecision.
-2. [ ] **Verify `_future_pick_owners`'s `roster_id` range assumption
-   against live data** — `for roster_id in range(1, num_teams + 1)`
-   assumes every roster's `roster_id` is exactly `1..num_teams`,
-   contiguous, no gaps. Every other place in this codebase treats
-   `roster_id` as an opaque key (`rosters_by_id`, `roster_capacity`) —
-   this is the first place that assumes it's a literal range (see
-   `.claude/conventions/valuation_principles.md`). Very likely true for
-   this league (Sleeper's normal convention), but unverified. Cheap check
-   before merge: confirm `sorted(r["roster_id"] for r in rosters) ==
-   list(range(1, num_teams + 1))` against a real refresh. If it holds,
-   note the assumption in `docs/rookie-draft-big-board.md`'s "Static
-   assumptions" table; if it doesn't, `_future_pick_owners` needs to
-   iterate the real `rosters` list instead of a synthesized range.
-3. [ ] **`pick_trade_values` should raise a `data_warnings` entry on an
-   all-empty `value` column** — the docstring already flags the real risk
-   (a FantasyCalc pick-naming convention change would silently leave every
-   `value` blank, no exception) but nothing acts on it. Every other
-   silent-fallback path in `gather_state` (byes, handcuffs, scoring
-   multipliers) populates `data_warnings` so the UI surfaces it instead of
-   looking like "there's nothing to report" (see
-   `.claude/conventions/valuation_principles.md`) — this is the one
-   exception. Cheap fix:
-   `if pick_values["value"].isna().all(): data_warnings.append(...)`.
+1. [x] **`sellable_players()` can flag a real FLEX starter as "surplus
+   depth"** — fixed 2026-08-01: within `sellable_players()`, the
+   protected (non-sellable) range for each `FLEX_ELIGIBLE_POSITIONS`
+   position now adds the roster's `FLEX` slot count on top of
+   `_position_starter_demand()`'s dedicated-slot count, reserving the
+   whole FLEX count against every eligible position rather than guessing
+   which one actually fills it. Scoped to this feature's own depth
+   calculation only — `positional_strength_summary`'s `vor` and
+   `gap_delta`'s weekly-gap check still don't model FLEX, same
+   already-documented simplification as before, not expanded here.
+   Verified against live data (this league has 3 FLEX slots): several
+   real FLEX-range starters (e.g. Matthew Golden, Tyler Allgeier) that
+   were incorrectly flagged before the fix are correctly excluded after.
+   Covered by `test_reserves_flex_range_from_depth_when_league_has_a_flex_slot`.
+2. [x] **Verify `_future_pick_owners`'s `roster_id` range assumption
+   against live data** — confirmed 2026-08-01: `sorted(r["roster_id"] for
+   r in rosters) == list(range(1, num_teams + 1))` holds for this league.
+   Noted in `docs/rookie-draft-big-board.md`'s "Static assumptions" table
+   (what breaks if it's ever wrong, and the fix if so).
+3. [x] **`pick_trade_values` should raise a `data_warnings` entry on an
+   all-empty `value` column** — fixed 2026-08-01: `gather_state` now
+   appends a `data_warnings` entry when `pick_values["value"].isna().all()`,
+   matching every other silent-fallback path (byes, handcuffs, scoring
+   multipliers). Covered by
+   `test_unmatched_pick_names_leave_value_empty_not_an_error`, which
+   proves the precondition the check relies on (an unmatched pick name
+   degrades to `NaN`, doesn't raise).
 
 ## Now — blocking
 

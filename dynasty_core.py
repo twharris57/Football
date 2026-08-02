@@ -1093,12 +1093,22 @@ def sellable_players(
     everywhere"): a position's real surplus is its own actual starters
     clearing replacement level (`positional_strength_summary`'s `vor > 0` -
     not just headcount), and within a surplus position, "sellable" means the
-    roster's own depth *beyond* what's needed to start there (the same
-    per-position starter count `positional_strength_summary` itself uses to
-    pick which players count toward `starter_value`) - not the starters
-    generating that vor. Selling an actual starter is a much bigger
-    strategic call than "there's more depth here than the roster can use,"
-    and was deliberately left out of this v1 (see PROJECT_PLAN.md).
+    roster's own depth *beyond* what's needed to start there - not the
+    starters generating that vor. Selling an actual starter is a much
+    bigger strategic call than "there's more depth here than the roster can
+    use," and was deliberately left out of this v1 (see PROJECT_PLAN.md).
+
+    Unlike `positional_strength_summary`'s `starter_value` (which only
+    counts dedicated slots - a deliberate, documented simplification for
+    that calculation, see valuation_principles.md), the *protected* range
+    excluded from "depth" here also reserves this roster's `FLEX` slots for
+    every FLEX-eligible position (`FLEX_ELIGIBLE_POSITIONS`), since a real
+    weekly FLEX starter (e.g. a team's RB3, with 2 dedicated RB slots plus
+    a FLEX) would otherwise get flagged as sellable "surplus" - a mistake
+    with real consequences (a bad real trade), not just analytical
+    imprecision, so this deliberately reserves the whole FLEX count against
+    every eligible position rather than trying to guess which position
+    actually fills it on this specific roster.
 
     A candidate must also survive dropping them without opening a
     weekly-depth hole (`gap_delta` against the roster with them removed) -
@@ -1114,6 +1124,7 @@ def sellable_players(
     roster_positions = league["roster_positions"]
     strength = positional_strength_summary(roster, players, fc_by_sleeper_id, replacement_level, roster_positions)
     roster_player_ids = roster.get("players") or []
+    flex_slots = roster_positions.count("FLEX")
 
     by_position: dict[str, list[tuple[str, dict, float]]] = {pos: [] for pos in FANTASY_POSITIONS}
     for player_id, info in roster_fantasy_players(roster, players):
@@ -1126,6 +1137,8 @@ def sellable_players(
         if strength.loc[position, "vor"] <= 0:
             continue
         starter_count = _position_starter_demand(position, roster_positions)
+        if position in FLEX_ELIGIBLE_POSITIONS:
+            starter_count += flex_slots
         depth = sorted(entries, key=lambda e: e[2], reverse=True)[starter_count:]
         for player_id, info, _sort_value in depth:
             if not info.get("years_exp"):
@@ -1957,6 +1970,15 @@ def gather_state(
         fc_values,
         team_names,
     )
+    # pick_trade_values matches picks by FantasyCalc's own name string (its
+    # only stable join key for picks) - a naming-convention change on their
+    # end wouldn't raise, just leave every value blank, silently
+    # indistinguishable from "there's nothing to report" without this.
+    if not pick_values.empty and pick_values["value"].isna().all():
+        data_warnings.append(
+            "Draft pick trade values unavailable this refresh - couldn't match any pick to "
+            "FantasyCalc's current pick names, which may mean their naming convention changed."
+        )
 
     unavailable = rostered_player_ids(rosters) | picked_player_ids
     rookies = rookie_pool(players, league["season"])

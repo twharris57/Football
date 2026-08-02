@@ -149,6 +149,30 @@ class TestPickTradeValues:
         assert len(picks[picks["owner_roster_id"] == 1]) == 0
         assert len(picks[picks["owner_roster_id"] == 2]) == 2
 
+    def test_unmatched_pick_names_leave_value_empty_not_an_error(self):
+        # A FantasyCalc pick-naming convention change is exactly the
+        # silent-failure mode this join is exposed to (name-string match,
+        # no other stable join key for picks) - it must degrade to an
+        # empty value column, not raise, so gather_state's own
+        # all-NaN check (see PROJECT_PLAN.md's "Current branch" review
+        # findings) has something real to detect.
+        ownership = [dc.DraftPickSlot(round=1, overall_pick=1, original_roster_id=1, owner_roster_id=1)]
+        fc_values = [{"player": {"name": "totally different naming scheme", "position": "PICK"}, "value": 7000}]
+        team_names = {1: "Team One"}
+
+        picks = dc.pick_trade_values(
+            ownership,
+            current_pick_no=1,
+            traded_picks=[],
+            num_teams=1,
+            num_rounds=1,
+            season="2026",
+            fc_values=fc_values,
+            team_names=team_names,
+        )
+
+        assert picks["value"].isna().all()
+
 
 class TestRosterCapacity:
     """IR/reserve players must not count against active-roster capacity, same as taxi."""
@@ -347,6 +371,26 @@ class TestSellablePlayers:
         sellable = dc.sellable_players(roster, players, fc_by_id, replacement_level, league, byes={})
 
         assert sellable.empty
+
+    def test_reserves_flex_range_from_depth_when_league_has_a_flex_slot(self):
+        # 2 dedicated RB slots + 1 FLEX - the real, weekly-startable RB
+        # range is 3 deep, not 2. Only the 4th-best RB is genuine surplus.
+        league = {"roster_positions": ["RB", "RB", "FLEX", "BN", "BN"]}
+        players = {f"rb{i}": make_player("RB", full_name=f"RB {i}") for i in range(1, 5)}
+        for p in players.values():
+            p["years_exp"] = 4
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("rb1", 500, position="RB"), fc_entry("rb2", 400, position="RB"),
+             fc_entry("rb3", 300, position="RB"), fc_entry("rb4", 100, position="RB")]
+        )
+        roster = {"players": ["rb1", "rb2", "rb3", "rb4"]}
+        replacement_level = {"RB": 50.0, "QB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        sellable = dc.sellable_players(roster, players, fc_by_id, replacement_level, league, byes={})
+
+        # rb3 is a real FLEX-range starter (protected) - only rb4 is
+        # genuine depth beyond the dedicated-plus-FLEX range.
+        assert list(sellable["name"]) == ["RB 4"]
 
 
 class TestWeightedAverageAge:
