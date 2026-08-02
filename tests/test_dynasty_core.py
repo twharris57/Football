@@ -479,6 +479,38 @@ class TestTeamPowerTimelineScores:
         assert scores.loc[1, "games_played"] == 0
         assert scores.loc[2, "games_played"] == 0
 
+    def test_early_record_is_shrunk_toward_neutral(self):
+        # Three identical rosters differing only in record: 0 games, a 1-0
+        # start, and a settled 10-0 finish. Without shrinkage, 1-0 and 10-0
+        # would both compute a raw win_pct of 1.0 and score identically -
+        # the exact bug this test guards against.
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {
+            "a_wr": make_player("WR", full_name="A WR"),
+            "b_wr": make_player("WR", full_name="B WR"),
+            "c_wr": make_player("WR", full_name="C WR"),
+        }
+        for pid in ("a_wr", "b_wr", "c_wr"):
+            players[pid]["age"] = 25
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("a_wr", 500), fc_entry("b_wr", 500), fc_entry("c_wr", 500)]
+        )
+        rosters = [
+            {"roster_id": 1, "players": ["a_wr"], "settings": {}},
+            {"roster_id": 2, "players": ["b_wr"], "settings": {"wins": 1, "losses": 0, "ties": 0}},
+            {"roster_id": 3, "players": ["c_wr"], "settings": {"wins": 10, "losses": 0, "ties": 0}},
+        ]
+        replacement_level = {"WR": 0.0, "QB": 0.0, "RB": 0.0, "TE": 0.0}
+
+        scores = dc.team_power_timeline_scores(rosters, players, fc_by_id, replacement_level, league)
+
+        # A 1-0 start should be pulled well below a settled 10-0 record...
+        assert scores.loc[2, "win_pct"] < scores.loc[3, "win_pct"]
+        # ...and still above the neutral 0-games baseline, not collapsed to it.
+        assert scores.loc[1, "win_pct"] < scores.loc[2, "win_pct"]
+        # Same ordering should carry through to the blended score.
+        assert scores.loc[1, "power_score"] < scores.loc[2, "power_score"] < scores.loc[3, "power_score"]
+
     def test_single_team_league_does_not_crash(self):
         # Population std (ddof=0) of one team is 0, not NaN - guards the
         # single-row edge case a sample std would hit.

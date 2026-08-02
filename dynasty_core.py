@@ -514,6 +514,29 @@ def _weighted_average_age(roster: dict, players: dict[str, dict], fc_by_sleeper_
 # continuous score, not just discrete phase labels" note.
 PHASE_THRESHOLDS = (-0.3, 0.3)
 
+# Games worth of shrinkage weight toward a neutral 0.5 prior - a judgment
+# call (see valuation_principles.md), not derived. At WIN_PCT_SHRINKAGE_K
+# games played, win_pct gets exactly half its raw weight; by ~3x this many
+# games the shrinkage is mostly faded. Low enough that a real mid-season
+# record still dominates, high enough that a 1-0 start doesn't swing the
+# z-score as hard as a 10-0 finish does.
+WIN_PCT_SHRINKAGE_K = 4
+
+
+def _shrunk_win_pct(wins: int, games_played: int, k: int = WIN_PCT_SHRINKAGE_K) -> float:
+    """Blend actual win_pct toward neutral 0.5, weighted by how many games have resolved.
+
+    Reduces to the existing zero-games neutral 0.5 default exactly when
+    games_played == 0. Weight on the real record grows as
+    games_played / (games_played + k), so early results count
+    proportionally to how much they've actually resolved instead of
+    getting full weight after a single game.
+    """
+    if games_played == 0:
+        return 0.5
+    weight = games_played / (games_played + k)
+    return weight * (wins / games_played) + (1 - weight) * 0.5
+
 
 def team_power_timeline_scores(
     rosters: list[dict],
@@ -526,8 +549,10 @@ def team_power_timeline_scores(
 
     Combines three signals — `aggregate_vor` (roster strength),
     `weighted_age` (timeline direction), `win_pct` (actual record, neutral
-    `0.5` pre-season) — each z-scored across the league (population std,
-    `ddof=0`) and averaged into `power_score`. `quality_score`
+    `0.5` pre-season and shrunk toward it early in the season via
+    `_shrunk_win_pct`, so a 1-0/0-1 start doesn't swing the score as hard as
+    a settled record does) — each z-scored across the league (population
+    std, `ddof=0`) and averaged into `power_score`. `quality_score`
     (strength + record) and `timeline_score` (age alone) are also exposed
     separately, since blending both axes into one number can hide a
     strong/young team and a weak/old team landing on the same score.
@@ -553,7 +578,7 @@ def team_power_timeline_scores(
                 "roster_id": roster["roster_id"],
                 "aggregate_vor": strength["vor"].sum(),
                 "weighted_age": _weighted_average_age(roster, players, fc_by_sleeper_id),
-                "win_pct": wins / games_played if games_played > 0 else 0.5,
+                "win_pct": _shrunk_win_pct(wins, games_played),
                 # Exposed so a UI can tell "this team's win_pct is a real
                 # record" from "nobody's played yet, this is the neutral
                 # default" - the z-scored win_pct alone can't distinguish

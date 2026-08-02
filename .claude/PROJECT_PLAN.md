@@ -65,28 +65,11 @@ ahead of Valuation & data accuracy below, which remains explicitly not
 deadline-driven.
 
 **Positional-value foundation (VOR/replacement-level, SUPER_FLEX-aware QB
-demand) and the league-wide power/timeline read (`power_score`, split into
-independent `quality_score`/`timeline_score` axes) are done** — see
+demand), the league-wide power/timeline read (`power_score`, split into
+independent `quality_score`/`timeline_score` axes), and small-sample
+shrinkage on that read's `win_pct` are done** — see
 `docs/rookie-draft-big-board.md`'s "Roster needs" and "Team timeline /
 power-timeline read" sections for the full methodology.
-
-1. [ ] **RT-1: Add small-sample shrinkage to the power/timeline read's `win_pct`**
-   (assistant valuation review, 2026-08-01) — the zero-games case is
-   handled well (neutral `0.5`, correctly contributes zero variance
-   pre-season — proven by its own test), but from week 1 onward `win_pct`
-   gets full, undiscounted weight off as few as one game — a 1-0 or 0-1
-   start is close to a coin flip, yet swings the z-score as hard as it
-   ever will at week 10. Consider shrinking `win_pct` toward `0.5` (or
-   toward the vor-implied expectation) by something like
-   `games_played / (games_played + k)`, so early results contribute
-   proportionally to how much they've actually resolved — and/or using
-   `points_for`/point differential (likely already in Sleeper's roster
-   `settings`) as a steadier alternative to binary win/loss, standard
-   practice in sabermetric-style team-strength reads for the same
-   small-sample reason. Deferred past the current PR: it's a refinement
-   to an emergent-variance mechanic that doesn't matter until real games
-   have been played, and reweighting the formula's actual math deserves
-   its own review rather than folding into a display-clarity PR.
 
 **Trade targets & sells v1 (`sellable_players()`, `pick_trade_values()`) is
 done** — see `docs/rookie-draft-big-board.md`'s "Trade targets & sells"
@@ -230,6 +213,19 @@ Deliberately out of v1, not forgotten:
    free-agent evaluator (checking one waiver target) — not a general
    always-on feed, and not a replacement for the stats-based ranking
    anywhere in the pipeline.
+6. [ ] **RT-7: Use `points_for`/point differential as a steadier alternative
+   to win/loss in the power/timeline read** (deferred from the small-sample
+   shrinkage work above, 2026-08-02) — shrinkage toward `0.5` (done, see
+   above) addresses the small-sample variance problem directly, but binary
+   win/loss is still a noisier signal than point differential even at a
+   full sample size, standard practice in sabermetric-style team-strength
+   reads. Not picked up alongside the shrinkage fix because it's a bigger
+   scope: `sleeper_api.py` has never pulled or verified Sleeper's
+   points-for field (name, decimal-split format — Sleeper's own API splits
+   `fpts` into a whole-number and a `_decimal` field for other objects, so
+   the roster `settings` shape needs checking directly, not assumed), and
+   it needs a real design decision on how to blend/weight it against (or
+   replace) `win_pct` rather than just swapping the input.
 
 ## Valuation & data accuracy
 
