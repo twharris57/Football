@@ -109,67 +109,30 @@ Deliberately out of v1, not forgotten:
   decision (extend the exclusion, or leave it and rely on the human)
   rather than an unexamined inconsistency between the two features.
 
+**Free agent / roster-moves evaluator v1 (`free_agent_board()`) is done** —
+see `docs/rookie-draft-big-board.md`'s "Free agents" section for the full
+methodology. Ranks every available (non-rostered) player by marginal value
+against a roster, reusing `rank_by_marginal_value` exactly like the draft
+plan does; active-roster-only capacity (`taxi_eligible=False` — Sleeper's
+real accrued-experience taxi rule isn't modeled, see `RT-8` below);
+remaining FAAB shown for context, no bid-sizing (see `RT-10` below); no
+in-season change monitoring, recomputed fresh every refresh instead (see
+`RT-9` below).
+
 1. [ ] **RT-2: Trade-block monitoring** (user-flagged 2026-08-01, scoped out of
    the v1 above) — watch for players another team is actively shopping
    and score them against the current roster the same way the free-agent
-   evaluator's in-season pickup monitoring does (RT-3) — season-average
-   marginal starting-lineup value, not raw trade value — flagging only
-   when a specific player would be a genuine value-add, not every trade
-   rumor. Needs a real signal for "this player is on the block" first
-   (Sleeper doesn't expose trade discussions directly, so this likely
-   means the user manually flagging a name to check rather than a real
-   feed, at least for v1). A manually-flagged name here is also a natural
-   fit for RT-6's contextual research check, once that exists — pulling
-   real context (usage change, injury detail, actual trade buzz) beyond
-   what Sleeper/FantasyCalc carry, for that one specific player.
-2. [ ] **RT-3: Free agent / roster-moves evaluator** — a tool for right-now
-   decisions outside the draft: which available free agents are worth an
-   add, and which current roster players are droppable, given the rebuild
-   timeline. Should extend to **in-season pickup monitoring**: when a free
-   agent's situation changes materially — signs with a new team, wins a
-   starting job, a depth-chart move opens up volume — score their marginal
-   value against the current roster the same way the draft plan does
-   (season-average marginal starting-lineup value, not raw trade value) and
-   flag it when it would actually crack the lineup or clearly outvalue a
-   bench/taxi piece worth cutting. This reuses `rank_by_marginal_value`/
-   `recommend_drop` almost as-is once free agents are the candidate pool
-   instead of the rookie class — the main new inputs are pulling league free
-   agents from Sleeper and some signal for "something changed" (a
-   depth-chart delta week over week would probably be enough to start; no
-   news/transactions feed needed on day one). Ties into injury-status
-   awareness too, since a starter's injury is often exactly what opens the
-   depth-chart move worth reacting to. Needs **taxi-squad eligibility
-   modeling** first (or alongside): `roster_total_capacity()` currently
-   assumes every candidate is taxi-eligible, true for rookies but not a
-   general accrued-experience eligibility check against Sleeper's actual
-   taxi rule — free agents won't all qualify.
-
-   **FAAB budget awareness** (user-flagged 2026-08-01): this league does
-   use FAAB, not priority-only waivers (confirmed directly - league
-   `settings.waiver_budget: 100`, `waiver_type: 2`). Any real add
-   recommendation needs the bidding-budget picture, not just "is this
-   player worth adding": the user's own remaining budget
-   (`roster["settings"]["waiver_budget_used"]`, confirmed available per
-   team directly from `get_rosters()` - no separate endpoint needed),
-   ideally every other team's remaining budget too (a league where
-   everyone else is broke changes what a given player is actually worth
-   bidding), and the opportunity cost of spending it now vs. saving it for
-   a bigger add later in the season. This is a real gap in "worth an add"
-   as currently scoped - a player can be a genuine value-add and still be
-   a bad bid if it's most of the budget for a marginal upgrade with a
-   bigger name likely to hit waivers in a few weeks.
-
-   **Scope v1 to a threshold flag, not full opportunity-cost modeling**
-   (assistant valuation review, 2026-07-31): "spend now vs. save for
-   later" is genuinely an optimal-stopping problem with no clean
-   closed-form answer here. A reasonable v1 is flagging when a
-   recommended bid would consume more than some threshold share of
-   remaining budget for a pickup that wouldn't crack the starting lineup,
-   rather than modeling the full tradeoff up front — matches the
-   project's existing pattern of shipping a deliberately lightweight v1
-   (e.g. `POSITION_VALUE_MULTIPLIER` before the full per-player recompute)
-   over a fully general model nobody's asked for yet.
-3. [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
+   evaluator does — season-average marginal starting-lineup value, not raw
+   trade value — flagging only when a specific player would be a genuine
+   value-add, not every trade rumor. Needs a real signal for "this player
+   is on the block" first (Sleeper doesn't expose trade discussions
+   directly, so this likely means the user manually flagging a name to
+   check rather than a real feed, at least for v1). A manually-flagged
+   name here is also a natural fit for RT-6's contextual research check,
+   once that exists — pulling real context (usage change, injury detail,
+   actual trade buzz) beyond what Sleeper/FantasyCalc carry, for that one
+   specific player.
+2. [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
    evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
    now `roster_needs_summary`'s `need` flag is one fixed rule for all
    time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
@@ -180,8 +143,8 @@ Deliberately out of v1, not forgotten:
    about accumulating rookies (this project's whole existing purpose);
    year 2 should shift toward smart trades, continuing to find promising
    talent opportunistically — not just rookies, but free agents with a
-   sudden uptick in opportunity/fortune (this is exactly RT-3's
-   in-season pickup monitoring) — and dropping deadweight with limited
+   sudden uptick in opportunity/fortune (this is exactly RT-9's
+   in-season pickup monitoring, once that lands) — and dropping deadweight with limited
    future payoff (already partly modeled by `roster_value_analysis`'s
    `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
    either). Would need an explicit "what phase of the rebuild are we in"
@@ -191,7 +154,7 @@ Deliberately out of v1, not forgotten:
    Related to but distinct from the positional-value work above — that's
    about *which position* is weak; this is about *what kind of move* the
    team should even be looking for at this point in the rebuild.
-4. [ ] **RT-5: League tab — all-teams summary view** (user-flagged 2026-07-29,
+3. [ ] **RT-5: League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
    team, complementing the Roster tab's team selector (added
@@ -204,7 +167,7 @@ Deliberately out of v1, not forgotten:
    2026-08-01) — this surfaces raw stats per team, not a rebuild-vs-contend
    classification, but both answer "what does this team look like" at a
    glance.
-5. [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
+4. [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
    (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
    unconfirmed) — a rare, explicitly user-triggered lookup (not a
    background job) for one *specific* named player: pull recent context an
@@ -223,7 +186,7 @@ Deliberately out of v1, not forgotten:
    free-agent evaluator (checking one waiver target) — not a general
    always-on feed, and not a replacement for the stats-based ranking
    anywhere in the pipeline.
-6. [ ] **RT-7: Use `points_for`/point differential as a steadier alternative
+5. [ ] **RT-7: Use `points_for`/point differential as a steadier alternative
    to win/loss in the power/timeline read** (deferred from the small-sample
    shrinkage work above, 2026-08-02) — shrinkage toward `0.5` (done, see
    above) addresses the small-sample variance problem directly, but binary
@@ -236,6 +199,46 @@ Deliberately out of v1, not forgotten:
    the roster `settings` shape needs checking directly, not assumed), and
    it needs a real design decision on how to blend/weight it against (or
    replace) `win_pct` rather than just swapping the input.
+6. [ ] **RT-8: Model real taxi-squad eligibility for free-agent adds**
+   (deferred from the free-agent evaluator v1 above, 2026-08-02) —
+   `free_agent_board()` currently passes `taxi_eligible=False` to
+   `roster_total_capacity()`/`rank_by_marginal_value()`, so an add is only
+   ever suggested for an open active roster slot or via a drop, never an
+   open taxi slot — correct for rookies (always taxi-eligible, the draft
+   plan's own default) but overly conservative for veteran free agents who
+   might genuinely qualify under Sleeper's real accrued-experience taxi
+   rule. Needs that rule verified live (field name, exact threshold) before
+   modeling it — not guessed at, per this project's "document what you
+   can't verify" pattern. The `taxi_eligible` flag already threads through
+   both functions; this is "verify the real rule and flip candidates that
+   qualify to `taxi_eligible=True` on a per-candidate basis," not a
+   rearchitecture.
+7. [ ] **RT-9: In-season "something changed" pickup monitoring**
+   (deferred from the free-agent evaluator v1 above, 2026-08-02) —
+   `free_agent_board()` is a real-time snapshot, recomputed fresh every
+   refresh like every other feature here, not an alerting system. Actually
+   flagging when a free agent's situation changes materially (signs with a
+   new team, wins a starting job, a depth-chart move opens up volume)
+   needs some week-over-week delta signal this project has nowhere to
+   store — `CLAUDE.md`: "everything is pulled fresh... each run," no
+   persistence layer anywhere. A depth-chart delta would probably be
+   enough to start (no news/transactions feed needed on day one), but it's
+   a real architecture addition (state that survives between refreshes),
+   not a v1-scope change. Referenced by `RT-2`'s trade-block monitoring and
+   `RT-4`'s phase-aware rebuild-year work, both of which assumed this would
+   ship alongside the evaluator.
+8. [ ] **RT-10: FAAB bid-threshold modeling** (deferred from the free-agent
+   evaluator v1 above, 2026-08-02) — `free_agent_board()` shows remaining
+   FAAB (`league["settings"]["waiver_budget"] - roster["settings"].
+   waiver_budget_used`, both already pulled, no new fetch) purely as
+   context; there's no bid-amount input anywhere in this app for a
+   threshold to apply to yet. A reasonable v1 of this specific piece:
+   flag when a recommended pickup wouldn't crack the starting lineup *and*
+   the user is about to spend a large share of remaining budget on it —
+   once there's a real bid-amount input to check that against — rather
+   than the full opportunity-cost modeling ("spend now vs. save for a
+   bigger add later") that's a genuine optimal-stopping problem with no
+   clean closed-form answer.
 
 ## Valuation & data accuracy
 

@@ -357,6 +357,28 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   and trade-block monitoring (watching for a specific player another team
   is shopping) — both need a real strategic judgment call or a signal
   Sleeper doesn't expose, tracked in `.claude/PROJECT_PLAN.md`.
+- **Free agents** (`free_agent_board()`) — every non-rostered fantasy-relevant
+  player on a real NFL team (`free_agent_pool()`; Sleeper has no dedicated
+  free-agent endpoint, same generalized approach as `rookie_pool`), ranked
+  by season-average marginal starting-lineup value against a roster —
+  reusing `rank_by_marginal_value` exactly like the draft plan does, not a
+  second valuation model. Each candidate carries its own best-drop
+  suggestion, same as the draft plan's alternates. Works through the Roster
+  tab's team selector, so it shows any team's free-agent board, not just
+  the user's own. Two deliberate v1 simplifications, both tracked in
+  `.claude/PROJECT_PLAN.md`:
+  - **Active-roster-only capacity** — passes `taxi_eligible=False` to
+    `roster_total_capacity()`/`rank_by_marginal_value()` (a new parameter,
+    default `True` so the rookie draft plan's own behavior is unaffected),
+    since Sleeper's real accrued-experience taxi rule isn't verified here.
+    A candidate is only ever suggested for an open active slot or via a
+    drop, never assumed to fit an open taxi slot the way a rookie safely
+    can.
+  - **No FAAB bid-sizing** — remaining budget
+    (`league["settings"]["waiver_budget"] - roster["settings"].
+    waiver_budget_used`, both already pulled, no new fetch) is shown for
+    context only; there's no bid-amount input anywhere in this app yet for
+    a threshold to apply to.
 - **Bye-week impact** and **weekly gaps** — the former
   (`roster_bye_conflicts`) shows every week with an active-roster player on
   bye: who's out, who fills in, and the resulting delta to optimal
@@ -414,11 +436,15 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
 
 Marginal-value ranking evaluates every available candidate per round across
 18 simulated weeks each — roughly 20,000 `assign_starters` calls for a
-5-round plan over ~227 candidates. `fc_value_by_sleeper_id()` builds the
-FantasyCalc value lookup **once** per refresh and is threaded through every
-function that needs it, instead of each one rebuilding it from the raw
-~475-entry list on every call. Full `gather_state()` completes in ~3.5-4s —
-acceptable for a manual Refresh click, not for anything tighter.
+5-round plan over ~227 candidates. `free_agent_board()` runs the same
+per-candidate cost with no per-round multiplication — candidates × 18 calls,
+one pass, not one per round — timed directly at ~0.16s for a synthetic
+400-player pool, well under the draft plan's total cost even at
+free-agent-pool scale. `fc_value_by_sleeper_id()`
+builds the FantasyCalc value lookup **once** per refresh and is threaded
+through every function that needs it, instead of each one rebuilding it from
+the raw ~475-entry list on every call. Full `gather_state()` completes in
+~3.5-4s — acceptable for a manual Refresh click, not for anything tighter.
 
 ## Known limitations (by design, not oversight)
 
@@ -427,6 +453,10 @@ acceptable for a manual Refresh click, not for anything tighter.
 - `roster_weekly_gaps` doesn't model FLEX/SUPER_FLEX, only dedicated slots.
 - Lineup and handcuff logic have no injury-status awareness.
 - Handcuffs are RB-only — the standard fantasy usage of the term.
+- `free_agent_board` treats every candidate as active-roster-only
+  (`taxi_eligible=False`) and shows FAAB budget for context without any
+  bid-sizing logic — see the "Free agents" bullet above and
+  `.claude/PROJECT_PLAN.md`'s `RT-8`/`RT-10`.
 
 ## Static assumptions — revisit if the league's rules ever change
 
