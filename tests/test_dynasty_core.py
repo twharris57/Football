@@ -504,10 +504,18 @@ class TestTeamPowerTimelineScores:
 
         scores = dc.team_power_timeline_scores(rosters, players, fc_by_id, replacement_level, league)
 
-        # A 1-0 start should be pulled well below a settled 10-0 record...
-        assert scores.loc[2, "win_pct"] < scores.loc[3, "win_pct"]
+        # win_pct is the RAW, unshrunk record - both the 1-0 and 10-0 teams
+        # are a real 100% record and must display as such, not as the
+        # statistical prior fed to the score (see valuation_principles.md's
+        # "a field used as both an internal score input and a user-facing
+        # label needs two names" rule).
+        assert scores.loc[2, "win_pct"] == pytest.approx(1.0)
+        assert scores.loc[3, "win_pct"] == pytest.approx(1.0)
+        # win_pct_shrunk is what actually feeds the z-scoring: a 1-0 start
+        # should be pulled well below a settled 10-0 record...
+        assert scores.loc[2, "win_pct_shrunk"] < scores.loc[3, "win_pct_shrunk"]
         # ...and still above the neutral 0-games baseline, not collapsed to it.
-        assert scores.loc[1, "win_pct"] < scores.loc[2, "win_pct"]
+        assert scores.loc[1, "win_pct_shrunk"] < scores.loc[2, "win_pct_shrunk"]
         # Same ordering should carry through to the blended score.
         assert scores.loc[1, "power_score"] < scores.loc[2, "power_score"] < scores.loc[3, "power_score"]
 

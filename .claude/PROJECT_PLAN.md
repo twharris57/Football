@@ -33,19 +33,17 @@ below as a normal backlog item, same as any other deferred work.
 
 **`feature/win-pct-shrinkage` (RT-1), reviewed 2026-08-02:**
 
-1. [ ] `_shrunk_win_pct()` overwrites the `win_pct` column that
+1. [x] `_shrunk_win_pct()` overwrites the `win_pct` column that
    `rookie_draft.py` and `streamlit_app.py` already print verbatim under
-   the literal label "Win %"/"win%" — those two consumers predate this
-   change and expect the real record. A 1-0 team now shows "60%" (not its
-   actual 100%) with no indication the number is a shrunk statistical
-   prior rather than the record itself; `power_score`'s z-scoring is the
-   only consumer that should see the shrunk value. Fix: expose the real
-   win/loss record under its own name (e.g. keep `win_pct` as the raw
-   record, add `win_pct_shrunk` or similar for the z-scoring input — or
-   the reverse naming, whichever reads more naturally at each call site)
-   so the two consumers stop sharing one column with two different
-   meanings. See `valuation_principles.md`'s new "A field used as both an
-   internal score input and a user-facing label needs two names" section.
+   the literal label "Win %"/"win%" — fixed 2026-08-02: `win_pct` now
+   stays the raw record (what those two consumers actually read and
+   display); `win_pct_shrunk` is the new field feeding `power_score`'s
+   z-scoring, never printed as-is. Verified: with the existing 1-0/10-0
+   test fixtures, both now show `win_pct == 1.0` (the real record) while
+   `win_pct_shrunk` stays correctly ordered (`0.6 < 0.857`). Covered by
+   `test_early_record_is_shrunk_toward_neutral`'s updated assertions. See
+   `valuation_principles.md`'s "A field used as both an internal score
+   input and a user-facing label needs two names" section.
 
 ## Now — blocking
 

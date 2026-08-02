@@ -548,19 +548,24 @@ def team_power_timeline_scores(
     """Continuous rebuild-vs-contend read for every team in the league, indexed by roster_id.
 
     Combines three signals — `aggregate_vor` (roster strength),
-    `weighted_age` (timeline direction), `win_pct` (actual record, neutral
-    `0.5` pre-season and shrunk toward it early in the season via
+    `weighted_age` (timeline direction), `win_pct_shrunk` (actual record,
+    neutral `0.5` pre-season and shrunk toward it early in the season via
     `_shrunk_win_pct`, so a 1-0/0-1 start doesn't swing the score as hard as
     a settled record does) — each z-scored across the league (population
-    std, `ddof=0`) and averaged into `power_score`. `quality_score`
-    (strength + record) and `timeline_score` (age alone) are also exposed
-    separately, since blending both axes into one number can hide a
-    strong/young team and a weak/old team landing on the same score.
-    `phase` and `rank` are display-only derivatives of `power_score`;
-    `games_played` lets a UI distinguish a real record from the neutral
-    pre-season default. Recomputed fresh every call from already-pulled
-    data, never cached. Full methodology and rationale for each design
-    choice in docs/rookie-draft-big-board.md's "Team timeline /
+    std, `ddof=0`) and averaged into `power_score`. The raw, unshrunk
+    `win_pct` is exposed separately for display (`rookie_draft.py`/
+    `streamlit_app.py` print it verbatim next to a literal "Win %" label,
+    which must show the real record, not the statistical prior fed to the
+    score — see `valuation_principles.md`'s "a field used as both an
+    internal score input and a user-facing label needs two names" rule).
+    `quality_score` (strength + record) and `timeline_score` (age alone)
+    are also exposed separately, since blending both axes into one number
+    can hide a strong/young team and a weak/old team landing on the same
+    score. `phase` and `rank` are display-only derivatives of
+    `power_score`; `games_played` lets a UI distinguish a real record from
+    the neutral pre-season default. Recomputed fresh every call from
+    already-pulled data, never cached. Full methodology and rationale for
+    each design choice in docs/rookie-draft-big-board.md's "Team timeline /
     power-timeline read" section.
     """
     roster_positions = league["roster_positions"]
@@ -578,7 +583,11 @@ def team_power_timeline_scores(
                 "roster_id": roster["roster_id"],
                 "aggregate_vor": strength["vor"].sum(),
                 "weighted_age": _weighted_average_age(roster, players, fc_by_sleeper_id),
-                "win_pct": _shrunk_win_pct(wins, games_played),
+                # Raw record for display - never fed to the z-scoring below.
+                "win_pct": wins / games_played if games_played > 0 else 0.5,
+                # Small-sample-shrunk record for power_score's z-scoring only
+                # - must never be printed as-is next to a "Win %" label.
+                "win_pct_shrunk": _shrunk_win_pct(wins, games_played),
                 # Exposed so a UI can tell "this team's win_pct is a real
                 # record" from "nobody's played yet, this is the neutral
                 # default" - the z-scored win_pct alone can't distinguish
@@ -597,7 +606,7 @@ def team_power_timeline_scores(
         std = series.std(ddof=0)
         return (series - series.mean()) / std if std else pd.Series(0.0, index=series.index)
 
-    vor_z, age_z, win_z = _z(scores["aggregate_vor"]), _z(scores["weighted_age"]), _z(scores["win_pct"])
+    vor_z, age_z, win_z = _z(scores["aggregate_vor"]), _z(scores["weighted_age"]), _z(scores["win_pct_shrunk"])
     scores["power_score"] = (vor_z + age_z + win_z) / 3
     # Split out for consumers that need "how good" and "which way pointed"
     # kept apart rather than blended - see the class docstring.
