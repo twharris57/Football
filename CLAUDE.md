@@ -126,6 +126,9 @@ themselves still have none. See `testing.md` for general conventions.
 - `/review` — pre-commit checklist before committing
 - `/pr` — create or update a pull request following the project's PR conventions
 - `/update-from-agentconfig` — pull upstream AgentConfig changes selectively
+- `/valuation-review` — deep fantasy-stats-methodology review of the dynasty valuation
+  logic on a branch/PR (or the whole pipeline), filed into `PROJECT_PLAN.md` and
+  `valuation_principles.md`
 
 ## Domain Concepts
 
