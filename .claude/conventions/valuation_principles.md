@@ -214,3 +214,36 @@ real-world exclusivity window. Test coverage for a candidate-pool function
 should include at least one case from every *other* pool that's supposed to
 be mutually exclusive with it, not just the pool's own internal exclusion
 rules.
+
+## A capacity ceiling that restricts new entrants must not also erase credit for room already spent
+
+`roster_total_capacity()`'s `taxi_eligible` flag is meant to answer one
+narrow question: can a *new* player (a free-agent add, or the incoming
+side of a trade) land on an open taxi slot? `free_agent_board()` and
+`evaluate_trade()` (RT-2, 2026-08-02 review, see `.claude/PROJECT_PLAN.md`'s
+fix-before-merge section and `RT-11`) both pass `taxi_eligible=False` for
+veteran candidates — correctly refusing to count an *unused* taxi slot as
+room for them. But the same flag also zeroes `taxi_slots` out of the
+capacity total entirely, which silently strips credit for taxi slots the
+roster *already* has filled. Those existing occupants (almost always
+stashed rookies — the normal state for this league's rebuild strategy, not
+an exception) are still legitimately off the active/bench headcount and
+have nothing to do with the candidate/trade being evaluated. The result: a
+roster carrying even one taxi player can read as needing a forced drop, or
+flag `over_capacity`, when it actually has open bench room.
+
+Contrast with `reserve_filled`, which gets this right: it's an
+always-applied headcount of currently-occupied IR slots, never gated by an
+eligibility flag, precisely because "can a new player use this" and "is
+this already spoken for" are different questions. `taxi_slots` collapsed
+both questions into one flag.
+
+**The rule**: a flag that gates whether a *new* entrant may use a category
+of slot is not the same as whether *existing* occupants of that category
+should still count as consumed capacity. When adding an eligibility gate
+for future use of a resource, keep a separate, always-on credit for
+capacity already spent by current occupants — don't let disabling future
+eligibility also zero out the accounting for the past. Watch for this
+shape elsewhere: anywhere "is there room for X" is modeled by zeroing an
+entire slot category's *capacity* rather than just closing off further
+*entry* into it.

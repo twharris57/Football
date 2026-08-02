@@ -31,10 +31,40 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-*Empty — no branch is currently mid-review. (`feature/win-pct-shrinkage`'s
-and `feature/free-agent-evaluator`'s findings, previously listed here,
-cleared out on merge — see those PRs' descriptions for the historical
-record.)*
+**`feature/trade-block-monitoring` (PR #23, reviewed 2026-08-02):**
+
+1. **`evaluate_trade()`'s `over_capacity` misfires for any roster already
+   carrying taxi-squad players — the norm for this league, not an edge
+   case.** `roster_total_capacity(..., taxi_eligible=False)` zeroes
+   `taxi_slots` out of the ceiling entirely, but `roster.get("players")`
+   (what `evaluate_trade` measures `roster_size_after` against) includes
+   *existing* taxi occupants alongside the active/bench group —
+   `lineup_breakdown`'s own docstring confirms this: "Taxi and IR/reserve
+   players are in `roster["players"]` alongside the real bench." So a team
+   stashing even one taxi rookie (this league's whole rebuild strategy per
+   `CLAUDE.md`) can already exceed `len(roster_positions) + reserve_filled`
+   before the trade changes anything — `over_capacity` can fire, warning
+   "an additional cut would be needed," on a plain 1-for-1 swap that needs
+   no cut at all. `free_agent_board()` has the identical root cause (see
+   new `RT-11` below) — not a new bug there, just never surfaced as a
+   literal user-facing capacity claim the way this tab now states it. No
+   test (here or in the pre-existing `TestFreeAgentBoard`) constructs a
+   roster with a non-empty `taxi` list, so `TestEvaluateTrade` couldn't
+   have caught it either.
+   Real fix belongs in the shared `roster_total_capacity()` helper: give it
+   a `taxi_filled` parameter (credited whenever `taxi_eligible=False`,
+   mirroring how `reserve_filled` already works) instead of zeroing taxi
+   capacity outright — fixes `evaluate_trade` and `free_agent_board` in the
+   same change. See `.claude/conventions/valuation_principles.md`'s new
+   "capacity ceiling" rule for the general shape of this mistake.
+   Smaller, same-shaped nuance worth folding into the same fix pass:
+   `evaluate_trade`'s `reserve_filled` is read from the *pre*-trade roster;
+   if `outgoing_player_ids` includes a player currently on IR/reserve, the
+   real post-trade capacity should shrink by one to match, which the
+   current call doesn't reflect. Much smaller blast radius (off-by-one,
+   only when an IR player is one of the traded assets) than the taxi issue
+   above, but worth closing in the same pass rather than leaving a second
+   latent gap next to the one just found.
 
 ## Now — blocking
 
@@ -203,7 +233,9 @@ contextual-research idea this could still feed into.
    can't verify" pattern. The `taxi_eligible` flag already threads through
    both functions; this is "verify the real rule and flip candidates that
    qualify to `taxi_eligible=True` on a per-candidate basis," not a
-   rearchitecture.
+   rearchitecture. See `RT-11` below for a sharper, higher-severity version
+   of this same simplification's cost, found while reviewing the trade
+   evaluator.
 6. [ ] **RT-9: In-season "something changed" pickup monitoring**
    (deferred from the free-agent evaluator v1 above, 2026-08-02) —
    `free_agent_board()` is a real-time snapshot, recomputed fresh every
@@ -231,6 +263,22 @@ contextual-research idea this could still feed into.
    than the full opportunity-cost modeling ("spend now vs. save for a
    bigger add later") that's a genuine optimal-stopping problem with no
    clean closed-form answer.
+8. [ ] **RT-11: `free_agent_board()`'s `taxi_eligible=False` capacity check
+   shares the root cause found in the trade evaluator's fix-before-merge
+   review** (assistant valuation review, 2026-08-02) — `RT-8` above frames
+   `taxi_eligible=False` as merely "overly conservative" (a new candidate
+   can't use an *open* taxi slot). The sharper version: `roster_total_capacity(...,
+   taxi_eligible=False)` also strips capacity credit for taxi slots a team
+   *already* has filled, since `roster.get("players")` (what
+   `rank_by_marginal_value` measures roster size against) includes existing
+   taxi occupants alongside the active/bench group. A team stashing any
+   taxi player — the norm here, given this league's rebuild strategy — can
+   read as needing a forced drop for nearly every free-agent candidate even
+   with genuine open bench room. Same fix as the trade evaluator's: give
+   `roster_total_capacity()` a `taxi_filled` parameter, credited whenever
+   `taxi_eligible=False`, instead of zeroing taxi capacity outright. Fix
+   alongside `RT-8`'s real-eligibility modeling in the same pass — both
+   touch the same call sites and the same underlying helper.
 
 ## Valuation & data accuracy
 
