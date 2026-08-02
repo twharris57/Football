@@ -16,6 +16,7 @@ not a deployed service.
 @.claude/conventions/testing.md
 @.claude/conventions/web_guidelines.md
 @.claude/conventions/docker_guidelines.md
+@.claude/conventions/app_deployment_reference.md
 @.claude/conventions/valuation_principles.md
 
 ## Architecture
@@ -56,8 +57,9 @@ not a deployed service.
   dependency often lacks prebuilt musl wheels (same call made in the sibling
   `Finance-Dashboards` project). GitHub Actions (`.github/workflows/docker-publish.yml`)
   builds and pushes the image to GHCR (`ghcr.io/twharris57/football-dynasty-draft`)
-  on every push to `main`; the Synology NAS deployment (`docker-compose.deploy.yml`)
-  only ever pulls that prebuilt image, it never builds on-device. Local dev
+  on every push to `main`. `docker-compose.deploy.yml` is this repo's deployment
+  reference per `app_deployment_reference.md`; the deployment repo that reads and
+  adapts it is `../nas-configs` (`football/football-compose.yaml`). Local dev
   (`docker-compose.yml`) still builds from source.
 
 ## Key Constraints
@@ -91,8 +93,8 @@ streamlit_app.py         Rookie draft big board web dashboard (same logic as the
 tests/                   pytest suite: test_dynasty_core.py, test_player_scoring.py
 Dockerfile               Image for streamlit_app.py (python:3.12-slim, non-root)
 docker-compose.yml       Local dev: builds the image from source
-docker-compose.deploy.yml  NAS deploy: pulls the prebuilt GHCR image, never builds on-device
-.env.example             Template for docker-compose.deploy.yml's HOST_PORT
+docker-compose.deploy.yml  Deployment reference (pulls the prebuilt GHCR image; ../nas-configs deploys the adapted copy)
+.env.example             Deployment reference env vars for docker-compose.deploy.yml (secrets left blank + a comment on source)
 .github/workflows/       CI: ci.yml runs pytest on every PR; docker-publish.yml builds+pushes to GHCR on push to main
 requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, streamlit, ...)
 .claude/                 Claude Code conventions, commands, and PROJECT_PLAN.md

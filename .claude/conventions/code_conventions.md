@@ -24,6 +24,25 @@ files reference these rather than repeat them.
   tracker instead.
 - No debug-level log statements left in production code paths by default (see Logging).
 
+## Scripts and Automation
+
+Every script or CLI tool must end in an unambiguous state — a clear success or failure
+signal, never silent, ambiguous, or partial completion.
+
+- End with an explicit final message (`OK: ...` / `FAIL: ...`) and a matching exit code
+  (0 for success, non-zero for failure). Never let a script exit mid-way with no
+  indication of whether it succeeded, failed, or simply stopped early — an operator
+  should never have to guess what an empty-looking exit meant.
+- Prefer explicit exit-code/output checks over blind `set -e` in scripts that must
+  always report a clear result (health checks, verification scripts). `set -e` aborts
+  immediately at the first non-zero exit, often before an explanatory message can be
+  printed — especially inside command substitution (`x=$(cmd)`), where a failure can
+  look identical to the script just... stopping.
+- Never suppress error output for the sake of quieter logs (e.g. `curl -s` alone
+  swallows curl's own error messages, not just its progress bar — use `-sS` if quiet
+  output is wanted but errors must still surface). Silence should never come at the cost
+  of diagnosability.
+
 ## Inline Comments
 
 Add a comment only when the *why* is non-obvious — a hidden constraint, a subtle
