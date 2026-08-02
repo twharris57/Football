@@ -1594,10 +1594,22 @@ def evaluate_trade(
     *after* removing any outgoing players who happen to currently be on
     IR/reserve or taxi - trading one of them away genuinely frees that
     slot, so the pre-trade headcount would overstate post-trade capacity
-    usage by one for each such player. Informational only - v1 does not
-    auto-suggest an additional drop beyond what the trade itself specifies;
-    which extra player to cut if a multi-for-fewer trade overflows capacity
-    is a separate decision the trade doesn't specify.
+    usage by one for each such player.
+
+    When `roster_after` exceeds capacity, `recommend_drop()` is applied
+    repeatedly (same lowest-value-bench-player heuristic `rank_by_marginal_value`
+    already uses for forced drops elsewhere, not a new one) once per player
+    over the limit, each drop applied before searching for the next -
+    `recommended_drops` is that list (each entry the same
+    player_id/name/pos/adj_value/is_starter shape `recommend_drop` itself
+    returns), and `lineup_delta_after_drops` is the trade's real net lineup
+    impact once those forced cuts are included, not just the raw trade
+    before accounting for the roster-management cost of making room for it.
+    `lineup_delta` stays the trade-only number (informative on its own -
+    the trade can be a great value-add even if it also requires a cut to
+    fit). Newly-incoming players are protected from being recommended for
+    their own trade's forced cut via `exclude_ids` - trading for a player
+    only to immediately suggest dropping them again would be nonsensical.
     """
     current_ids = list(roster.get("players") or [])
     outgoing_set = set(outgoing_player_ids)
@@ -1621,12 +1633,33 @@ def evaluate_trade(
     taxi_filled = len((frozenset(roster.get("taxi") or [])) - outgoing_set)
     capacity = roster_total_capacity(league, reserve_filled, taxi_eligible=False, taxi_filled=taxi_filled)
 
+    overflow = max(0, len(roster_after) - capacity)
+    recommended_drops: list[dict[str, Any]] = []
+    roster_after_drops = list(roster_after)
+    incoming_set = frozenset(incoming_player_ids)
+    for _ in range(overflow):
+        drop = recommend_drop(
+            roster_after_drops, players, fc_by_sleeper_id, league, exclude_ids=incoming_set, ineligible_ids=ineligible_ids
+        )
+        if drop is None:
+            break
+        recommended_drops.append(drop)
+        roster_after_drops = [pid for pid in roster_after_drops if pid != drop["player_id"]]
+
+    after_value_post_drops = (
+        season_average_starter_value(roster_after_drops, players, fc_by_sleeper_id, byes, league, ineligible_ids)
+        if recommended_drops
+        else after_value
+    )
+
     return {
         "lineup_delta": after_value - before_value,
+        "lineup_delta_after_drops": after_value_post_drops - before_value,
         "asset_value_delta": incoming_value - outgoing_value,
-        "over_capacity": len(roster_after) > capacity,
+        "over_capacity": overflow > 0,
         "roster_size_after": len(roster_after),
         "capacity": capacity,
+        "recommended_drops": recommended_drops,
     }
 
 

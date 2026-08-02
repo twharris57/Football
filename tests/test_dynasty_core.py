@@ -1048,6 +1048,92 @@ class TestEvaluateTrade:
         assert result["capacity"] == 2
         assert result["over_capacity"]
 
+    def test_recommends_a_drop_when_over_capacity_and_never_the_incoming_players(self):
+        # Same setup as the over-capacity test above: roster ["a", "b"]
+        # (both 100), receiving ["c", "d"] (both 200) for "a" - one over.
+        # The only eligible drop is "b" (the sole pre-existing player left
+        # after excluding the newly-incoming c/d from consideration). Both
+        # b's value and the real post-trade competition (c and d both
+        # outscore b for the 2 slots) agree b was never starting anyway, so
+        # lineup_delta_after_drops equals the raw lineup_delta here -
+        # covered separately below where they *do* diverge.
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": ["a", "b"], "taxi": [], "reserve": []}
+        players = {
+            "a": make_player("WR", full_name="A"),
+            "b": make_player("WR", full_name="B"),
+            "c": make_player("WR", full_name="C"),
+            "d": make_player("WR", full_name="D"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("a", 100), fc_entry("b", 100), fc_entry("c", 200), fc_entry("d", 200)]
+        )
+
+        result = dc.evaluate_trade(roster, ["a"], ["c", "d"], players, fc_by_id, {}, league)
+
+        assert [d["player_id"] for d in result["recommended_drops"]] == ["b"]
+
+    def test_lineup_delta_after_drops_can_diverge_from_raw_lineup_delta(self):
+        # Only 1 roster slot, no bench. Roster keeps "a" (value 100);
+        # receives "c" (value 50, lower) with nothing given up - 1 over
+        # capacity. The only player eligible to be the forced cut is "a"
+        # (c is protected as incoming), even though "a" is worth more and
+        # was the one actually winning the real slot in the raw after-trade
+        # comparison - a real cost the raw lineup_delta alone hides.
+        league = {"roster_positions": ["WR"]}
+        roster = {"players": ["a"], "taxi": [], "reserve": []}
+        players = {
+            "a": make_player("WR", full_name="A"),
+            "c": make_player("WR", full_name="C"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("a", 100), fc_entry("c", 50)])
+
+        result = dc.evaluate_trade(roster, [], ["c"], players, fc_by_id, {}, league)
+
+        assert [d["player_id"] for d in result["recommended_drops"]] == ["a"]
+        # Raw trade result: "a" (100) still wins the lone slot over "c" (50)
+        # before any forced cut, so lineup_delta is 0 (no real change yet).
+        assert result["lineup_delta"] == pytest.approx(0.0)
+        # Once forced to cut someone and "a" is the only eligible option,
+        # the real post-cut lineup is just "c" (50) - a real loss the raw
+        # number above doesn't capture.
+        assert result["lineup_delta_after_drops"] == pytest.approx(-50.0)
+
+    def test_recommends_multiple_drops_when_over_capacity_by_more_than_one(self):
+        # Capacity 2; roster starts with 3 pre-existing players (a=100,
+        # b=90, x=80) plus 1 incoming (c=500) - roster_after size 4, 2 over.
+        # Both drops must come from the pre-existing players, lowest value
+        # first, never c (the just-acquired player).
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": ["a", "b", "x"], "taxi": [], "reserve": []}
+        players = {
+            "a": make_player("WR", full_name="A"),
+            "b": make_player("WR", full_name="B"),
+            "x": make_player("WR", full_name="X"),
+            "c": make_player("WR", full_name="C"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("a", 100), fc_entry("b", 90), fc_entry("x", 80), fc_entry("c", 500)]
+        )
+
+        result = dc.evaluate_trade(roster, [], ["c"], players, fc_by_id, {}, league)
+
+        assert [d["player_id"] for d in result["recommended_drops"]] == ["x", "b"]
+
+    def test_lineup_delta_after_drops_matches_lineup_delta_when_no_drop_needed(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": ["old_wr"], "taxi": [], "reserve": []}
+        players = {
+            "old_wr": make_player("WR", full_name="Old WR"),
+            "new_wr": make_player("WR", full_name="New WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("old_wr", 100), fc_entry("new_wr", 900)])
+
+        result = dc.evaluate_trade(roster, ["old_wr"], ["new_wr"], players, fc_by_id, {}, league)
+
+        assert result["recommended_drops"] == []
+        assert result["lineup_delta_after_drops"] == pytest.approx(result["lineup_delta"])
+
     def test_pick_values_shift_asset_delta_without_touching_lineup_delta(self):
         league = {"roster_positions": ["WR", "BN"]}
         roster = {"players": ["a"], "taxi": [], "reserve": []}

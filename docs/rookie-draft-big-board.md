@@ -418,9 +418,24 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     capacity before the trade changes anything. `reserve_filled`/
     `taxi_filled` are computed *after* removing any outgoing player who
     was themselves on IR/taxi, since trading them away genuinely frees
-    that slot. Flags (doesn't resolve) an over-capacity result — which
-    extra player to cut if a multi-for-fewer trade overflows capacity is
-    a separate decision the trade itself doesn't specify.
+    that slot.
+  - **Recommended cuts when over capacity** — `recommend_drop()` (the same
+    lowest-value-bench-player heuristic `rank_by_marginal_value` already
+    uses for forced drops elsewhere) is applied once per player over the
+    limit, each cut applied before searching for the next, building
+    `recommended_drops` (one entry per cut, same player_id/name/pos/
+    adj_value/is_starter shape `recommend_drop` itself returns).
+    `lineup_delta_after_drops` is the trade's real net lineup impact once
+    those forced cuts are included — `lineup_delta` alone is the trade-only
+    number and can look better than reality if making room actually costs
+    a real starter, not just bench depth (a genuine possibility when
+    capacity is tight enough that the "extra" roster spot was in the
+    starting lineup). A newly-incoming player is never recommended as its
+    own trade's forced cut — trading for someone only to immediately
+    suggest dropping them again would be nonsensical; if every remaining
+    over-capacity slot can only be resolved by cutting an incoming player,
+    `recommended_drops` simply comes up short of the real overflow instead
+    of recommending that.
   - **3-way trades aren't supported** — rare enough in practice and
     disproportionately more complex to model correctly (which two sides of
     a 3-way actually exchange which assets isn't a simple before/after

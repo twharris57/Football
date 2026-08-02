@@ -134,6 +134,16 @@ function's own symmetry, not a second code path. A pick with no resolvable
 `value` is called out in a caption rather than silently contributing
 nothing.
 
+The "Lineup value" `st.metric` shows `lineup_delta_after_drops` (the real
+number once any forced cuts are applied) rather than the raw `lineup_delta`
+whenever `recommended_drops` is non-empty — the raw number stays one hover
+away via the metric's `help=` tooltip, same "don't hide the simpler number,
+just don't lead with it when it's misleading" pattern the Team timeline
+metric already uses for its raw z-score. An `st.warning` lists each
+recommended cut by name/position, tagging any that's an actual current
+starter (not just bench depth) rather than leaving that distinction only
+visible in the underlying data.
+
 ### Player projection lookup
 
 Each round's "Backup options" table only shows the top

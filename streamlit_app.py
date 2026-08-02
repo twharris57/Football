@@ -782,9 +782,15 @@ with trade_tab:
             "can be lineup-critical but value-negative, or value-positive but just adds bench "
             "depth behind an already-strong position.\n"
             "- **Lineup value** — season-average optimal starting-lineup value before vs. "
-            "after the trade, the same simulation the Draft Plan uses.\n"
+            "after the trade, the same simulation the Draft Plan uses. If the trade leaves a "
+            "roster over capacity, this is the value *after* the recommended cut(s) below, "
+            "not the raw trade alone — hover the number to see the raw figure too.\n"
             "- **Asset value** — Adj. Value (players) plus pick value (picks) summed on each "
             "side, FantasyCalc's market read of who gave up more.\n"
+            "- **Recommended cuts** — shown when a side goes over roster capacity: the "
+            "lowest-value bench player(s) forced out, same heuristic the Draft Plan/Free "
+            "agents board use elsewhere. Never recommends cutting a player from the same "
+            "trade's incoming side.\n"
             "- Shown for both sides — is this good for you, and is it something the partner "
             "would actually want.\n"
             "- 3-way trades aren't supported. Taxi-squad eligibility isn't modeled for "
@@ -906,12 +912,23 @@ with trade_tab:
 
         def _show_trade_side(label: str, result: dict) -> None:
             st.markdown(f"**{label}**")
-            st.metric("Lineup value", f"{result['lineup_delta']:+.1f}")
+            drops = result["recommended_drops"]
+            st.metric(
+                "Lineup value",
+                f"{result['lineup_delta_after_drops']:+.1f}",
+                help=(
+                    f"Before any forced cuts: {result['lineup_delta']:+.1f}. "
+                    "Differs when a required drop was an actual starter, not just bench depth."
+                    if drops
+                    else None
+                ),
+            )
             st.metric("Asset value", f"{result['asset_value_delta']:+.1f}")
             if result["over_capacity"]:
+                drop_list = ", ".join(f"{d['name']} ({d['pos']})" + (" — starter" if d["is_starter"] else "") for d in drops)
                 st.warning(
                     f"Over roster capacity ({result['roster_size_after']}/{result['capacity']}) — "
-                    "an additional cut would be needed."
+                    f"recommended cut{'s' if len(drops) != 1 else ''}: {drop_list or 'none available'}."
                 )
 
         your_side_col, partner_side_col = st.columns(2)
