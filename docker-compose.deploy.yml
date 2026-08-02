@@ -1,14 +1,14 @@
-# NAS deployment: pulls the prebuilt image published by
-# .github/workflows/docker-publish.yml on every push to main. Does not build
-# on the NAS. Place this file + a .env (copied from .env.example) in a
-# project folder on the NAS, then:
+# Deployment reference for this app's image, published by
+# .github/workflows/docker-publish.yml on every push to main. This is the canonical,
+# runnable description of what the image needs to run (image, ports, volumes) --
+# `../nas-configs` is what actually deploys it on the NAS, adapting this into its own
+# conventions (container naming, secrets handling, etc.). See
+# `../nas-configs/.claude/conventions/app_deployment_reference.md` for what this file
+# and .env.example are expected to document, and keep them accurate as deployment needs
+# change -- that's the signal nas-configs' copy may need re-syncing.
 #
+# Still valid to run directly for local testing: copy .env.example to .env, then
 #   docker compose -f docker-compose.deploy.yml up -d
-#
-# To pick up a later image update:
-#
-#   docker compose -f docker-compose.deploy.yml pull && \
-#     docker compose -f docker-compose.deploy.yml up -d
 services:
   dynasty-draft:
     image: ghcr.io/twharris57/football-dynasty-draft:latest
