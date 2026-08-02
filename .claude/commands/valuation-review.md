@@ -101,13 +101,15 @@ This tier determines where each finding goes in step 4.
   is ephemeral: clear it out (don't archive it) once the branch merges — the merged PR's
   description is the historical record, not this file.
 - **Tier 2/3 findings** go into the relevant thematic section further down (Roster &
-  trade tooling, Valuation & data accuracy, Code quality, or Deferred / low priority).
-  Attribute them `(assistant valuation review, <date>)`, matching the file's existing
-  citation style, and cross-reference related items by number the way the file already
-  does.
-- Preserve the file's numbering/cross-reference discipline: if inserting an item before
-  existing numbered items in the same list, renumber the rest, and grep for
-  `item [0-9]` afterward to confirm every cross-reference still points at the right item.
+  trade tooling `RT`, Valuation & data accuracy `VA`, Code quality `CQ`, or Deferred /
+  low priority `DL`). Attribute them `(assistant valuation review, <date>)`, matching
+  the file's existing citation style.
+- Give every new item a permanent `<SECTION>-<n>` ID in its own heading (see the file's
+  own intro for the convention) — the next unused number for that section's prefix,
+  regardless of where in the list priority order places it. Cross-reference other items
+  by this ID (`see RT-3`), never by list position — positional references break the
+  moment anything above them is inserted, reordered, or removed, which is exactly why
+  this convention replaced that approach.
 
 ### 5. Distill durable rules into `.claude/conventions/valuation_principles.md`
 
