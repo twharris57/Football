@@ -6,6 +6,60 @@ important first). When a task is completed, write it up as a design doc in
 Durable background (league identity, rebuild strategy, valuation methodology)
 lives in `CLAUDE.md` and `docs/`, not here — this file is only what's left to do.
 
+## Current branch — fix before merge
+
+Findings from reviewing the *active* branch's own not-yet-merged work —
+kept separate from the thematic backlog below so "fix this before the PR
+merges" is never mixed in with "someday" work. Ephemeral by design: cleared
+out when the branch merges, not carried forward as history (the merged PR's
+description is the historical record). A finding that gets explicitly
+deferred rather than fixed moves down into the appropriate thematic section
+below as a normal backlog item, same as any other deferred work. Empty
+when no branch is currently mid-review.
+
+**`feature/trade-targets-and-sells` (PR #18), reviewed 2026-08-01:**
+
+1. [ ] **`sellable_players()` can flag a real FLEX starter as "surplus
+   depth"** — `starter_count` (`_position_starter_demand()`) only counts
+   *dedicated* RB/WR/TE slots, same as `positional_strength_summary`'s
+   `vor` and `gap_delta`'s weekly-gap check — neither guardrail this
+   feature relies on accounts for FLEX. A team's real, weekly FLEX starter
+   (e.g. RB3 on a roster with 2 dedicated RB slots plus a `FLEX` slot) can
+   pass both checks and get listed as "sellable," directly contradicting
+   this feature's own stated intent ("not the starters generating that
+   vor"). The SUPER_FLEX fix from the prior PR doesn't cover this — it was
+   deliberately scoped to QB only, since FLEX splits demand across three
+   positions with no similarly clean allocation (see
+   `.claude/conventions/valuation_principles.md`). Needs a real decision
+   before this ships: at minimum, exclude a position's likely-FLEX-range
+   from "depth" when the league has a `FLEX` slot, or clearly caveat the
+   list in the UI until a proper fix lands — this is the one finding in
+   this PR that could actually cause a bad real-world trade, not just an
+   analytical imprecision.
+2. [ ] **Verify `_future_pick_owners`'s `roster_id` range assumption
+   against live data** — `for roster_id in range(1, num_teams + 1)`
+   assumes every roster's `roster_id` is exactly `1..num_teams`,
+   contiguous, no gaps. Every other place in this codebase treats
+   `roster_id` as an opaque key (`rosters_by_id`, `roster_capacity`) —
+   this is the first place that assumes it's a literal range (see
+   `.claude/conventions/valuation_principles.md`). Very likely true for
+   this league (Sleeper's normal convention), but unverified. Cheap check
+   before merge: confirm `sorted(r["roster_id"] for r in rosters) ==
+   list(range(1, num_teams + 1))` against a real refresh. If it holds,
+   note the assumption in `docs/rookie-draft-big-board.md`'s "Static
+   assumptions" table; if it doesn't, `_future_pick_owners` needs to
+   iterate the real `rosters` list instead of a synthesized range.
+3. [ ] **`pick_trade_values` should raise a `data_warnings` entry on an
+   all-empty `value` column** — the docstring already flags the real risk
+   (a FantasyCalc pick-naming convention change would silently leave every
+   `value` blank, no exception) but nothing acts on it. Every other
+   silent-fallback path in `gather_state` (byes, handcuffs, scoring
+   multipliers) populates `data_warnings` so the UI surfaces it instead of
+   looking like "there's nothing to report" (see
+   `.claude/conventions/valuation_principles.md`) — this is the one
+   exception. Cheap fix:
+   `if pick_values["value"].isna().all(): data_warnings.append(...)`.
+
 ## Now — blocking
 
 1. [ ] **Synology NAS deploy + live-draft verification** — blocks calling the
@@ -132,6 +186,17 @@ Deliberately out of v1, not forgotten:
   actually traded (`FUTURE_PICK_YEARS_AHEAD = 1` in `dynasty_core.py`).
   Extending further is possible but was scoped out to avoid listing
   picks with zero real trade activity that far out.
+- **Young non-rookie depth isn't protected the way `LOW_VALUE_YOUNG_AGE`
+  protects it elsewhere** (assistant valuation review, 2026-08-01) —
+  `sellable_players` excludes true rookies (`years_exp` falsy) but nothing
+  younger than that; a promising 2nd-year breakout at a surplus position
+  can show up as "sellable" even though `roster_value_analysis` elsewhere
+  in this same rebuild-strategy codebase explicitly treats "low-value but
+  young" as hold-not-sell, not drop-or-sell. Not necessarily wrong, given
+  this list is explicitly framed as candidates for a human to judge
+  against a specific offer, not a recommendation — but worth a deliberate
+  decision (extend the exclusion, or leave it and rely on the human)
+  rather than an unexamined inconsistency between the two features.
 
 1. [ ] **Trade-block monitoring** (user-flagged 2026-08-01, scoped out of
    the v1 above) — watch for players another team is actively shopping
