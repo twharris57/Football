@@ -61,21 +61,10 @@ below as a normal backlog item, same as any other deferred work.
 
 ## Now — blocking
 
-- [ ] **NB-1: Synology NAS deploy + live-draft verification** — blocks calling the
-  dashboard fully done. Everything else from the pre-draft hardening review
-  is done — see `docs/rookie-draft-big-board.md` and
-  `docs/dynasty-draft-web-app.md` for the full methodology/implementation
-  writeup. Needs the user's own action — no SSH/credentials to the NAS from
-  here:
-  1. Confirm the GHCR build went green on the latest push to `main`
-     (`gh run list` / `gh pr checks`).
-  2. Deploy on the NAS via `docker-compose.deploy.yml`, verify the running
-     container's footer git SHA matches.
-  3. Pre-warm the multiplier cache with
-     `python scripts/derive_position_multipliers.py` ahead of draft day, not
-     live (a cold cache means a 1-2 minute `nfl_data_py` pull on first load).
-  4. Use it through the actual live draft. The CLI (`rookie_draft.py`, no
-     Docker) remains the safer fallback regardless of how the deploy goes.
+*Empty — `NB-1` (Synology NAS deploy + live-draft verification) is done:
+the user confirmed the NAS deployment and live-draft verification steps
+completed successfully. The dashboard is fully deployed; the CLI
+(`rookie_draft.py`, no Docker) remains the documented fallback regardless.*
 
 ## Roster & trade tooling
 
