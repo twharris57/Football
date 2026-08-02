@@ -402,6 +402,24 @@ methodology.
    `logging` versus staying as direct terminal output, since the report is
    the CLI's actual product, not a diagnostic — evaluate in its own feature
    branch rather than folding into unrelated work.
+3. [ ] **Move Docker image tagging to real semantic versioning**
+   (user-flagged 2026-08-01) — the image is currently tagged only `:latest`
+   and `:<short-sha>` (`.github/workflows/docker-publish.yml`), and the
+   Streamlit footer displays that same short SHA (`GIT_SHA` build arg) to
+   confirm a NAS deployment picked up a new image — see
+   `docs/dynasty-draft-web-app.md`'s "Sidebar league name and version
+   footer" and "Docker + CI/CD" sections. A hash is fine for proving the
+   deployed image matches a specific commit, but it's not a meaningful
+   sequence — there's no way to eyeball "is the NAS running the latest
+   real release" or "did this deploy move forward or roll back" the way a
+   bumped `v1.3.0` would show at a glance. Would need: a version number
+   maintained somewhere (a `VERSION` file, matching the pattern the sibling
+   `Finance-Dashboards` project already uses, noted in the Docker section
+   above as a deliberate divergence to revisit), a tagging step in
+   `docker-publish.yml` alongside (not necessarily instead of) the existing
+   `:latest`/`:<short-sha>` tags, and the footer showing the version number
+   with the short SHA alongside it for the precise-commit case, not instead
+   of it.
 
 ## Deferred / low priority
 
