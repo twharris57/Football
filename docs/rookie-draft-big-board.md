@@ -386,6 +386,39 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     waiver_budget_used`, both already pulled, no new fetch) is shown for
     context only; there's no bid-amount input anywhere in this app yet for
     a threshold to apply to.
+- **Trade evaluator** (`evaluate_trade()`) — evaluates an arbitrary
+  proposed trade (any number of players and/or picks on either side)
+  between two selected teams, shown for both sides rather than a single
+  fairness verdict. Reframed from an originally-scoped "watch the trade
+  block" idea once real trade offers turned out to be two-sided and often
+  multi-asset, not a single flagged player. Two independent reads, not
+  blended into one number:
+  - **Lineup value** — `season_average_starter_value()` before vs. after
+    the trade (current roster minus outgoing players plus incoming
+    players), the exact same machinery `rank_by_marginal_value` builds on,
+    generalized to arbitrary multi-player in/out rather than one candidate
+    at a time. A trade can be lineup-critical (fills a real hole) even
+    when it's not the better deal by raw value, or vice versa.
+  - **Asset value** — `adj_value` (players) plus pick `value`
+    (`pick_trade_values`, resolved by the caller) summed on each side —
+    the market-value "who gave up more" read, computed independently of
+    the lineup read.
+  - Evaluating "the other side" of the identical trade is the same
+    function called again with the partner's own roster and the two asset
+    lists swapped — not a second implementation.
+  - `taxi_eligible=False` for the capacity check, same reasoning as the
+    free-agent board: a traded-for player is essentially always an
+    established veteran, not assumed to fit an open taxi slot. Flags
+    (doesn't resolve) an over-capacity result — which extra player to cut
+    if a multi-for-fewer trade overflows capacity is a separate decision
+    the trade itself doesn't specify.
+  - **3-way trades aren't supported** — rare enough in practice and
+    disproportionately more complex to model correctly (which two sides of
+    a 3-way actually exchange which assets isn't a simple before/after
+    diff the way a 2-team trade is).
+  - A pick with no resolvable value (the same FantasyCalc pick-naming-mismatch
+    gap `pick_trade_values` already documents) contributes `0` to that
+    side's asset value, surfaced to the user rather than silently wrong.
 - **Bye-week impact** and **weekly gaps** — the former
   (`roster_bye_conflicts`) shows every week with an active-roster player on
   bye: who's out, who fills in, and the resulting delta to optimal

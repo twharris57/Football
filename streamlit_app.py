@@ -264,7 +264,9 @@ else:
         turn_note = f" ({until_turn} pick{'s' if until_turn != 1 else ''} until your turn)"
     st.info(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}{turn_note}")
 
-plan_tab, lineup_tab, draft_tab, roster_tab = st.tabs(["Draft Plan", "Lineup", "Draft Board", "Roster"])
+plan_tab, lineup_tab, draft_tab, roster_tab, trade_tab = st.tabs(
+    ["Draft Plan", "Lineup", "Draft Board", "Roster", "Trade Evaluator"]
+)
 
 with plan_tab:
     with st.expander("How this works"):
@@ -772,6 +774,151 @@ with roster_tab:
         "(no picks to show)",
         column_config=cols(pick_values_display, ("pick", "Pick"), ("owner", "Owner"), ("value", "Value")),
     )
+
+with trade_tab:
+    with st.expander("How this works"):
+        st.caption(
+            "Two independent reads for a proposed trade, not one blended verdict — a trade "
+            "can be lineup-critical but value-negative, or value-positive but just adds bench "
+            "depth behind an already-strong position.\n"
+            "- **Lineup value** — season-average optimal starting-lineup value before vs. "
+            "after the trade, the same simulation the Draft Plan uses.\n"
+            "- **Asset value** — Adj. Value (players) plus pick value (picks) summed on each "
+            "side, FantasyCalc's market read of who gave up more.\n"
+            "- Shown for both sides — is this good for you, and is it something the partner "
+            "would actually want.\n"
+            "- 3-way trades aren't supported. Taxi-squad eligibility isn't modeled for "
+            "incoming players (same simplification as the Free agents board) — a candidate "
+            "is only ever assumed to need an open active roster spot or a drop, not an open "
+            "taxi slot. A pick with no resolvable value (a FantasyCalc pick-naming-convention "
+            "gap, same one the Draft pick trade values table can hit) contributes 0 to that "
+            "side's asset value, noted below if it happens."
+        )
+
+    trade_team_names = state["team_names"]
+    trade_user_roster_id = state["user_roster_id"]
+    trade_team_id_options = sorted(
+        trade_team_names, key=lambda rid: (rid != trade_user_roster_id, trade_team_names[rid])
+    )
+
+    your_team_id = st.selectbox(
+        "Your team",
+        trade_team_id_options,
+        format_func=lambda rid: trade_team_names[rid] + (" (you)" if rid == trade_user_roster_id else ""),
+        key="trade_your_team_select",
+    )
+    partner_team_options = [rid for rid in trade_team_id_options if rid != your_team_id]
+    partner_team_id = st.selectbox(
+        "Trade partner",
+        partner_team_options,
+        format_func=lambda rid: trade_team_names[rid],
+        key="trade_partner_team_select",
+    )
+
+    your_trade_roster = state["rosters_by_id"][your_team_id]
+    partner_trade_roster = state["rosters_by_id"][partner_team_id]
+    trade_players = state["players"]
+
+    def _trade_player_options(roster: dict) -> list[str]:
+        return [
+            pid
+            for pid in (roster.get("players") or [])
+            if trade_players.get(pid, {}).get("position") in dynasty_core.FANTASY_POSITIONS
+        ]
+
+    def _trade_player_label(pid: str) -> str:
+        info = trade_players.get(pid, {})
+        return f"{info.get('full_name')} ({info.get('position')})"
+
+    trade_pick_values = state["pick_trade_values"]
+    pick_value_by_name = dict(zip(trade_pick_values["pick"], trade_pick_values["value"]))
+
+    def _trade_pick_options(roster_id: int) -> list[str]:
+        return list(trade_pick_values.loc[trade_pick_values["owner_roster_id"] == roster_id, "pick"])
+
+    def _trade_pick_label(pick_name: str) -> str:
+        value = pick_value_by_name.get(pick_name)
+        return f"{pick_name} (value: {value:.0f})" if pd.notna(value) else f"{pick_name} (value: unknown)"
+
+    give_col, receive_col = st.columns(2)
+    with give_col:
+        outgoing_players = st.multiselect(
+            "Players you'd give up",
+            _trade_player_options(your_trade_roster),
+            format_func=_trade_player_label,
+            key="trade_outgoing_players",
+        )
+        outgoing_picks = st.multiselect(
+            "Picks you'd give up",
+            _trade_pick_options(your_team_id),
+            format_func=_trade_pick_label,
+            key="trade_outgoing_picks",
+        )
+    with receive_col:
+        incoming_players = st.multiselect(
+            "Players you'd receive",
+            _trade_player_options(partner_trade_roster),
+            format_func=_trade_player_label,
+            key="trade_incoming_players",
+        )
+        incoming_picks = st.multiselect(
+            "Picks you'd receive",
+            _trade_pick_options(partner_team_id),
+            format_func=_trade_pick_label,
+            key="trade_incoming_picks",
+        )
+
+    outgoing_pick_value = sum(
+        pick_value_by_name.get(p) or 0 for p in outgoing_picks if pd.notna(pick_value_by_name.get(p))
+    )
+    incoming_pick_value = sum(
+        pick_value_by_name.get(p) or 0 for p in incoming_picks if pd.notna(pick_value_by_name.get(p))
+    )
+    unresolved_picks = [p for p in outgoing_picks + incoming_picks if pd.isna(pick_value_by_name.get(p))]
+    if unresolved_picks:
+        st.caption(f"No resolvable value for: {', '.join(unresolved_picks)} — contributing 0 to that side's asset value.")
+
+    if not (outgoing_players or outgoing_picks or incoming_players or incoming_picks):
+        st.write("(select at least one asset on either side to evaluate a trade)")
+    else:
+        your_result = dynasty_core.evaluate_trade(
+            your_trade_roster,
+            outgoing_players,
+            incoming_players,
+            trade_players,
+            state["fc_by_sleeper_id"],
+            state["byes"],
+            state["league"],
+            outgoing_pick_value=outgoing_pick_value,
+            incoming_pick_value=incoming_pick_value,
+        )
+        partner_result = dynasty_core.evaluate_trade(
+            partner_trade_roster,
+            incoming_players,
+            outgoing_players,
+            trade_players,
+            state["fc_by_sleeper_id"],
+            state["byes"],
+            state["league"],
+            outgoing_pick_value=incoming_pick_value,
+            incoming_pick_value=outgoing_pick_value,
+        )
+
+        def _show_trade_side(label: str, result: dict) -> None:
+            st.markdown(f"**{label}**")
+            st.metric("Lineup value", f"{result['lineup_delta']:+.1f}")
+            st.metric("Asset value", f"{result['asset_value_delta']:+.1f}")
+            if result["over_capacity"]:
+                st.warning(
+                    f"Over roster capacity ({result['roster_size_after']}/{result['capacity']}) — "
+                    "an additional cut would be needed."
+                )
+
+        your_side_col, partner_side_col = st.columns(2)
+        with your_side_col:
+            _show_trade_side("Your side", your_result)
+        with partner_side_col:
+            _show_trade_side(f"{trade_team_names[partner_team_id]}'s side", partner_result)
 
 st.divider()
 st.caption(f"Dynasty Rookie Draft · build {APP_VERSION}")

@@ -1531,6 +1531,76 @@ def free_agent_board(
     return pd.DataFrame(rows)
 
 
+def evaluate_trade(
+    roster: dict,
+    outgoing_player_ids: list[str],
+    incoming_player_ids: list[str],
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    outgoing_pick_value: float = 0.0,
+    incoming_pick_value: float = 0.0,
+) -> dict[str, Any]:
+    """Evaluate one side of a proposed multi-asset trade (players + picks) for one roster.
+
+    Two independent reads, not blended into one verdict - a trade can be
+    lineup-critical but value-negative, or value-positive but just adds
+    bench depth behind an already-strong position:
+
+    - `lineup_delta` — `season_average_starter_value()` before vs. after
+      the trade (`roster_after` = current roster minus outgoing players
+      plus incoming players), the same machinery `rank_by_marginal_value`
+      builds on, generalized here to arbitrary multi-player in/out instead
+      of one candidate at a time.
+    - `asset_value_delta` — `adj_value` summed on each side (plus the
+      caller-supplied pick values; resolving a pick name to its
+      `pick_trade_values` value is the caller's job, not this function's)
+      — the market-value "who gave up more" read, independent of the
+      lineup read above.
+
+    Evaluating "the other side" of the identical trade is the exact same
+    function called again with the partner's own roster and the two asset
+    lists swapped - not a second code path.
+
+    `over_capacity` uses `taxi_eligible=False` for the same reason
+    `free_agent_board` does: a traded-for player is essentially always an
+    established veteran, never assumed to fit an open taxi slot the way a
+    rookie safely can. Informational only - v1 does not auto-suggest an
+    additional drop beyond what the trade itself specifies; which extra
+    player to cut if a multi-for-fewer trade overflows capacity is a
+    separate decision the trade doesn't specify.
+    """
+    current_ids = list(roster.get("players") or [])
+    outgoing_set = set(outgoing_player_ids)
+    roster_after = [pid for pid in current_ids if pid not in outgoing_set] + list(incoming_player_ids)
+    ineligible_ids = frozenset(roster.get("taxi") or []) | frozenset(roster.get("reserve") or [])
+
+    before_value = season_average_starter_value(current_ids, players, fc_by_sleeper_id, byes, league, ineligible_ids)
+    after_value = season_average_starter_value(roster_after, players, fc_by_sleeper_id, byes, league, ineligible_ids)
+
+    def _adj_value_sum(player_ids: list[str]) -> float:
+        total = 0.0
+        for player_id in player_ids:
+            entry = fc_by_sleeper_id.get(player_id)
+            total += (entry.get("adj_value") or 0.0) if entry else 0.0
+        return total
+
+    outgoing_value = _adj_value_sum(outgoing_player_ids) + outgoing_pick_value
+    incoming_value = _adj_value_sum(incoming_player_ids) + incoming_pick_value
+
+    reserve_filled = len(roster.get("reserve") or [])
+    capacity = roster_total_capacity(league, reserve_filled, taxi_eligible=False)
+
+    return {
+        "lineup_delta": after_value - before_value,
+        "asset_value_delta": incoming_value - outgoing_value,
+        "over_capacity": len(roster_after) > capacity,
+        "roster_size_after": len(roster_after),
+        "capacity": capacity,
+    }
+
+
 def gap_delta(
     before_roster: dict, after_roster: dict, players: dict[str, dict], byes: dict[str, int], league: dict
 ) -> pd.DataFrame:

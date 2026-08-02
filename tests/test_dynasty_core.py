@@ -933,6 +933,97 @@ class TestFreeAgentBoard:
         assert board.iloc[0]["drop_name"] == "Low Value WR"
 
 
+class TestEvaluateTrade:
+    """evaluate_trade should compute an independent lineup-value read and asset-value
+    read for one side of an arbitrary multi-asset (players + picks) trade, and be
+    reusable as-is for the other side of the identical trade with roster/assets swapped."""
+
+    def test_clearly_better_incoming_player_raises_lineup_value(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": ["old_wr"], "taxi": [], "reserve": []}
+        players = {
+            "old_wr": make_player("WR", full_name="Old WR"),
+            "new_wr": make_player("WR", full_name="New WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("old_wr", 100), fc_entry("new_wr", 900)])
+
+        result = dc.evaluate_trade(roster, ["old_wr"], ["new_wr"], players, fc_by_id, {}, league)
+
+        assert result["lineup_delta"] > 0
+        assert result["asset_value_delta"] == pytest.approx(900 - 100)
+
+    def test_multi_for_multi_trade_reflects_net_roster_size_change(self):
+        # 2 outgoing for 1 incoming - roster shrinks by 1, well under capacity.
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": ["a", "b"], "taxi": [], "reserve": []}
+        players = {
+            "a": make_player("WR", full_name="A"),
+            "b": make_player("WR", full_name="B"),
+            "c": make_player("WR", full_name="C"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("a", 100), fc_entry("b", 100), fc_entry("c", 900)])
+
+        result = dc.evaluate_trade(roster, ["a", "b"], ["c"], players, fc_by_id, {}, league)
+
+        assert result["roster_size_after"] == 1
+        assert not result["over_capacity"]
+
+    def test_flags_over_capacity_when_incoming_outnumbers_outgoing(self):
+        # League capacity (active-only, taxi_eligible=False) is 2. Roster
+        # starts at 2 (full); 1 outgoing for 2 incoming pushes to 3 - over.
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": ["a", "b"], "taxi": [], "reserve": []}
+        players = {
+            "a": make_player("WR", full_name="A"),
+            "b": make_player("WR", full_name="B"),
+            "c": make_player("WR", full_name="C"),
+            "d": make_player("WR", full_name="D"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("a", 100), fc_entry("b", 100), fc_entry("c", 200), fc_entry("d", 200)]
+        )
+
+        result = dc.evaluate_trade(roster, ["a"], ["c", "d"], players, fc_by_id, {}, league)
+
+        assert result["roster_size_after"] == 3
+        assert result["capacity"] == 2
+        assert result["over_capacity"]
+
+    def test_pick_values_shift_asset_delta_without_touching_lineup_delta(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": ["a"], "taxi": [], "reserve": []}
+        players = {"a": make_player("WR", full_name="A")}
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("a", 100)])
+
+        no_picks = dc.evaluate_trade(roster, [], [], players, fc_by_id, {}, league)
+        with_picks = dc.evaluate_trade(
+            roster, [], [], players, fc_by_id, {}, league, outgoing_pick_value=50, incoming_pick_value=200
+        )
+
+        assert no_picks["asset_value_delta"] == pytest.approx(0)
+        assert with_picks["asset_value_delta"] == pytest.approx(200 - 50)
+        assert with_picks["lineup_delta"] == pytest.approx(no_picks["lineup_delta"])
+
+    def test_the_other_side_of_the_same_trade_mirrors_asset_value_delta(self):
+        # Calling evaluate_trade again with the partner's own roster and the
+        # two asset lists swapped is the whole "two-sided" evaluation - not
+        # a second implementation, so the asset-value deltas must be exact
+        # negatives of each other for the identical trade.
+        league = {"roster_positions": ["WR", "BN"]}
+        my_roster = {"players": ["low"], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["high"], "taxi": [], "reserve": []}
+        players = {
+            "low": make_player("WR", full_name="Low"),
+            "high": make_player("WR", full_name="High"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("low", 100), fc_entry("high", 900)])
+
+        my_side = dc.evaluate_trade(my_roster, ["low"], ["high"], players, fc_by_id, {}, league)
+        partner_side = dc.evaluate_trade(partner_roster, ["high"], ["low"], players, fc_by_id, {}, league)
+
+        assert my_side["asset_value_delta"] == pytest.approx(-partner_side["asset_value_delta"])
+
+
 class TestRecommendDropIneligibility:
     """A taxi/IR player must never be misclassified as a "starter", even if its
     value alone would otherwise win a starting slot - Sleeper doesn't allow

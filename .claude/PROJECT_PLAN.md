@@ -31,43 +31,10 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-**`feature/free-agent-evaluator` (RT-3), reviewed 2026-08-02:**
-
-1. [x] `free_agent_pool()` (`dynasty_core.py`) computed free-agent
-   membership independently of `rookie_pool()`/`gather_state`'s `available`
-   rookie pool, so this season's not-yet-drafted rookies — real NFL `team`
-   set, not on any fantasy roster — passed its membership test and showed
-   up on the "Free agents" board as a waiver-add candidate, even though
-   they're only actually obtainable through the ongoing startup rookie
-   draft, not free agency. User-caught live (Jeremiyah Love, a rookie still
-   in this league's active startup draft, showing up in the Free agents
-   board), the exact kind of thing this PR's own test suite didn't exercise
-   (`TestFreeAgentPool`/`TestFreeAgentBoard` never constructed a
-   pending-draft rookie in the candidate pool). Fixed 2026-08-02
-   (`de554a4`): `free_agent_pool()` takes a new `draft_eligible_rookie_ids`
-   parameter; `gather_state()` passes it the same `available` set already
-   computed for the draft plan itself (no new logic, no new API calls),
-   gated on whether the startup draft still has picks remaining — empty set
-   once the draft is complete, so a still-undrafted rookie becomes a real
-   free agent again automatically, no special-casing needed. Verified: both
-   directions now covered by `TestFreeAgentPool` (excluded mid-draft;
-   reappears once an empty set is passed) and the full suite (88 passed).
-   See `valuation_principles.md`'s new "Mutually exclusive candidate pools"
-   rule.
-
-**`feature/win-pct-shrinkage` (RT-1), reviewed 2026-08-02:**
-
-1. [x] `_shrunk_win_pct()` overwrites the `win_pct` column that
-   `rookie_draft.py` and `streamlit_app.py` already print verbatim under
-   the literal label "Win %"/"win%" — fixed 2026-08-02: `win_pct` now
-   stays the raw record (what those two consumers actually read and
-   display); `win_pct_shrunk` is the new field feeding `power_score`'s
-   z-scoring, never printed as-is. Verified: with the existing 1-0/10-0
-   test fixtures, both now show `win_pct == 1.0` (the real record) while
-   `win_pct_shrunk` stays correctly ordered (`0.6 < 0.857`). Covered by
-   `test_early_record_is_shrunk_toward_neutral`'s updated assertions. See
-   `valuation_principles.md`'s "A field used as both an internal score
-   input and a user-facing label needs two names" section.
+*Empty — no branch is currently mid-review. (`feature/win-pct-shrinkage`'s
+and `feature/free-agent-evaluator`'s findings, previously listed here,
+cleared out on merge — see those PRs' descriptions for the historical
+record.)*
 
 ## Now — blocking
 
@@ -143,20 +110,20 @@ remaining FAAB shown for context, no bid-sizing (see `RT-10` below); no
 in-season change monitoring, recomputed fresh every refresh instead (see
 `RT-9` below).
 
-1. [ ] **RT-2: Trade-block monitoring** (user-flagged 2026-08-01, scoped out of
-   the v1 above) — watch for players another team is actively shopping
-   and score them against the current roster the same way the free-agent
-   evaluator does — season-average marginal starting-lineup value, not raw
-   trade value — flagging only when a specific player would be a genuine
-   value-add, not every trade rumor. Needs a real signal for "this player
-   is on the block" first (Sleeper doesn't expose trade discussions
-   directly, so this likely means the user manually flagging a name to
-   check rather than a real feed, at least for v1). A manually-flagged
-   name here is also a natural fit for RT-6's contextual research check,
-   once that exists — pulling real context (usage change, injury detail,
-   actual trade buzz) beyond what Sleeper/FantasyCalc carry, for that one
-   specific player.
-2. [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
+**Trade evaluator (`evaluate_trade()`) is done** — see
+`docs/rookie-draft-big-board.md`'s "Trade evaluator" section for the full
+methodology. Reframed from the originally-scoped "watch the trade block"
+(user feedback, 2026-08-02): real trade offers are two-sided and often
+multi-asset (players and/or picks on either side), so this evaluates an
+arbitrary proposed trade between two selected teams — season-average
+marginal lineup value plus a market-value (`adj_value`/pick `value`) read,
+shown for both sides — reusing `season_average_starter_value` and
+`pick_trade_values` rather than a new valuation model. 3-way trades aren't
+supported (rare, disproportionate complexity). Manual/on-demand, no trade
+feed (Sleeper doesn't expose trade discussions) — see `RT-6` below for the
+contextual-research idea this could still feed into.
+
+1. [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
    evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
    now `roster_needs_summary`'s `need` flag is one fixed rule for all
    time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
@@ -178,7 +145,7 @@ in-season change monitoring, recomputed fresh every refresh instead (see
    Related to but distinct from the positional-value work above — that's
    about *which position* is weak; this is about *what kind of move* the
    team should even be looking for at this point in the rebuild.
-3. [ ] **RT-5: League tab — all-teams summary view** (user-flagged 2026-07-29,
+2. [ ] **RT-5: League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
    team, complementing the Roster tab's team selector (added
@@ -191,7 +158,7 @@ in-season change monitoring, recomputed fresh every refresh instead (see
    2026-08-01) — this surfaces raw stats per team, not a rebuild-vs-contend
    classification, but both answer "what does this team look like" at a
    glance.
-4. [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
+3. [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
    (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
    unconfirmed) — a rare, explicitly user-triggered lookup (not a
    background job) for one *specific* named player: pull recent context an
@@ -206,11 +173,11 @@ in-season change monitoring, recomputed fresh every refresh instead (see
    actually available and appropriate here before committing to an
    implementation — treat the specific tool name as unverified, just the
    user's working label for the idea. Natural entry points: RT-2's
-   trade-block monitoring (checking one flagged name) and RT-3's
+   trade evaluator (checking one flagged trade idea) and RT-3's
    free-agent evaluator (checking one waiver target) — not a general
    always-on feed, and not a replacement for the stats-based ranking
    anywhere in the pipeline.
-5. [ ] **RT-7: Use `points_for`/point differential as a steadier alternative
+4. [ ] **RT-7: Use `points_for`/point differential as a steadier alternative
    to win/loss in the power/timeline read** (deferred from the small-sample
    shrinkage work above, 2026-08-02) — shrinkage toward `0.5` (done, see
    above) addresses the small-sample variance problem directly, but binary
@@ -223,7 +190,7 @@ in-season change monitoring, recomputed fresh every refresh instead (see
    the roster `settings` shape needs checking directly, not assumed), and
    it needs a real design decision on how to blend/weight it against (or
    replace) `win_pct` rather than just swapping the input.
-6. [ ] **RT-8: Model real taxi-squad eligibility for free-agent adds**
+5. [ ] **RT-8: Model real taxi-squad eligibility for free-agent adds**
    (deferred from the free-agent evaluator v1 above, 2026-08-02) —
    `free_agent_board()` currently passes `taxi_eligible=False` to
    `roster_total_capacity()`/`rank_by_marginal_value()`, so an add is only
@@ -237,7 +204,7 @@ in-season change monitoring, recomputed fresh every refresh instead (see
    both functions; this is "verify the real rule and flip candidates that
    qualify to `taxi_eligible=True` on a per-candidate basis," not a
    rearchitecture.
-7. [ ] **RT-9: In-season "something changed" pickup monitoring**
+6. [ ] **RT-9: In-season "something changed" pickup monitoring**
    (deferred from the free-agent evaluator v1 above, 2026-08-02) —
    `free_agent_board()` is a real-time snapshot, recomputed fresh every
    refresh like every other feature here, not an alerting system. Actually
@@ -248,10 +215,11 @@ in-season change monitoring, recomputed fresh every refresh instead (see
    persistence layer anywhere. A depth-chart delta would probably be
    enough to start (no news/transactions feed needed on day one), but it's
    a real architecture addition (state that survives between refreshes),
-   not a v1-scope change. Referenced by `RT-2`'s trade-block monitoring and
-   `RT-4`'s phase-aware rebuild-year work, both of which assumed this would
-   ship alongside the evaluator.
-8. [ ] **RT-10: FAAB bid-threshold modeling** (deferred from the free-agent
+   not a v1-scope change. Referenced by `RT-4`'s phase-aware rebuild-year
+   work, which assumed this would ship alongside the free-agent evaluator.
+   `RT-2` (the trade evaluator, reframed as an on-demand two-sided/multi-asset
+   check rather than a monitor) no longer depends on this.
+7. [ ] **RT-10: FAAB bid-threshold modeling** (deferred from the free-agent
    evaluator v1 above, 2026-08-02) — `free_agent_board()` shows remaining
    FAAB (`league["settings"]["waiver_budget"] - roster["settings"].
    waiver_budget_used`, both already pulled, no new fetch) purely as
