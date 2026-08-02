@@ -16,6 +16,7 @@ not a deployed service.
 @.claude/conventions/testing.md
 @.claude/conventions/web_guidelines.md
 @.claude/conventions/docker_guidelines.md
+@.claude/conventions/app_deployment_reference.md
 @.claude/conventions/valuation_principles.md
 
 ## Architecture

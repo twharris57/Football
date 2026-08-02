@@ -47,6 +47,23 @@ so the dependency layer is cached across routine code changes.
   a secrets management service. In compose, use `secrets:` and `environment:` rather
   than baking values into the image.
 
+### Env file split for Compose projects
+
+Split config from secrets across three files per stack:
+
+- **`<name>.env`** — non-secret config (tracked). Safe to version-control.
+- **`<name>.secrets.env`** — secret values only (gitignored). Never committed.
+- **`<name>.secrets.env.example`** — documents every secret var with a placeholder
+  and a one-line comment explaining where the value comes from:
+
+```
+# <name>.secrets.env.example
+API_KEY=        # from provider's dashboard
+DB_PASSWORD=    # set during host bootstrap
+```
+
+Add `*.secrets.env` to `.gitignore` and commit only the `.example` file.
+
 ## Security
 
 - **Run as a non-root user.** Create a dedicated user in the Dockerfile and switch to
@@ -97,6 +114,19 @@ with the local development configuration.
 - Use bind mounts for source directories you want to edit live during development.
 - Define a separate override file (`compose.override.yaml`) for developer-specific
   settings rather than committing them to the base compose file.
+
+## Validation
+
+For declarative Compose repos with no build step, `docker compose config` is the
+minimum static check before treating a change as done:
+
+```bash
+docker compose -f <stack>-compose.yaml config
+```
+
+This catches YAML syntax errors, undefined variables, and invalid Compose keys before
+anything touches a running environment. It does not replace a live smoke test — verify
+the stack actually comes up healthy after any structural change.
 
 ## Image Tagging
 
