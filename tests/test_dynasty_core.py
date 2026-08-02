@@ -210,6 +210,30 @@ class TestFreeAgentPool:
 
         assert set(pool.keys()) == {"wr"}
 
+    def test_excludes_draft_eligible_rookies_mid_draft(self):
+        # An undrafted rookie mid-startup-draft is a draft prospect, not a
+        # waiver-wire pickup - not in rostered_player_ids either, but must
+        # still be excluded via draft_eligible_rookie_ids (gather_state's
+        # own undrafted-rookie pool for the draft plan itself).
+        players = {
+            "rookie_wr": make_player("WR", full_name="Undrafted Rookie"),
+            "veteran_wr": make_player("WR", full_name="Veteran FA"),
+        }
+
+        pool = dc.free_agent_pool(players, [], draft_eligible_rookie_ids=frozenset({"rookie_wr"}))
+
+        assert set(pool.keys()) == {"veteran_wr"}
+
+    def test_undrafted_rookie_becomes_a_real_free_agent_once_draft_is_complete(self):
+        # gather_state passes an empty draft_eligible_rookie_ids once the
+        # draft has no picks remaining - the same rookie is a real free
+        # agent again with no special-casing needed at that point.
+        players = {"rookie_wr": make_player("WR", full_name="Undrafted Rookie")}
+
+        pool = dc.free_agent_pool(players, [], draft_eligible_rookie_ids=frozenset())
+
+        assert set(pool.keys()) == {"rookie_wr"}
+
 
 class TestRosterCapacity:
     """IR/reserve players must not count against active-roster capacity, same as taxi."""

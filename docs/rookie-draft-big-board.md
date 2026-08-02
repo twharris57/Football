@@ -365,8 +365,15 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   second valuation model. Each candidate carries its own best-drop
   suggestion, same as the draft plan's alternates. Works through the Roster
   tab's team selector, so it shows any team's free-agent board, not just
-  the user's own. Two deliberate v1 simplifications, both tracked in
-  `.claude/PROJECT_PLAN.md`:
+  the user's own. Excludes this year's not-yet-drafted rookies
+  (`draft_eligible_rookie_ids`, reusing `gather_state`'s own undrafted-rookie
+  pool for the draft plan itself) for as long as the startup draft still has
+  picks remaining — an undrafted rookie mid-draft is a draft prospect, not a
+  waiver-wire pickup, even though nothing about `rostered_player_ids` would
+  otherwise catch that. Once the draft is complete, this exclusion is an
+  empty set and any still-undrafted rookie becomes a real free agent again
+  automatically, no special-casing needed. Two further deliberate v1
+  simplifications, both tracked in `.claude/PROJECT_PLAN.md`:
   - **Active-roster-only capacity** — passes `taxi_eligible=False` to
     `roster_total_capacity()`/`rank_by_marginal_value()` (a new parameter,
     default `True` so the rookie draft plan's own behavior is unaffected),

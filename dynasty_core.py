@@ -247,22 +247,32 @@ def rookie_pool(players: dict[str, dict], season: str) -> dict[str, dict]:
     }
 
 
-def free_agent_pool(players: dict[str, dict], rosters: list[dict]) -> dict[str, dict]:
+def free_agent_pool(
+    players: dict[str, dict], rosters: list[dict], draft_eligible_rookie_ids: frozenset[str] = frozenset()
+) -> dict[str, dict]:
     """Return every fantasy-relevant player on a real NFL roster who isn't on any fantasy roster.
 
     Sleeper has no dedicated "free agents" endpoint - this is the same
     approach `rookie_pool` uses, generalized to every player, not just this
     year's class. `team` must be truthy (on an actual NFL roster) since
     Sleeper's player dataset also carries retired/practice-squad-only/no-team
-    entries that would otherwise flood the pool with irrelevant results. An
-    undrafted rookie is a real free agent and needs no special-casing here -
-    they simply aren't in `rostered_player_ids` either.
+    entries that would otherwise flood the pool with irrelevant results.
+    `draft_eligible_rookie_ids` (`gather_state`'s own undrafted-rookie pool,
+    `frozenset()` once the draft is complete) excludes this year's
+    not-yet-drafted class while the startup draft is still active - an
+    undrafted rookie mid-draft is a draft prospect, not a waiver-wire pickup,
+    even though they aren't in `rostered_player_ids` either. Once the draft
+    ends, any still-undrafted rookie is a real free agent again and this
+    exclusion naturally stops applying (the caller passes an empty set).
     """
     rostered = rostered_player_ids(rosters)
     return {
         player_id: info
         for player_id, info in players.items()
-        if info.get("position") in FANTASY_POSITIONS and info.get("team") and player_id not in rostered
+        if info.get("position") in FANTASY_POSITIONS
+        and info.get("team")
+        and player_id not in rostered
+        and player_id not in draft_eligible_rookie_ids
     }
 
 
@@ -1923,7 +1933,15 @@ def gather_state(
         p["pick_no"]: p["player_id"] for p in draft_picks if p.get("roster_id") == user_roster_id and p.get("player_id")
     }
 
-    available_free_agents = free_agent_pool(players, rosters)
+    # Undrafted rookies are draft prospects, not waiver-wire pickups, for as
+    # long as this startup draft still has picks remaining - excluded from
+    # free agents via the same `available` pool already computed above for
+    # the draft plan itself, not a second rookie-eligibility computation.
+    # Once the draft is done, this is an empty set and they become real
+    # free agents again automatically.
+    total_draft_picks = draft["settings"]["teams"] * draft["settings"]["rounds"]
+    draft_eligible_rookie_ids = frozenset() if current_pick_no > total_draft_picks else frozenset(available.keys())
+    available_free_agents = free_agent_pool(players, rosters, draft_eligible_rookie_ids)
 
     replacement_level = position_replacement_levels(rosters, players, fc_by_sleeper_id, league["roster_positions"])
     user_analysis = team_roster_analysis(
