@@ -1288,19 +1288,29 @@ def recommend_drop(
     """Recommend the single best player to drop: lowest-value bench player, over starters.
 
     `exclude_ids` protects specific players (e.g. just picked earlier in the
-    same multi-round plan) from being recommended for drop in this pass.
-    `ineligible_ids` (taxi/IR players) are never eligible to be assigned a
-    starting slot here - Sleeper doesn't allow it - so they can't be wrongly
-    protected from the drop pool as a false "starter"; they still land in
-    `rows` and so can still be recommended for drop themselves.
+    same multi-round plan, or a trade's own incoming players) from being
+    *chosen* as the drop - it does not remove them from the starter
+    assignment itself. An excluded player still legitimately occupies a
+    real slot and can still push someone else down to bench; computing
+    `assign_starters()` on a `rows` list that already excluded them would
+    understate real competition for slots and let a droppable player who'd
+    actually be bench read as `is_starter: True` (see
+    `.claude/conventions/valuation_principles.md`'s "Exclusion filters
+    change the outcome for everyone else" rule). `ineligible_ids` (taxi/IR
+    players) are never eligible to be assigned a starting slot here -
+    Sleeper doesn't allow it - so they can't be wrongly protected from the
+    drop pool as a false "starter"; they still land in `rows` and so can
+    still be recommended for drop themselves.
     """
-    rows = [r for r in player_value_rows(player_ids, players, fc_by_sleeper_id) if r["player_id"] not in exclude_ids]
+    all_rows = player_value_rows(player_ids, players, fc_by_sleeper_id)
+    eligible_rows = [r for r in all_rows if r["player_id"] not in ineligible_ids]
+    assignments = assign_starters(eligible_rows, league["roster_positions"])
+    starter_ids = {pid for _, pid in assignments if pid}
+
+    rows = [r for r in all_rows if r["player_id"] not in exclude_ids]
     if not rows:
         return None
 
-    eligible_rows = [r for r in rows if r["player_id"] not in ineligible_ids]
-    assignments = assign_starters(eligible_rows, league["roster_positions"])
-    starter_ids = {pid for _, pid in assignments if pid}
     bench_rows = [r for r in rows if r["player_id"] not in starter_ids]
     pool = bench_rows if bench_rows else rows
     worst = min(pool, key=lambda r: r["adj_value"] if r["adj_value"] is not None else -1)

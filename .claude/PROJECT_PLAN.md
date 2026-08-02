@@ -58,6 +58,21 @@ below as a normal backlog item, same as any other deferred work.
   `.claude/conventions/valuation_principles.md`'s "A capacity ceiling that
   restricts new entrants must not also erase credit for room already
   spent" rule.
+- [x] **`recommend_drop()`'s `is_starter` tag could overstate a forced
+  cut's severity whenever `exclude_ids` was non-empty (`RT-13`).** Fixed
+  2026-08-02: `assign_starters()` now runs against the *full* candidate
+  list before `exclude_ids` is applied, so a protected player (a trade's
+  incoming side, or a draft plan's earlier picks) still legitimately
+  occupies a slot and can still push someone else to bench when deciding
+  who else counts as a starter — `exclude_ids` now only gates which
+  candidate can be *chosen* as the drop, applied after `starter_ids` is
+  computed. New regression test (`TestRecommendDropExcludedCompetition`)
+  constructs the exact failure mode: two higher-value excluded players
+  correctly win the roster's only starting slot, so the sole droppable
+  candidate reads `is_starter: False`, not the `True` the old
+  exclude-before-assign order would have produced. See
+  `.claude/conventions/valuation_principles.md`'s "Exclusion filters
+  change the outcome for everyone else" rule.
 
 ## Now — blocking
 
@@ -285,40 +300,6 @@ contextual-research idea this could still feed into.
   than the full opportunity-cost modeling ("spend now vs. save for a
   bigger add later") that's a genuine optimal-stopping problem with no
   clean closed-form answer.
-- [ ] **RT-13: `recommend_drop()`'s `is_starter` tag can overstate a forced
-  cut's severity whenever `exclude_ids` is non-empty** (assistant valuation
-  review, 2026-08-02, found reviewing the new `recommended_drops`/
-  `lineup_delta_after_drops` work in `evaluate_trade()`) — `recommend_drop()`
-  filters excluded players (`exclude_ids`) out of `rows` *before*
-  `assign_starters()` runs, so a protected player isn't just barred from
-  being the chosen cut, it's also removed from the competition used to
-  decide who else counts as a "starter." Since removing a competitor can
-  only ever help the remaining candidates win a slot, never hurt them, this
-  can make an existing droppable player read as `is_starter: True` when, in
-  the real full roster (protected players correctly seated), they'd
-  actually be bench — never the reverse (a real starter can't get
-  mislabeled bench this way). Doesn't corrupt the *choice* of who to cut
-  (the lowest-adj_value candidate is still picked correctly in the general
-  case — worked through by hand for several roster shapes) or the headline
-  `lineup_delta_after_drops` number (computed separately via
-  `season_average_starter_value` on the real, uncut candidate list); it
-  only mislabels the `is_starter` flag, and only when a given drop
-  iteration's `bench_rows` is empty (thin bench relative to the overflow),
-  forcing the `pool = rows` fallback that includes the wrongly-classified
-  candidate. Pre-existing in `recommend_drop()` itself — `multi_round_plan`
-  already passes a non-empty `exclude_from_drop=frozenset(just_picked)` for
-  later-round forced drops — but was a rare edge case there; `evaluate_trade`
-  is the first caller where `exclude_ids` (the trade's incoming players) is
-  non-empty on essentially every over-capacity evaluation, and the first to
-  surface `is_starter` as a prominent user-facing warning tag rather than
-  backing an internal comparison. No test (old or new) exercises a
-  non-empty `exclude_ids`/`exclude_from_drop` case. Low urgency since the
-  error only ever overstates caution, never hides a real starter loss, but
-  worth fixing by computing `starter_ids` from the *full* (non-excluded)
-  candidate list and only applying the exclusion when selecting the
-  cheapest droppable candidate — see
-  `.claude/conventions/valuation_principles.md`'s new "exclusion filters
-  change the outcome for everyone else, not just the excluded entity" rule.
 
 ## Valuation & data accuracy
 

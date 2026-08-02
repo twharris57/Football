@@ -1248,6 +1248,32 @@ class TestRecommendDropIneligibility:
         assert drop["is_starter"] is False
 
 
+class TestRecommendDropExcludedCompetition:
+    """exclude_ids protects a player from being *chosen* as the drop, but must not
+    remove them from the starter-assignment competition itself - otherwise a
+    droppable player can misread as a "starter" just because the excluded
+    player(s) who'd actually win that slot were filtered out first."""
+
+    def test_excluded_players_still_count_as_competition_for_starter_status(self):
+        # Only one WR slot. "c" and "d" (both 200) are excluded from being
+        # the recommended cut, but they still legitimately win the lone WR
+        # slot over "b" (100). Before the fix, filtering c/d out before
+        # assign_starters ran would let "b" trivially win that slot by
+        # default and misread as is_starter: True.
+        players = {
+            "b": make_player("WR", full_name="B"),
+            "c": make_player("WR", full_name="C"),
+            "d": make_player("WR", full_name="D"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("b", 100), fc_entry("c", 200), fc_entry("d", 200)])
+        league = {"roster_positions": ["WR", "BN"]}
+
+        drop = dc.recommend_drop(["b", "c", "d"], players, fc_by_id, league, exclude_ids=frozenset({"c", "d"}))
+
+        assert drop["player_id"] == "b"
+        assert drop["is_starter"] is False
+
+
 class TestBestPositionRelevantDrop:
     """Unlike recommend_drop's cheap lowest-raw-value heuristic, this should
     (a) only ever consider players who actually share a slot type with the
