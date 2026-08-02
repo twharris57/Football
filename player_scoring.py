@@ -1,25 +1,15 @@
-"""Per-player real-scoring recompute (see PROJECT_PLAN.md, valuation step B).
+"""Per-player real-scoring recompute: a personalized FantasyCalc correction ratio.
 
-FantasyCalc's dynasty values are generated under an assumed scoring model
-that doesn't match this league's real `scoring_settings` (6pt passing TDs,
-a TE reception premium, a -3 INT penalty instead of the usual -2, first-down
-and long-play bonuses, and whatever passing/rushing/receiving yardage rates
-this league actually uses). FantasyCalc's API only lets us tune `numQbs`,
-`numTeams`, and `ppr` — nothing else — so the rest of the mismatch has to be
-corrected after the fact.
+For every player with enough real NFL volume to trust it, computes their
+own points under this league's actual `scoring_settings` divided by their
+points under FantasyCalc's assumed baseline model (`BASELINE_SCORING`).
+Players below the qualifying bar fall back to a position-average ratio.
+See docs/rookie-draft-big-board.md's "Valuation" section for the full
+methodology and rationale.
 
-This module computes, for every player with enough real NFL volume to
-trust it, a personalized correction ratio: their own points recomputed
-under this league's *actual* scoring_settings, divided by their points
-under FantasyCalc's assumed baseline model (see BASELINE_SCORING below —
-an explicit, documented assumption, since FantasyCalc doesn't publish its
-formula). Players without enough volume (rookies, backups, or veterans
-below the qualifying bar) fall back to a position-average ratio, computed
-from that same pooled qualifying sample.
-
-Deliberately independent of dynasty_core.py (no import of it) to avoid a
-circular import - dynasty_core.py imports this module to call
-get_multipliers(), so this module can't import dynasty_core back.
+Deliberately independent of dynasty_core.py (no import of it): that module
+imports this one to call get_multipliers(), so this module can't import it
+back without a circular import.
 """
 
 from __future__ import annotations
@@ -416,19 +406,13 @@ def _season_totals_by_player(weekly: pd.DataFrame) -> pd.DataFrame:
 def gsis_to_sleeper_crosswalk() -> dict[str, str]:
     """{gsis_id: sleeper_id} crosswalk from nfl_data_py's ID table.
 
-    Shared with dynasty_core.handcuff_map, which needs the identical
+    Shared with `dynasty_core.handcuff_map`, which needs the identical
     mapping - a single implementation instead of two copies of the same
-    collision handling below.
-
-    The plain dict comprehension keeps whichever row comes last for a
-    colliding gsis_id - arbitrary but deterministic. Logs (doesn't fail)
-    when that collision is a genuine conflict (the same gsis_id mapping to
-    more than one distinct sleeper_id) - a data-quality problem in the
-    upstream crosswalk this project can't fix at the source, not something
-    to silently paper over. Checked directly: 5 duplicate gsis_id rows
-    exist in a real pull, but all agree on the same sleeper_id (harmless
-    duplicate source rows) - a real conflict has never been observed, but
-    would previously have been invisible if one ever occurred.
+    collision handling. Keeps whichever row comes last for a colliding
+    gsis_id (arbitrary but deterministic), and logs a warning when that
+    collision is a genuine conflict (the same gsis_id mapping to more than
+    one distinct sleeper_id) - a data-quality problem in the upstream
+    crosswalk this project can't fix at the source.
     """
     ids = nfl.import_ids().dropna(subset=["gsis_id", "sleeper_id"])
     distinct_targets = ids.groupby("gsis_id")["sleeper_id"].nunique()
