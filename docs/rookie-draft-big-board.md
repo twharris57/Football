@@ -253,13 +253,22 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     average roster age, not a flat one, so an old bench piece doesn't count
     the same as an old franchise cornerstone toward "how win-now is this
     roster."
-  - **Actual record** — real `wins / (wins + losses + ties)` from Sleeper's
-    standings, not just projected strength: a thin roster on a hot streak
-    and a stacked roster off to a bad start are both real signals a
-    roster-composition-only read would miss. Defaults to a neutral `0.5`
-    with zero games played, so every team ties at that same value and the
-    term contributes zero variance until real results exist — an emergent
-    property of z-scoring a constant, not a special case coded around.
+  - **Actual record** — two separate fields, deliberately not one: `win_pct`
+    is the real `wins / (wins + losses + ties)` from Sleeper's standings,
+    exactly what the CLI/Streamlit "Win %" display prints; `win_pct_shrunk`
+    is what actually feeds the z-scoring, blended toward a neutral `0.5`
+    early in the season (`_shrunk_win_pct()`, weight `games_played /
+    (games_played + WIN_PCT_SHRINKAGE_K)`) so a 1-0/0-1 start doesn't swing
+    the score as hard as a settled record does. Splitting them prevents the
+    exact failure mode a statistical correction like this invites — see
+    `.claude/conventions/valuation_principles.md`'s "a field used as both an
+    internal score input and a user-facing label needs two names" rule.
+    Both default to a neutral `0.5` with zero games played, so every team
+    ties at that same value and the term contributes zero variance until
+    real results exist — an emergent property of z-scoring a constant, not
+    a special case coded around. A thin roster on a hot streak and a
+    stacked roster off to a bad start are both real signals a
+    roster-composition-only read would miss.
 
   Recomputed fresh every refresh from already-pulled data (no new API
   calls) rather than cached, so it reacts to injuries, trades, and real
@@ -438,5 +447,6 @@ is a deliberate decision, not a silent bug:
 | `BASELINE_SCORING["rec"] = 1.0`, hardcoded independent of the real `ppr` sent to FantasyCalc | `player_scoring.py` | `get_dynasty_values()` sends this league's real PPR to FantasyCalc, so its market value is calibrated to it — but `BASELINE_SCORING` assumes `1.0` regardless. Harmless while the league stays full PPR; if it's ever changed, the correction ratio would silently conflate the intended residual-scoring delta with an unintended PPR delta FantasyCalc's own call already priced in (`.claude/PROJECT_PLAN.md`, Valuation & data accuracy) | Thread the real `ppr` value into `BASELINE_SCORING["rec"]` instead of the literal `1.0` |
 | `player_scoring.QUALIFYING_VOLUME` (QB ≥200 att / RB ≥100 carries / WR ≥50 targets / TE ≥30 targets) | `player_scoring.py` | Not derived from any league rule — a manual judgment call for "enough volume to trust a personalized ratio" | Revisit only if personalized ratios look noisy for borderline players |
 | `YOUNG_CORE_MAX_YOE` / `YOUNG_CORE_NEED_THRESHOLD` / `LOW_VALUE_YOUNG_AGE` / `LOW_VALUE_AGING_AGE` | `dynasty_core.py` | Subjective heuristics behind the rebuild-strategy "need"/"low value" flags, not derived from any league setting | Adjust by feel as the roster ages into (or out of) the rebuild window |
+| `WIN_PCT_SHRINKAGE_K = 4` (games worth of shrinkage weight toward `0.5`) | `dynasty_core.py` | A judgment call for how fast `win_pct_shrunk` (the power/timeline read's z-scoring input, not the displayed `win_pct`) should trust a real record over the neutral prior — not derived from any league setting or statistical fit | Adjust by feel if early-season `power_score` still looks too swingy or too damped |
 | `max_keepers: 1` in the league's Sleeper settings | Not modeled anywhere | Appears vestigial for a dynasty-type league (Sleeper `type: 2`) — the whole roster carries over every year, not a limited keeper count, so this setting doesn't seem to apply | Revisit only if Sleeper's dynasty/keeper interaction is ever observed to actually matter |
 | `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`) | Every other place in this codebase treats `roster_id` as an opaque key; this is the only place that assumes it's a literal range, to synthesize a future season's pick ownership without a real Sleeper draft object to read a `slot_to_roster_id` mapping from. Confirmed true for this league directly, but if Sleeper ever assigns non-contiguous IDs (e.g. after a team leaves and isn't backfilled), it would silently synthesize picks for a `roster_id` that doesn't exist | Iterate the real `rosters` list instead of a synthesized range |

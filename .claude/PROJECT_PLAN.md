@@ -31,9 +31,19 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-*Empty — no branch is currently mid-review. (PR #18's findings, previously
-listed here, cleared out on merge — see that PR's description for the
-historical record.)*
+**`feature/win-pct-shrinkage` (RT-1), reviewed 2026-08-02:**
+
+1. [x] `_shrunk_win_pct()` overwrites the `win_pct` column that
+   `rookie_draft.py` and `streamlit_app.py` already print verbatim under
+   the literal label "Win %"/"win%" — fixed 2026-08-02: `win_pct` now
+   stays the raw record (what those two consumers actually read and
+   display); `win_pct_shrunk` is the new field feeding `power_score`'s
+   z-scoring, never printed as-is. Verified: with the existing 1-0/10-0
+   test fixtures, both now show `win_pct == 1.0` (the real record) while
+   `win_pct_shrunk` stays correctly ordered (`0.6 < 0.857`). Covered by
+   `test_early_record_is_shrunk_toward_neutral`'s updated assertions. See
+   `valuation_principles.md`'s "A field used as both an internal score
+   input and a user-facing label needs two names" section.
 
 ## Now — blocking
 
@@ -65,28 +75,11 @@ ahead of Valuation & data accuracy below, which remains explicitly not
 deadline-driven.
 
 **Positional-value foundation (VOR/replacement-level, SUPER_FLEX-aware QB
-demand) and the league-wide power/timeline read (`power_score`, split into
-independent `quality_score`/`timeline_score` axes) are done** — see
+demand), the league-wide power/timeline read (`power_score`, split into
+independent `quality_score`/`timeline_score` axes), and small-sample
+shrinkage on that read's `win_pct` are done** — see
 `docs/rookie-draft-big-board.md`'s "Roster needs" and "Team timeline /
 power-timeline read" sections for the full methodology.
-
-1. [ ] **RT-1: Add small-sample shrinkage to the power/timeline read's `win_pct`**
-   (assistant valuation review, 2026-08-01) — the zero-games case is
-   handled well (neutral `0.5`, correctly contributes zero variance
-   pre-season — proven by its own test), but from week 1 onward `win_pct`
-   gets full, undiscounted weight off as few as one game — a 1-0 or 0-1
-   start is close to a coin flip, yet swings the z-score as hard as it
-   ever will at week 10. Consider shrinking `win_pct` toward `0.5` (or
-   toward the vor-implied expectation) by something like
-   `games_played / (games_played + k)`, so early results contribute
-   proportionally to how much they've actually resolved — and/or using
-   `points_for`/point differential (likely already in Sleeper's roster
-   `settings`) as a steadier alternative to binary win/loss, standard
-   practice in sabermetric-style team-strength reads for the same
-   small-sample reason. Deferred past the current PR: it's a refinement
-   to an emergent-variance mechanic that doesn't matter until real games
-   have been played, and reweighting the formula's actual math deserves
-   its own review rather than folding into a display-clarity PR.
 
 **Trade targets & sells v1 (`sellable_players()`, `pick_trade_values()`) is
 done** — see `docs/rookie-draft-big-board.md`'s "Trade targets & sells"
@@ -230,6 +223,19 @@ Deliberately out of v1, not forgotten:
    free-agent evaluator (checking one waiver target) — not a general
    always-on feed, and not a replacement for the stats-based ranking
    anywhere in the pipeline.
+6. [ ] **RT-7: Use `points_for`/point differential as a steadier alternative
+   to win/loss in the power/timeline read** (deferred from the small-sample
+   shrinkage work above, 2026-08-02) — shrinkage toward `0.5` (done, see
+   above) addresses the small-sample variance problem directly, but binary
+   win/loss is still a noisier signal than point differential even at a
+   full sample size, standard practice in sabermetric-style team-strength
+   reads. Not picked up alongside the shrinkage fix because it's a bigger
+   scope: `sleeper_api.py` has never pulled or verified Sleeper's
+   points-for field (name, decimal-split format — Sleeper's own API splits
+   `fpts` into a whole-number and a `_decimal` field for other objects, so
+   the roster `settings` shape needs checking directly, not assumed), and
+   it needs a real design decision on how to blend/weight it against (or
+   replace) `win_pct` rather than just swapping the input.
 
 ## Valuation & data accuracy
 
@@ -316,6 +322,17 @@ methodology.
    outcomes than combine testing alone, and would slot into the same
    `_derive_rookie_buckets`/multiplier machinery as additional features
    rather than requiring a new pipeline.
+
+5. [ ] **VA-5: `win_pct` doesn't credit a tie as half a win** (assistant
+   valuation review, 2026-08-02) — `team_power_timeline_scores()` computes
+   `wins / games_played` where `games_played = wins + losses + ties`; a
+   tie counts toward the denominator but contributes nothing to the
+   numerator, so it's scored identically to a loss instead of the
+   standard 0.5-win credit. Pre-existing (not introduced by RT-1's
+   shrinkage work, which wraps this same formula unchanged), and Sleeper
+   ties are rare enough in a points-based scoring format that this hasn't
+   mattered in practice — low priority, but a real accuracy gap if it
+   ever comes up. Fix: give `wins + 0.5 * ties` credit in the numerator.
 
 ## Code quality, tests & UX polish
 
