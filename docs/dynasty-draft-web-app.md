@@ -105,6 +105,23 @@ adj. value — one reachable place for the terms this section and Roster
 needs both use, rather than only inside Roster needs' own "How this
 works" expander.
 
+### Sellable veterans / Draft pick trade values
+
+Two new sections in the Roster tab, added for trade evaluation (v1 - see
+`docs/rookie-draft-big-board.md` and `.claude/PROJECT_PLAN.md` for what's
+deliberately out of scope).
+
+"Sellable veterans" sits right after Roster value analysis, for whichever
+team the selector above has picked — `analysis["sellable_players"]`, same
+on-demand-per-team pattern as the rest of the tab (unlike Team timeline
+above, this doesn't need every team's row together). "Draft pick trade
+values" sits at the bottom of the tab instead, explicitly *not* filtered
+to the selected team - a pick's owner is already a column in
+`state["pick_trade_values"]`, computed once league-wide in `gather_state`
+the same way `team_power_timeline` is, and a caption says so directly so
+it doesn't read as a bug that changing the team selector above doesn't
+change this table.
+
 ### Player projection lookup
 
 Each round's "Backup options" table only ever showed the top

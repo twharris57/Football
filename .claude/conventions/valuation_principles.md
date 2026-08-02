@@ -52,6 +52,73 @@ position this league's scarcity premium depends on getting right.
   live simplification in a few places (`roster_weekly_gaps`,
   `position_replacement_levels`), not a pattern to extend on purpose.
 
+## Dedicated-slot-only simplifications are fine for signals, not for action recommendations
+
+`_position_starter_demand()` deliberately doesn't count `FLEX` demand for
+RB/WR/TE (unlike `SUPER_FLEX` for QB, above) — FLEX splits demand across
+three positions with no similarly clean allocation, so this was accepted
+as a known, documented gap. That was a reasonable call *while* every
+consumer of it was an informational signal (`vor`, `weak`) that a human
+reads and interprets themselves.
+
+It stopped being harmless the moment a feature started **acting** on it
+directly: `sellable_players()` (2026-08-01 valuation review) uses the same
+dedicated-slot-only `starter_count` to decide which players are "starters"
+(protected) versus "depth" (surfaced as sellable) — and a position's real
+FLEX starter can land on the wrong side of that line, since neither that
+count nor `gap_delta`'s weekly-gap check (same dedicated-slot-only gap)
+catches it. The result isn't a slightly-off number, it's a concrete wrong
+recommendation someone could act on.
+
+**The rule**: before reusing a dedicated-slot-only signal (or any other
+already-accepted simplification) as the basis for something that
+recommends an action — sell, drop, add, start/sit — re-examine whether the
+simplification's error rate is still acceptable for that specific use.
+"Fine for a VOR number a human eyeballs" and "fine for a list titled
+'sellable'" are different bars. When in doubt, name the gap explicitly in
+the new feature's own docstring rather than assuming the original
+docstring's caveat still covers it.
+
+## Treat external IDs as opaque keys, not ranges
+
+Sleeper's `roster_id`, `player_id`/`sleeper_id`, and similar identifiers
+are keys to look up, never a range or order to iterate — this project
+already gets this right almost everywhere (`rosters_by_id`,
+`roster_capacity`, `fc_by_sleeper_id`, all keyed lookups over the real
+`rosters`/`players` data, never a synthesized range). `_future_pick_owners`
+(2026-08-01 valuation review) was the first exception:
+`for roster_id in range(1, num_teams + 1)` assumes `roster_id` is exactly
+`1..num_teams`, contiguous, no gaps — true for this league by Sleeper's
+normal convention, but never verified, and nothing else in the codebase
+relies on that convention holding.
+
+**The rule**: if a computation needs "every team," iterate the real
+`rosters` list (or another real collection already pulled from the API)
+and read `roster_id` off of it — don't synthesize an integer range and
+assume it lines up. If there's ever a genuine reason to assume an ID space
+is contiguous, verify it against live data first and document the
+assumption in `docs/rookie-draft-big-board.md`'s "Static assumptions"
+table, the same as any other unverified constant.
+
+## Silent data-degradation must surface as a warning, not just a comment
+
+`gather_state`'s `data_warnings` list exists specifically so a fallback —
+byes, handcuffs, and the scoring multipliers all use it — is visible to
+the user instead of being indistinguishable from "there's nothing to
+report." `pick_trade_values()` (2026-08-01 valuation review) has the same
+kind of silent-fallback risk (a FantasyCalc pick-naming convention change
+would leave every `value` blank, no exception raised) and its docstring
+even says so — but nothing actually populates `data_warnings` when it
+happens, unlike every other fallback path in this file.
+
+**The rule**: a well-written comment describing a silent-degradation risk
+is not a substitute for wiring it into `data_warnings`. If a computation
+can quietly produce an empty/degraded result on a join, name-match, or
+external-format mismatch, add the cheap check (`if result.isna().all(): ...`
+or equivalent) and append to `data_warnings` at the point the degradation
+is detected — the same pattern already established for every other
+data-dependent enrichment step in `gather_state`, not a new one to invent.
+
 ## Prefer real scoring rules pulled live over hardcoding — document what you can't
 
 When a computed value depends on this league's scoring format, prefer

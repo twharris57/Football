@@ -6,6 +6,47 @@ important first). When a task is completed, write it up as a design doc in
 Durable background (league identity, rebuild strategy, valuation methodology)
 lives in `CLAUDE.md` and `docs/`, not here — this file is only what's left to do.
 
+## Current branch — fix before merge
+
+Findings from reviewing the *active* branch's own not-yet-merged work —
+kept separate from the thematic backlog below so "fix this before the PR
+merges" is never mixed in with "someday" work. Ephemeral by design: cleared
+out when the branch merges, not carried forward as history (the merged PR's
+description is the historical record). A finding that gets explicitly
+deferred rather than fixed moves down into the appropriate thematic section
+below as a normal backlog item, same as any other deferred work. Empty
+when no branch is currently mid-review.
+
+**`feature/trade-targets-and-sells` (PR #18), reviewed 2026-08-01:**
+
+1. [x] **`sellable_players()` can flag a real FLEX starter as "surplus
+   depth"** — fixed 2026-08-01: within `sellable_players()`, the
+   protected (non-sellable) range for each `FLEX_ELIGIBLE_POSITIONS`
+   position now adds the roster's `FLEX` slot count on top of
+   `_position_starter_demand()`'s dedicated-slot count, reserving the
+   whole FLEX count against every eligible position rather than guessing
+   which one actually fills it. Scoped to this feature's own depth
+   calculation only — `positional_strength_summary`'s `vor` and
+   `gap_delta`'s weekly-gap check still don't model FLEX, same
+   already-documented simplification as before, not expanded here.
+   Verified against live data (this league has 3 FLEX slots): several
+   real FLEX-range starters (e.g. Matthew Golden, Tyler Allgeier) that
+   were incorrectly flagged before the fix are correctly excluded after.
+   Covered by `test_reserves_flex_range_from_depth_when_league_has_a_flex_slot`.
+2. [x] **Verify `_future_pick_owners`'s `roster_id` range assumption
+   against live data** — confirmed 2026-08-01: `sorted(r["roster_id"] for
+   r in rosters) == list(range(1, num_teams + 1))` holds for this league.
+   Noted in `docs/rookie-draft-big-board.md`'s "Static assumptions" table
+   (what breaks if it's ever wrong, and the fix if so).
+3. [x] **`pick_trade_values` should raise a `data_warnings` entry on an
+   all-empty `value` column** — fixed 2026-08-01: `gather_state` now
+   appends a `data_warnings` entry when `pick_values["value"].isna().all()`,
+   matching every other silent-fallback path (byes, handcuffs, scoring
+   multipliers). Covered by
+   `test_unmatched_pick_names_leave_value_empty_not_an_error`, which
+   proves the precondition the check relies on (an unmatched pick name
+   degrades to `NaN`, doesn't raise).
+
 ## Now — blocking
 
 1. [ ] **Synology NAS deploy + live-draft verification** — blocks calling the
@@ -79,8 +120,8 @@ and a weak/old/declining team landing on the same blended number, despite
 opposite trade postures. Rather than a rewrite, `team_power_timeline_scores()`
 now also exposes `quality_score` (`aggregate_vor` + `win_pct`, z-scored
 and averaged) and `timeline_score` (`weighted_age`, z-scored) as separate
-columns alongside the existing blended `power_score`/`phase` — so item 2
-below (Trade targets & sells) can reason about roster strength and timeline
+columns alongside the existing blended `power_score`/`phase` — so Trade
+targets & sells (below) can reason about roster strength and timeline
 direction independently instead of re-deriving the same z-scores. Covered
 by `test_quality_and_timeline_axes_can_disagree_within_one_team`, which
 constructs exactly the divergent case (young/strong/winning vs.
@@ -103,79 +144,61 @@ old/weak/losing) the review flagged.
    to an emergent-variance mechanic that doesn't matter until real games
    have been played, and reweighting the formula's actual math deserves
    its own review rather than folding into a display-clarity PR.
-2. [ ] **Trade targets & sells** — given the rebuild strategy, flag which
-   of the user's veterans are sellable for picks, and which other teams'
-   picks/young players might be realistically available. Now that the
-   power/timeline read above is done, "what's realistically available"
-   from another team can use that real rebuild-vs-contend read on them —
-   reason about it via the separate `quality_score`/`timeline_score` axes
-   (done above), not the blended `power_score`/`phase`, which conflates
-   "how good" with "which way pointed" (see the done-note above). Should
-   extend to
-   **trade-block monitoring** (user-flagged 2026-08-01): watch for players
-   another team is actively shopping and score them against the current
-   roster the same way the free-agent evaluator's in-season pickup
-   monitoring does (item 3) — season-average marginal starting-lineup
-   value, not raw trade value — flagging only when a specific player would
-   be a genuine value-add, not every trade rumor. Needs a real signal for
-   "this player is on the block" first (Sleeper doesn't expose trade
-   discussions directly, so this likely means the user manually flagging a
-   name to check rather than a real feed, at least for v1). A
-   manually-flagged name here is also a natural fit for item 6's
-   contextual research check, once that exists — pulling real context
-   (usage change, injury detail, actual trade buzz) beyond what
-   Sleeper/FantasyCalc carry, for that one specific player.
+**Trade targets & sells v1 done (2026-08-01)** — see
+`docs/rookie-draft-big-board.md` for the full methodology.
+`sellable_players()` flags a roster's own bench depth at positions with
+real surplus (`positional_strength_summary`'s `vor > 0`, not the starters
+generating that vor - selling an actual starter was deliberately scoped
+out, see the doc) that wouldn't open a weekly-depth hole if dropped
+(`gap_delta`), composing existing signals per the "reuse existing
+signals" note rather than a new threshold. `pick_trade_values()` matches
+this season's remaining picks to FantasyCalc's exact per-slot value via
+real ownership (`compute_pick_ownership`), and next season's picks to a
+flat, non-tiered round value applied the same to every team - both use
+FantasyCalc's raw `value`, not the per-player real-scoring `adj_value`
+correction, per the "picks don't need the real-scoring correction" note.
+Both apply through the Roster tab's existing team selector (sellable
+players) or league-wide (pick values) — no new UI surface. Verified
+directly against live data.
 
-   **Sellable vs. just droppable** (user-flagged 2026-08-01): the "sellable
-   veterans" side of this needs a real line between "worth trying to
-   trade" and "worth just cutting" - not the same question as the
-   existing low-value/aging drop-candidate flag in `roster_value_analysis`
-   (and `recommend_drop`/`best_position_relevant_drop`, which already
-   answer "who to drop" once a roster spot is genuinely needed). A player
-   can be too marginal to keep but still have enough real market value
-   (FantasyCalc `value`, or scarcity at a thin position elsewhere in the
-   league per `positional_strength_summary`'s `vor` signal, done above)
-   that shopping them first beats just cutting them for nothing. Where
-   exactly that line sits is worth deciding when this is actually built,
-   not guessed at now.
+Deliberately out of v1, not forgotten:
+- **Selling starters, not just depth** — the "sellable vs. just
+  droppable" line for a position's own top-value players (not bench
+  surplus) is a much bigger strategic call (trade away a good win-now
+  asset for future value, core to a rebuild) than "there's unused depth
+  here." Left for a human to judge directly against a specific offer,
+  not modeled.
+- **Draft-pick ownership beyond next season** — Sleeper's `traded_picks`
+  has no fixed "how many years out" window, only entries for picks
+  actually traded (`FUTURE_PICK_YEARS_AHEAD = 1` in `dynasty_core.py`).
+  Extending further is possible but was scoped out to avoid listing
+  picks with zero real trade activity that far out.
+- **Young non-rookie depth isn't protected the way `LOW_VALUE_YOUNG_AGE`
+  protects it elsewhere** (assistant valuation review, 2026-08-01) —
+  `sellable_players` excludes true rookies (`years_exp` falsy) but nothing
+  younger than that; a promising 2nd-year breakout at a surplus position
+  can show up as "sellable" even though `roster_value_analysis` elsewhere
+  in this same rebuild-strategy codebase explicitly treats "low-value but
+  young" as hold-not-sell, not drop-or-sell. Not necessarily wrong, given
+  this list is explicitly framed as candidates for a human to judge
+  against a specific offer, not a recommendation — but worth a deliberate
+  decision (extend the exclusion, or leave it and rely on the human)
+  rather than an unexamined inconsistency between the two features.
 
-   **Reuse existing signals for that line, don't invent a new one**
-   (assistant valuation review, 2026-07-31): a player is a better
-   sell-first candidate the more `positional_strength_summary`'s `vor` at
-   their position clears zero (real surplus, not just headcount) and the
-   less dropping them would open a `roster_weekly_gaps`/`gap_delta` hole —
-   both already computed elsewhere in the pipeline. Composing existing
-   signals here, rather than a new bespoke threshold, matches the
-   project's own lesson from merging the old Strategy tab into Draft Plan
-   (`docs/dynasty-draft-web-app.md`) after two separate ranking methods
-   turned out to disagree — see
-   `.claude/conventions/valuation_principles.md`.
-
-   **Valuing draft picks in trades** (user-flagged 2026-08-01) — confirmed
-   directly: `fantasycalc_api.get_dynasty_values()` already returns draft
-   picks (`position: "PICK"`) on the same value scale as players, in every
-   pull this project already makes — currently silently discarded
-   everywhere by the `FANTASY_POSITIONS` (QB/RB/WR/TE-only) filter, not
-   something needing a new API integration. This year's remaining picks
-   (`2026 Pick 1.01`, etc.) could get an exact value once matched to real
-   ownership via the existing `compute_pick_ownership`/`traded_picks`
-   machinery (round + owner already tracked there). Future years are only
-   ever generic buckets - `2027 1st (Early/Mid/Late)`, flattening to a
-   single `2028 1st`/`2029 1st` etc. with no tier the further out it gets -
-   since exact future draft slot isn't knowable in advance; that's a real
-   approximation to be explicit about, not a gap to try to solve exactly.
-   Needed for this item to evaluate anything beyond pure player-for-player
-   trades, which is most real dynasty trade offers.
-
-   **Picks don't need the real-scoring correction** (assistant valuation
-   review, 2026-07-31): unlike players, a pick isn't tied to any real or
-   projectable statistical production, so it should use FantasyCalc's raw
-   `value` directly — not routed through `fc_value_by_sleeper_id`'s
-   per-player `adj_value` multiplier (`player_scoring.py`), which only
-   makes sense for an entity with real or combine-projected stats. Worth a
-   comment at the call site when this is built so a future edit doesn't
-   try to force picks through that pipeline by habit.
-3. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
+1. [ ] **Trade-block monitoring** (user-flagged 2026-08-01, scoped out of
+   the v1 above) — watch for players another team is actively shopping
+   and score them against the current roster the same way the free-agent
+   evaluator's in-season pickup monitoring does (item 2) — season-average
+   marginal starting-lineup value, not raw trade value — flagging only
+   when a specific player would be a genuine value-add, not every trade
+   rumor. Needs a real signal for "this player is on the block" first
+   (Sleeper doesn't expose trade discussions directly, so this likely
+   means the user manually flagging a name to check rather than a real
+   feed, at least for v1). A manually-flagged name here is also a natural
+   fit for item 5's contextual research check, once that exists — pulling
+   real context (usage change, injury detail, actual trade buzz) beyond
+   what Sleeper/FantasyCalc carry, for that one specific player.
+2. [ ] **Free agent / roster-moves evaluator** — a tool for right-now
    decisions outside the draft: which available free agents are worth an
    add, and which current roster players are droppable, given the rebuild
    timeline. Should extend to **in-season pickup monitoring**: when a free
@@ -222,7 +245,7 @@ old/weak/losing) the review flagged.
    project's existing pattern of shipping a deliberately lightweight v1
    (e.g. `POSITION_VALUE_MULTIPLIER` before the full per-player recompute)
    over a fully general model nobody's asked for yet.
-4. [ ] **Make "need"/strategy phase-aware — a static rule today, should
+3. [ ] **Make "need"/strategy phase-aware — a static rule today, should
    evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
    now `roster_needs_summary`'s `need` flag is one fixed rule for all
    time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
@@ -233,7 +256,7 @@ old/weak/losing) the review flagged.
    about accumulating rookies (this project's whole existing purpose);
    year 2 should shift toward smart trades, continuing to find promising
    talent opportunistically — not just rookies, but free agents with a
-   sudden uptick in opportunity/fortune (this is exactly item 3's
+   sudden uptick in opportunity/fortune (this is exactly item 2's
    in-season pickup monitoring) — and dropping deadweight with limited
    future payoff (already partly modeled by `roster_value_analysis`'s
    `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
@@ -244,7 +267,7 @@ old/weak/losing) the review flagged.
    Related to but distinct from the positional-value work above — that's
    about *which position* is weak; this is about *what kind of move* the
    team should even be looking for at this point in the rebuild.
-5. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
+4. [ ] **League tab — all-teams summary view** (user-flagged 2026-07-29,
    longer term). A compact row per team (total roster value, biggest need,
    capacity) to scan the whole league at a glance before drilling into one
    team, complementing the Roster tab's team selector (added
@@ -257,7 +280,7 @@ old/weak/losing) the review flagged.
    2026-08-01) — this surfaces raw stats per team, not a rebuild-vs-contend
    classification, but both answer "what does this team look like" at a
    glance.
-6. [ ] **Contextual research check for news/hype beyond Sleeper's data**
+5. [ ] **Contextual research check for news/hype beyond Sleeper's data**
    (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
    unconfirmed) — a rare, explicitly user-triggered lookup (not a
    background job) for one *specific* named player: pull recent context an
@@ -271,8 +294,8 @@ old/weak/losing) the review flagged.
    FantasyCalc's own market already has. Needs investigating what's
    actually available and appropriate here before committing to an
    implementation — treat the specific tool name as unverified, just the
-   user's working label for the idea. Natural entry points: item 2's
-   trade-block monitoring (checking one flagged name) and item 3's
+   user's working label for the idea. Natural entry points: item 1's
+   trade-block monitoring (checking one flagged name) and item 2's
    free-agent evaluator (checking one waiver target) — not a general
    always-on feed, and not a replacement for the stats-based ranking
    anywhere in the pipeline.

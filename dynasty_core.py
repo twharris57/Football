@@ -136,6 +136,110 @@ def compute_pick_ownership(draft: dict, traded_picks: list[dict], season: str) -
     return picks
 
 
+# FantasyCalc's ordinal round names (see pick_trade_values) only ever go to
+# 4th - this league's actual round count, confirmed via its own pick-value
+# buckets. A round beyond that falls back to a plain f"{n}th", a real but
+# untested edge case (this league has never had a 5+ round rookie draft).
+ROUND_ORDINAL = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
+
+# How many seasons past the current one to project pick ownership/value for.
+# Sleeper's traded_picks endpoint has no fixed "how many years out" window -
+# it only ever contains entries for picks that have actually been traded, so
+# there's no real signal for "these are all the picks that will ever exist."
+# Capped at 1 (next season only): further out, `_future_pick_owners`'s
+# real-unless-traded assumption is on shakier ground the longer nothing's
+# actually been traded there, and it would list picks with zero real trade
+# activity - clutter, not real decision value. A deliberate scope limit, not
+# a data gap to try to solve exactly.
+FUTURE_PICK_YEARS_AHEAD = 1
+
+
+def _future_pick_owners(
+    num_teams: int, num_rounds: int, traded_picks: list[dict], season: str
+) -> list[tuple[int, int, int]]:
+    """Every (round, original_roster_id, current_owner_roster_id) for a season with no real draft object yet.
+
+    Unlike `compute_pick_ownership`, there's no Sleeper draft/slot_to_roster
+    to pull a real slot order from for a season that hasn't happened - every
+    roster owns its own pick each round unless `traded_picks` says otherwise.
+    """
+    traded_owner = {(t["round"], t["roster_id"]): t["owner_id"] for t in traded_picks if t["season"] == season}
+    return [
+        (round_num, roster_id, traded_owner.get((round_num, roster_id), roster_id))
+        for round_num in range(1, num_rounds + 1)
+        for roster_id in range(1, num_teams + 1)
+    ]
+
+
+def pick_trade_values(
+    ownership: list[DraftPickSlot],
+    current_pick_no: int,
+    traded_picks: list[dict],
+    num_teams: int,
+    num_rounds: int,
+    season: str,
+    fc_values: list[dict],
+    team_names: dict[int, str],
+) -> pd.DataFrame:
+    """Every remaining/near-future rookie-draft pick, valued and matched to its real current owner.
+
+    Uses FantasyCalc's raw pick `value` directly, not routed through
+    `fc_value_by_sleeper_id`'s per-player real-scoring `adj_value` - a pick
+    has no real or projectable statistical production for that correction
+    to apply to (see valuation_principles.md). Matched by FantasyCalc's own
+    pick-name string (e.g. "2026 Pick 1.01", "2027 1st") since that's the
+    only stable join key FantasyCalc exposes for picks - brittle to a
+    naming-convention change on their end, and a mismatch there wouldn't
+    raise, just leave `value` empty for everything, so a season showing
+    an all-empty `value` column is worth a spot-check against FantasyCalc's
+    actual pick names.
+
+    This season's remaining picks (`overall_pick >= current_pick_no`) get
+    an exact slot value, since Sleeper's real draft object gives a real
+    slot-to-team order (`ownership`/`compute_pick_ownership`) to match
+    against FantasyCalc's per-slot pick curve. Next season's picks
+    (`FUTURE_PICK_YEARS_AHEAD`) use FantasyCalc's flat, non-tiered round
+    value applied the same way to every team - there's no real
+    projected-standings input this far out to justify guessing an
+    Early/Mid/Late tier per team, and a guess would fabricate a signal
+    rather than approximate a real one.
+    """
+    pick_value_by_name = {
+        entry["player"]["name"]: entry["value"] for entry in fc_values if entry["player"].get("position") == "PICK"
+    }
+
+    rows = []
+    for pick in ownership:
+        if pick.overall_pick < current_pick_no:
+            continue
+        slot = pick.overall_pick - (pick.round - 1) * num_teams
+        name = f"{season} Pick {pick.round}.{slot:02d}"
+        rows.append(
+            {
+                "pick": name,
+                "owner": team_names.get(pick.owner_roster_id, "Unknown"),
+                "owner_roster_id": pick.owner_roster_id,
+                "value": pick_value_by_name.get(name),
+            }
+        )
+
+    future_season = str(int(season) + FUTURE_PICK_YEARS_AHEAD)
+    for round_num, _original_roster_id, owner_roster_id in _future_pick_owners(
+        num_teams, num_rounds, traded_picks, future_season
+    ):
+        name = f"{future_season} {ROUND_ORDINAL.get(round_num, f'{round_num}th')}"
+        rows.append(
+            {
+                "pick": name,
+                "owner": team_names.get(owner_roster_id, "Unknown"),
+                "owner_roster_id": owner_roster_id,
+                "value": pick_value_by_name.get(name),
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values("value", ascending=False, na_position="last").reset_index(drop=True)
+
+
 def rostered_player_ids(rosters: list[dict]) -> set[str]:
     """Return every player_id currently on any team's roster."""
     ids: set[str] = set()
@@ -974,6 +1078,91 @@ def roster_handcuff_status(roster: dict, players: dict[str, dict], handcuffs: di
     return pd.DataFrame(rows)
 
 
+def sellable_players(
+    roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    replacement_level: dict[str, float],
+    league: dict,
+    byes: dict[str, int],
+) -> pd.DataFrame:
+    """Rostered bench depth worth shopping for trade value, not just cutting for nothing.
+
+    Composes signals already computed elsewhere rather than inventing a new
+    threshold (see valuation_principles.md's "one valuation strategy, used
+    everywhere"): a position's real surplus is its own actual starters
+    clearing replacement level (`positional_strength_summary`'s `vor > 0` -
+    not just headcount), and within a surplus position, "sellable" means the
+    roster's own depth *beyond* what's needed to start there - not the
+    starters generating that vor. Selling an actual starter is a much
+    bigger strategic call than "there's more depth here than the roster can
+    use," and was deliberately left out of this v1 (see PROJECT_PLAN.md).
+
+    Unlike `positional_strength_summary`'s `starter_value` (which only
+    counts dedicated slots - a deliberate, documented simplification for
+    that calculation, see valuation_principles.md), the *protected* range
+    excluded from "depth" here also reserves this roster's `FLEX` slots for
+    every FLEX-eligible position (`FLEX_ELIGIBLE_POSITIONS`), since a real
+    weekly FLEX starter (e.g. a team's RB3, with 2 dedicated RB slots plus
+    a FLEX) would otherwise get flagged as sellable "surplus" - a mistake
+    with real consequences (a bad real trade), not just analytical
+    imprecision, so this deliberately reserves the whole FLEX count against
+    every eligible position rather than trying to guess which position
+    actually fills it on this specific roster.
+
+    A candidate must also survive dropping them without opening a
+    weekly-depth hole (`gap_delta` against the roster with them removed) -
+    depth isn't real surplus if a bye week actually needs it. Rookies (no
+    NFL experience yet, `years_exp` falsy) are excluded - "veterans" per
+    this feature's scope, and a rookie's dynasty value is long-term upside
+    to hold, not surplus to sell off a strong position.
+
+    A candidate list for a human to evaluate a specific trade against,
+    sorted by trade value (`adj_value`) descending - not a final "sell this
+    player" recommendation.
+    """
+    roster_positions = league["roster_positions"]
+    strength = positional_strength_summary(roster, players, fc_by_sleeper_id, replacement_level, roster_positions)
+    roster_player_ids = roster.get("players") or []
+    flex_slots = roster_positions.count("FLEX")
+
+    by_position: dict[str, list[tuple[str, dict, float]]] = {pos: [] for pos in FANTASY_POSITIONS}
+    for player_id, info in roster_fantasy_players(roster, players):
+        fc_entry = fc_by_sleeper_id.get(player_id)
+        adj_value = fc_entry.get("adj_value") if fc_entry else None
+        by_position[info["position"]].append((player_id, info, adj_value if adj_value is not None else 0.0))
+
+    rows = []
+    for position, entries in by_position.items():
+        if strength.loc[position, "vor"] <= 0:
+            continue
+        starter_count = _position_starter_demand(position, roster_positions)
+        if position in FLEX_ELIGIBLE_POSITIONS:
+            starter_count += flex_slots
+        depth = sorted(entries, key=lambda e: e[2], reverse=True)[starter_count:]
+        for player_id, info, _sort_value in depth:
+            if not info.get("years_exp"):
+                continue
+            after_roster = {**roster, "players": [pid for pid in roster_player_ids if pid != player_id]}
+            if not gap_delta(roster, after_roster, players, byes, league).empty:
+                continue
+            fc_entry = fc_by_sleeper_id.get(player_id)
+            rows.append(
+                {
+                    "name": info.get("full_name"),
+                    "pos": position,
+                    "age": info.get("age"),
+                    "value": fc_entry.get("value") if fc_entry else None,
+                    "adj_value": fc_entry.get("adj_value") if fc_entry else None,
+                    "position_vor": strength.loc[position, "vor"],
+                }
+            )
+    sellable = pd.DataFrame(rows)
+    if sellable.empty:
+        return sellable
+    return sellable.sort_values("adj_value", ascending=False, na_position="last").reset_index(drop=True)
+
+
 def team_roster_analysis(
     roster: dict,
     players: dict[str, dict],
@@ -1027,6 +1216,7 @@ def team_roster_analysis(
         "need_positions": need_positions(roster_needs),
         "roster_capacity": roster_capacity(roster, league),
         "roster_value": roster_value_analysis(roster, players, fc_by_sleeper_id, byes),
+        "sellable_players": sellable_players(roster, players, fc_by_sleeper_id, replacement_level, league, byes),
         "roster_bye_conflicts": roster_bye_conflicts(roster, players, fc_by_sleeper_id, byes, league),
         "roster_weekly_gaps": roster_weekly_gaps(roster, players, byes, league),
         "roster_handcuffs": roster_handcuff_status(roster, players, handcuffs),
@@ -1766,6 +1956,29 @@ def gather_state(
     ownership = compute_pick_ownership(draft, traded_picks, league["season"])
     picked_player_ids = {p["player_id"] for p in draft_picks if p.get("player_id")}
     current_pick_no = len(draft_picks) + 1
+    # Reuses draft["settings"]["teams"]/["rounds"], not league["settings"]["num_teams"],
+    # to decode ownership's overall_pick -> slot the same way compute_pick_ownership
+    # encoded it - the two should always agree, but this keeps the encode/decode
+    # symmetric even if they ever didn't.
+    pick_values = pick_trade_values(
+        ownership,
+        current_pick_no,
+        traded_picks,
+        draft["settings"]["teams"],
+        draft["settings"]["rounds"],
+        league["season"],
+        fc_values,
+        team_names,
+    )
+    # pick_trade_values matches picks by FantasyCalc's own name string (its
+    # only stable join key for picks) - a naming-convention change on their
+    # end wouldn't raise, just leave every value blank, silently
+    # indistinguishable from "there's nothing to report" without this.
+    if not pick_values.empty and pick_values["value"].isna().all():
+        data_warnings.append(
+            "Draft pick trade values unavailable this refresh - couldn't match any pick to "
+            "FantasyCalc's current pick names, which may mean their naming convention changed."
+        )
 
     unavailable = rostered_player_ids(rosters) | picked_player_ids
     rookies = rookie_pool(players, league["season"])
@@ -1827,6 +2040,11 @@ def gather_state(
         # a UI just looks up the selected team's row rather than
         # recomputing on demand like team_roster_analysis.
         "team_power_timeline": power_timeline,
+        # Every remaining/near-future draft pick leaguewide, valued and
+        # owner-tagged (see pick_trade_values) - league-wide like
+        # team_power_timeline above, not per-team, since a pick's owner is
+        # already a column rather than something a team selector filters.
+        "pick_trade_values": pick_values,
         # Every team's roster dict, keyed by roster_id - exposed so a UI can
         # run team_roster_analysis() on demand for any team, not just the
         # user's own (see the Roster tab's team selector).

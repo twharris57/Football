@@ -162,6 +162,15 @@ def print_report(state: dict[str, Any]) -> None:
     print(render_df(state["roster_value"].drop(columns="status_details", errors="ignore"), "(empty roster)"))
 
     print(
+        "\n--- Sellable veterans (candidates to shop, not a recommendation) ---\n"
+        "Your own bench depth at positions with real surplus (VOR above zero), not the starters "
+        "generating that VOR - selling an actual starter is a bigger call than 'there's more "
+        "depth here than the roster can use,' left for you to judge. Only shown if dropping the "
+        "player wouldn't open a weekly-depth hole. Rookies excluded (long-term upside to hold)."
+    )
+    print(render_df(state["sellable_players"], "(no sellable surplus at any position right now)"))
+
+    print(
         "\n--- Bye week impact (weeks with an active-roster player out; "
         "lineup_delta = starting-lineup value vs. a full-strength week) ---"
     )
@@ -186,6 +195,14 @@ def print_report(state: dict[str, Any]) -> None:
     if not state["recent_picks"].empty:
         print("\n--- Recently drafted ---")
         print(state["recent_picks"].to_string(index=False, float_format=DISPLAY_FLOAT_FORMAT))
+
+    print(
+        "\n--- Draft pick trade values (league-wide, every team) ---\n"
+        "Every remaining pick this season, exact-slot valued and matched to its real current "
+        "owner, plus next season's picks at a flat round value applied the same to every team "
+        "(no real projected standings this far out to justify guessing who picks early vs. late)."
+    )
+    print(render_df(state["pick_trade_values"].drop(columns="owner_roster_id", errors="ignore"), "(no picks to show)"))
 
     print(
         "\n--- Rookie big board (whole class - drafted players stay listed) ---\n"
