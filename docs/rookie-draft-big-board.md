@@ -380,7 +380,12 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     since Sleeper's real accrued-experience taxi rule isn't verified here.
     A candidate is only ever suggested for an open active slot or via a
     drop, never assumed to fit an open taxi slot the way a rookie safely
-    can.
+    can. `taxi_eligible=False` still credits `taxi_filled` (the roster's
+    actual current taxi headcount) toward the ceiling rather than zeroing
+    taxi capacity outright — an existing taxi stash (the norm for this
+    league's rebuild strategy) is already-spent capacity, not "no room,"
+    the distinction a 2026-08-02 review found this simplification had
+    collapsed.
   - **No FAAB bid-sizing** — remaining budget
     (`league["settings"]["waiver_budget"] - roster["settings"].
     waiver_budget_used`, both already pulled, no new fetch) is shown for
@@ -406,12 +411,16 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   - Evaluating "the other side" of the identical trade is the same
     function called again with the partner's own roster and the two asset
     lists swapped — not a second implementation.
-  - `taxi_eligible=False` for the capacity check, same reasoning as the
-    free-agent board: a traded-for player is essentially always an
-    established veteran, not assumed to fit an open taxi slot. Flags
-    (doesn't resolve) an over-capacity result — which extra player to cut
-    if a multi-for-fewer trade overflows capacity is a separate decision
-    the trade itself doesn't specify.
+  - `taxi_eligible=False` for the capacity check, same reasoning and same
+    `taxi_filled` crediting as the free-agent board above — an incoming
+    veteran can't claim an open taxi slot, but an existing taxi stash
+    still counts as spent capacity rather than reading as already over
+    capacity before the trade changes anything. `reserve_filled`/
+    `taxi_filled` are computed *after* removing any outgoing player who
+    was themselves on IR/taxi, since trading them away genuinely frees
+    that slot. Flags (doesn't resolve) an over-capacity result — which
+    extra player to cut if a multi-for-fewer trade overflows capacity is
+    a separate decision the trade itself doesn't specify.
   - **3-way trades aren't supported** — rare enough in practice and
     disproportionately more complex to model correctly (which two sides of
     a 3-way actually exchange which assets isn't a simple before/after

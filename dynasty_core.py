@@ -684,7 +684,9 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
     }
 
 
-def roster_total_capacity(league: dict, reserve_filled: int = 0, taxi_eligible: bool = True) -> int:
+def roster_total_capacity(
+    league: dict, reserve_filled: int = 0, taxi_eligible: bool = True, taxi_filled: int = 0
+) -> int:
     """Return the combined active-roster + taxi-squad + occupied-reserve slot count.
 
     Used to decide whether adding a player genuinely requires a drop, for
@@ -695,14 +697,23 @@ def roster_total_capacity(league: dict, reserve_filled: int = 0, taxi_eligible: 
     full `reserve_slots` setting) accounts only for *existing* IR occupants:
     a newly-drafted rookie can never land on reserve (that requires a real
     injury designation), so an empty IR slot must not read as room for one.
-    `taxi_eligible` gates whether `taxi_slots` counts toward the ceiling at
-    all — `True` (default) for rookies, always taxi-eligible in this draft;
-    `False` for `free_agent_board`'s candidates, since Sleeper's real
-    accrued-experience taxi rule isn't modeled here (see
-    `.claude/PROJECT_PLAN.md`) and most veteran free agents wouldn't
-    actually qualify.
+
+    `taxi_eligible` gates whether a *new* candidate could occupy an *open*
+    taxi slot — `True` (default) for rookies, always taxi-eligible in this
+    draft; `False` for `free_agent_board`/`evaluate_trade`'s candidates,
+    since Sleeper's real accrued-experience taxi rule isn't modeled here
+    (see `.claude/PROJECT_PLAN.md`'s `RT-8`) and most veteran free agents
+    or trade targets wouldn't actually qualify. When `taxi_eligible=False`,
+    the ceiling still credits `taxi_filled` (the roster's actual current
+    taxi headcount, same shape as `reserve_filled`) rather than dropping
+    taxi capacity to zero outright — existing taxi occupants are already
+    counted in the player-id list this ceiling is compared against
+    (`lineup_breakdown`: "Taxi and IR/reserve players are in
+    `roster["players"]` alongside the real bench"), so zeroing taxi
+    capacity entirely would make a normal existing taxi stash look like it
+    was already over capacity before anything changed.
     """
-    taxi_slots = league["settings"].get("taxi_slots", 0) if taxi_eligible else 0
+    taxi_slots = league["settings"].get("taxi_slots", 0) if taxi_eligible else taxi_filled
     return len(league["roster_positions"]) + taxi_slots + reserve_filled
 
 
@@ -1426,6 +1437,7 @@ def rank_by_marginal_value(
     ineligible_ids: frozenset[str] = frozenset(),
     reserve_filled: int = 0,
     taxi_eligible: bool = True,
+    taxi_filled: int = 0,
 ) -> list[dict]:
     """Rank candidates by season-average marginal starting-lineup value, not raw trade value.
 
@@ -1436,17 +1448,18 @@ def rank_by_marginal_value(
     players (e.g. picked in an earlier round of the same multi-round plan)
     from being recommended for drop; `ineligible_ids` (current taxi/IR
     players) are never assignable to a starting slot in the simulation.
-    `taxi_eligible` passes straight through to `roster_total_capacity` —
-    `True` (default) for the rookie draft plan, `False` for
-    `free_agent_board`'s veteran candidates. Returns up to `top_n` entries
-    (player_id, marginal_value, drop), sorted best first — the first is the
-    recommended pick, the rest are backup alternates. Full rationale in
-    docs/rookie-draft-big-board.md's "Ranking" section.
+    `taxi_eligible`/`taxi_filled` pass straight through to
+    `roster_total_capacity` — `taxi_eligible=True` (default) for the rookie
+    draft plan, `False` (with `taxi_filled` set to the roster's actual taxi
+    headcount) for `free_agent_board`'s veteran candidates. Returns up to
+    `top_n` entries (player_id, marginal_value, drop), sorted best first —
+    the first is the recommended pick, the rest are backup alternates. Full
+    rationale in docs/rookie-draft-big-board.md's "Ranking" section.
     """
     if not candidate_ids:
         return []
 
-    total_capacity = roster_total_capacity(league, reserve_filled, taxi_eligible)
+    total_capacity = roster_total_capacity(league, reserve_filled, taxi_eligible, taxi_filled)
     baseline = season_average_starter_value(hypothetical_ids, players, fc_by_sleeper_id, byes, league, ineligible_ids)
 
     results = []
@@ -1488,10 +1501,16 @@ def free_agent_board(
     isn't modeled here, so a candidate is only ever added to an open active
     roster slot or via a drop, never assumed to fit an open taxi slot the
     way a rookie safely can - a documented gap (`.claude/PROJECT_PLAN.md`),
-    not a silent one. `pool` is typically `free_agent_pool()`'s output;
-    accepting it as a plain parameter (rather than recomputing it here) lets
-    `gather_state` compute it once per refresh, not once per team looked up
-    through the Roster tab's team selector.
+    not a silent one. Also passes `taxi_filled` (this roster's actual current
+    taxi headcount) so an existing taxi stash - the norm for a rebuilding
+    roster in this league - isn't misread as already over capacity before
+    any candidate is even considered; only a *new* candidate is barred from
+    an open taxi slot, existing occupants still count toward the ceiling
+    the same way occupied reserve slots already do. `pool` is typically
+    `free_agent_pool()`'s output; accepting it as a plain parameter (rather
+    than recomputing it here) lets `gather_state` compute it once per
+    refresh, not once per team looked up through the Roster tab's team
+    selector.
 
     Evaluates every candidate in `pool` (candidates × 18 `assign_starters`
     calls, no per-round multiplication like the draft plan's ~20,000-call
@@ -1501,6 +1520,7 @@ def free_agent_board(
     """
     ineligible_ids = frozenset(roster.get("taxi") or []) | frozenset(roster.get("reserve") or [])
     reserve_filled = len(roster.get("reserve") or [])
+    taxi_filled = len(roster.get("taxi") or [])
     ranked = rank_by_marginal_value(
         list(pool.keys()),
         list(roster.get("players") or []),
@@ -1512,6 +1532,7 @@ def free_agent_board(
         ineligible_ids=ineligible_ids,
         reserve_filled=reserve_filled,
         taxi_eligible=False,
+        taxi_filled=taxi_filled,
     )
 
     rows = []
@@ -1566,10 +1587,17 @@ def evaluate_trade(
     `over_capacity` uses `taxi_eligible=False` for the same reason
     `free_agent_board` does: a traded-for player is essentially always an
     established veteran, never assumed to fit an open taxi slot the way a
-    rookie safely can. Informational only - v1 does not auto-suggest an
-    additional drop beyond what the trade itself specifies; which extra
-    player to cut if a multi-for-fewer trade overflows capacity is a
-    separate decision the trade doesn't specify.
+    rookie safely can. Also passes `taxi_filled` (this roster's *post-trade*
+    taxi headcount) rather than zeroing taxi capacity outright, same
+    reasoning as `free_agent_board` - an existing taxi stash isn't already
+    "over capacity" on its own. `reserve_filled`/`taxi_filled` are computed
+    *after* removing any outgoing players who happen to currently be on
+    IR/reserve or taxi - trading one of them away genuinely frees that
+    slot, so the pre-trade headcount would overstate post-trade capacity
+    usage by one for each such player. Informational only - v1 does not
+    auto-suggest an additional drop beyond what the trade itself specifies;
+    which extra player to cut if a multi-for-fewer trade overflows capacity
+    is a separate decision the trade doesn't specify.
     """
     current_ids = list(roster.get("players") or [])
     outgoing_set = set(outgoing_player_ids)
@@ -1589,8 +1617,9 @@ def evaluate_trade(
     outgoing_value = _adj_value_sum(outgoing_player_ids) + outgoing_pick_value
     incoming_value = _adj_value_sum(incoming_player_ids) + incoming_pick_value
 
-    reserve_filled = len(roster.get("reserve") or [])
-    capacity = roster_total_capacity(league, reserve_filled, taxi_eligible=False)
+    reserve_filled = len((frozenset(roster.get("reserve") or [])) - outgoing_set)
+    taxi_filled = len((frozenset(roster.get("taxi") or [])) - outgoing_set)
+    capacity = roster_total_capacity(league, reserve_filled, taxi_eligible=False, taxi_filled=taxi_filled)
 
     return {
         "lineup_delta": after_value - before_value,

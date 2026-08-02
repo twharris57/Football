@@ -896,6 +896,42 @@ class TestCapacityAwareDrop:
         )
         assert ranked_default[0]["drop"] is None
 
+    def test_taxi_filled_credits_an_existing_taxi_occupant_as_room_already_spent(self):
+        # SIMPLE_LEAGUE: 7 active + 2 taxi. Roster already has 6 "regular"
+        # players plus 1 existing taxi stash (7 total) - a normal state for
+        # this league's rebuild strategy, not an edge case. +1 candidate = 8.
+        # Without crediting the existing taxi occupant via taxi_filled,
+        # taxi_eligible=False's capacity (7, active-only) would read this as
+        # already over before the candidate is even considered - the exact
+        # bug found reviewing the trade evaluator. With taxi_filled=1
+        # correctly credited, capacity is 8 (7 active + 1 already-spent taxi
+        # slot) and no drop should be forced.
+        players = {f"p{i}": make_player("WR") for i in range(6)}
+        players["taxi_stash"] = make_player("WR", full_name="Taxi Stash")
+        players["new_fa"] = make_player("WR")
+        fc_values = (
+            [fc_entry(f"p{i}", 100 + i) for i in range(6)]
+            + [fc_entry("taxi_stash", 50), fc_entry("new_fa", 500)]
+        )
+        fc_by_id = dc.fc_value_by_sleeper_id(fc_values)
+        hypothetical_ids = [f"p{i}" for i in range(6)] + ["taxi_stash"]
+        ineligible_ids = frozenset({"taxi_stash"})
+
+        ranked = dc.rank_by_marginal_value(
+            candidate_ids=["new_fa"],
+            hypothetical_ids=hypothetical_ids,
+            players=players,
+            fc_by_sleeper_id=fc_by_id,
+            byes={},
+            league=SIMPLE_LEAGUE,
+            top_n=1,
+            ineligible_ids=ineligible_ids,
+            taxi_eligible=False,
+            taxi_filled=1,
+        )
+
+        assert ranked[0]["drop"] is None
+
 
 class TestFreeAgentBoard:
     """free_agent_board should rank available players by marginal value against a roster,
@@ -931,6 +967,29 @@ class TestFreeAgentBoard:
         board = dc.free_agent_board(pool, roster, players, fc_by_id, {}, league)
 
         assert board.iloc[0]["drop_name"] == "Low Value WR"
+
+    def test_existing_taxi_occupant_does_not_force_an_unnecessary_drop(self):
+        # A roster with one active starter and one existing taxi stash - the
+        # normal state for this league's rebuild strategy, not an edge case.
+        # Bug found reviewing the trade evaluator: taxi_eligible=False used
+        # to zero taxi capacity entirely, so the existing taxi occupant
+        # alone made the roster read as already over capacity, forcing a
+        # drop on every single candidate regardless of real open bench room.
+        league = {"roster_positions": ["WR", "BN", "BN"], "settings": {"taxi_slots": 2}}
+        roster = {"players": ["starter_wr", "taxi_stash"], "taxi": ["taxi_stash"], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "taxi_stash": make_player("WR", full_name="Taxi Stash"),
+            "great_fa": make_player("WR", full_name="Great Free Agent"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 100), fc_entry("taxi_stash", 50), fc_entry("great_fa", 900)]
+        )
+        pool = {"great_fa": players["great_fa"]}
+
+        board = dc.free_agent_board(pool, roster, players, fc_by_id, {}, league)
+
+        assert board.iloc[0]["drop_name"] is None
 
 
 class TestEvaluateTrade:
@@ -1003,6 +1062,63 @@ class TestEvaluateTrade:
         assert no_picks["asset_value_delta"] == pytest.approx(0)
         assert with_picks["asset_value_delta"] == pytest.approx(200 - 50)
         assert with_picks["lineup_delta"] == pytest.approx(no_picks["lineup_delta"])
+
+    def test_existing_taxi_occupant_does_not_cause_a_false_over_capacity(self):
+        # A roster with one active starter and one existing taxi stash -
+        # normal for this league's rebuild strategy. Bug found reviewing
+        # this feature: taxi_eligible=False used to zero taxi capacity
+        # entirely, so the existing taxi occupant alone made a plain 1-for-1
+        # swap (no net roster-size change) read as already over capacity.
+        league = {"roster_positions": ["WR", "BN", "BN"], "settings": {"taxi_slots": 2}}
+        roster = {"players": ["starter_wr", "taxi_stash"], "taxi": ["taxi_stash"], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "taxi_stash": make_player("WR", full_name="Taxi Stash"),
+            "incoming_wr": make_player("WR", full_name="Incoming WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 100), fc_entry("taxi_stash", 50), fc_entry("incoming_wr", 900)]
+        )
+
+        result = dc.evaluate_trade(roster, ["starter_wr"], ["incoming_wr"], players, fc_by_id, {}, league)
+
+        assert not result["over_capacity"]
+
+    def test_trading_away_a_reserve_player_frees_that_slot_post_trade(self):
+        # reserve_filled/taxi_filled must reflect the roster AFTER the trade,
+        # not before - trading away a player currently on IR genuinely frees
+        # that slot, so it must not still count as spoken-for capacity.
+        league = {"roster_positions": ["WR"], "settings": {"taxi_slots": 0}}
+        roster = {
+            "players": ["active_wr", "ir_wr"],
+            "taxi": [],
+            "reserve": ["ir_wr"],
+        }
+        players = {
+            "active_wr": make_player("WR", full_name="Active WR"),
+            "ir_wr": make_player("WR", full_name="IR WR"),
+            "incoming_a": make_player("WR", full_name="Incoming A"),
+            "incoming_b": make_player("WR", full_name="Incoming B"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [
+                fc_entry("active_wr", 100),
+                fc_entry("ir_wr", 50),
+                fc_entry("incoming_a", 200),
+                fc_entry("incoming_b", 200),
+            ]
+        )
+
+        # Trading away the IR player itself for 2 incoming: roster_size_after
+        # = 1 (active_wr) + 2 (incoming) = 3. Capacity = 1 active slot + 0
+        # reserve_filled (the only IR occupant is the one being traded away)
+        # = 1 - so this SHOULD read over capacity (3 > 1), but reserve_filled
+        # must be 0, not 1, since ir_wr is leaving.
+        result = dc.evaluate_trade(
+            roster, ["ir_wr"], ["incoming_a", "incoming_b"], players, fc_by_id, {}, league
+        )
+
+        assert result["capacity"] == 1
 
     def test_the_other_side_of_the_same_trade_mirrors_asset_value_delta(self):
         # Calling evaluate_trade again with the partner's own roster and the
