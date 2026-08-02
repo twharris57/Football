@@ -505,6 +505,7 @@ with roster_tab:
             state["league"],
             state["handcuffs"],
             state["replacement_level"],
+            state["available_free_agents"],
         )
 
     st.subheader("Team timeline")
@@ -643,6 +644,40 @@ with roster_tab:
             ("value", "Value"),
             ("adj_value", "Adj. Value"),
             ("position_vor", "Position VOR"),
+        ),
+    )
+
+    st.subheader("Free agents")
+    with st.expander("How this works"):
+        st.caption(
+            "Every non-rostered player, ranked by season-average marginal starting-lineup "
+            "value against this team - the same ranking method the Draft Plan uses, not a "
+            "different valuation model. Each row's own best drop is shown alongside it, the "
+            "same cheap heuristic the ranking itself uses (not a per-candidate optimal "
+            "search).\n"
+            "- **Taxi squad not modeled** — Sleeper's real accrued-experience taxi rule isn't "
+            "verified here, so an add is only ever suggested for an open active roster slot "
+            "or via a drop, never assumed to fit an open taxi slot the way a rookie safely "
+            "can.\n"
+            "- **No bid-sizing** — remaining FAAB is shown for context only; this doesn't "
+            "recommend how much to bid."
+        )
+    selected_roster_settings = state["rosters_by_id"][selected_roster_id].get("settings") or {}
+    faab_remaining = state["league"]["settings"].get("waiver_budget", 0) - selected_roster_settings.get(
+        "waiver_budget_used", 0
+    )
+    st.caption(f"Remaining FAAB: {faab_remaining}")
+    show_df(
+        analysis["free_agent_board"],
+        "(no free agents available)",
+        column_config=cols(
+            analysis["free_agent_board"],
+            ("name", "Player"),
+            ("pos", "Position"),
+            ("team", "NFL Team"),
+            ("marginal_value", "Marginal Value"),
+            ("drop_name", "Suggested Drop"),
+            ("drop_is_starter", "Drop Is Starter"),
         ),
     )
 

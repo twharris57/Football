@@ -247,6 +247,35 @@ def rookie_pool(players: dict[str, dict], season: str) -> dict[str, dict]:
     }
 
 
+def free_agent_pool(
+    players: dict[str, dict], rosters: list[dict], draft_eligible_rookie_ids: frozenset[str] = frozenset()
+) -> dict[str, dict]:
+    """Return every fantasy-relevant player on a real NFL roster who isn't on any fantasy roster.
+
+    Sleeper has no dedicated "free agents" endpoint - this is the same
+    approach `rookie_pool` uses, generalized to every player, not just this
+    year's class. `team` must be truthy (on an actual NFL roster) since
+    Sleeper's player dataset also carries retired/practice-squad-only/no-team
+    entries that would otherwise flood the pool with irrelevant results.
+    `draft_eligible_rookie_ids` (`gather_state`'s own undrafted-rookie pool,
+    `frozenset()` once the draft is complete) excludes this year's
+    not-yet-drafted class while the startup draft is still active - an
+    undrafted rookie mid-draft is a draft prospect, not a waiver-wire pickup,
+    even though they aren't in `rostered_player_ids` either. Once the draft
+    ends, any still-undrafted rookie is a real free agent again and this
+    exclusion naturally stops applying (the caller passes an empty set).
+    """
+    rostered = rostered_player_ids(rosters)
+    return {
+        player_id: info
+        for player_id, info in players.items()
+        if info.get("position") in FANTASY_POSITIONS
+        and info.get("team")
+        and player_id not in rostered
+        and player_id not in draft_eligible_rookie_ids
+    }
+
+
 def roster_fantasy_players(roster: dict, players: dict[str, dict]) -> Iterator[tuple[str, dict]]:
     """Yield (player_id, info) for each of the roster's players at a fantasy-relevant position.
 
@@ -655,7 +684,7 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
     }
 
 
-def roster_total_capacity(league: dict, reserve_filled: int = 0) -> int:
+def roster_total_capacity(league: dict, reserve_filled: int = 0, taxi_eligible: bool = True) -> int:
     """Return the combined active-roster + taxi-squad + occupied-reserve slot count.
 
     Used to decide whether adding a player genuinely requires a drop, for
@@ -666,11 +695,15 @@ def roster_total_capacity(league: dict, reserve_filled: int = 0) -> int:
     full `reserve_slots` setting) accounts only for *existing* IR occupants:
     a newly-drafted rookie can never land on reserve (that requires a real
     injury designation), so an empty IR slot must not read as room for one.
-    Rookies are assumed taxi-eligible (true for every candidate in this
-    draft) — a general accrued-experience eligibility check is deferred
-    (see `.claude/PROJECT_PLAN.md`).
+    `taxi_eligible` gates whether `taxi_slots` counts toward the ceiling at
+    all — `True` (default) for rookies, always taxi-eligible in this draft;
+    `False` for `free_agent_board`'s candidates, since Sleeper's real
+    accrued-experience taxi rule isn't modeled here (see
+    `.claude/PROJECT_PLAN.md`) and most veteran free agents wouldn't
+    actually qualify.
     """
-    return len(league["roster_positions"]) + league["settings"].get("taxi_slots", 0) + reserve_filled
+    taxi_slots = league["settings"].get("taxi_slots", 0) if taxi_eligible else 0
+    return len(league["roster_positions"]) + taxi_slots + reserve_filled
 
 
 # Sleeper's real injury_status values include some genuinely cryptic
@@ -1081,6 +1114,7 @@ def team_roster_analysis(
     league: dict,
     handcuffs: dict[str, str],
     replacement_level: dict[str, float],
+    available_free_agents: dict[str, dict],
 ) -> dict[str, Any]:
     """Bundle every per-roster analysis view into one call, for any team's roster.
 
@@ -1092,7 +1126,9 @@ def team_roster_analysis(
     value-over-replacement `weak` flag on position — two different
     questions about the same position. `replacement_level` is the
     league-wide baseline computed once per refresh (`position_replacement_levels`)
-    and passed in, not recomputed here.
+    and passed in, not recomputed here. `available_free_agents`
+    (`free_agent_pool()`'s output) is likewise computed once per refresh and
+    passed in, not recomputed per team looked up through the team selector.
     """
     roster_needs = roster_needs_summary(roster, players)
     if not roster_needs.empty:
@@ -1120,6 +1156,7 @@ def team_roster_analysis(
         "roster_capacity": roster_capacity(roster, league),
         "roster_value": roster_value_analysis(roster, players, fc_by_sleeper_id, byes),
         "sellable_players": sellable_players(roster, players, fc_by_sleeper_id, replacement_level, league, byes),
+        "free_agent_board": free_agent_board(available_free_agents, roster, players, fc_by_sleeper_id, byes, league),
         "roster_bye_conflicts": roster_bye_conflicts(roster, players, fc_by_sleeper_id, byes, league),
         "roster_weekly_gaps": roster_weekly_gaps(roster, players, byes, league),
         "roster_handcuffs": roster_handcuff_status(roster, players, handcuffs),
@@ -1388,6 +1425,7 @@ def rank_by_marginal_value(
     exclude_from_drop: frozenset[str] = frozenset(),
     ineligible_ids: frozenset[str] = frozenset(),
     reserve_filled: int = 0,
+    taxi_eligible: bool = True,
 ) -> list[dict]:
     """Rank candidates by season-average marginal starting-lineup value, not raw trade value.
 
@@ -1398,15 +1436,17 @@ def rank_by_marginal_value(
     players (e.g. picked in an earlier round of the same multi-round plan)
     from being recommended for drop; `ineligible_ids` (current taxi/IR
     players) are never assignable to a starting slot in the simulation.
-    Returns up to `top_n` entries (player_id, marginal_value, drop), sorted
-    best first — the first is the recommended pick, the rest are backup
-    alternates. Full rationale in docs/rookie-draft-big-board.md's
-    "Ranking" section.
+    `taxi_eligible` passes straight through to `roster_total_capacity` —
+    `True` (default) for the rookie draft plan, `False` for
+    `free_agent_board`'s veteran candidates. Returns up to `top_n` entries
+    (player_id, marginal_value, drop), sorted best first — the first is the
+    recommended pick, the rest are backup alternates. Full rationale in
+    docs/rookie-draft-big-board.md's "Ranking" section.
     """
     if not candidate_ids:
         return []
 
-    total_capacity = roster_total_capacity(league, reserve_filled)
+    total_capacity = roster_total_capacity(league, reserve_filled, taxi_eligible)
     baseline = season_average_starter_value(hypothetical_ids, players, fc_by_sleeper_id, byes, league, ineligible_ids)
 
     results = []
@@ -1429,6 +1469,66 @@ def rank_by_marginal_value(
 
     results.sort(key=lambda r: r["marginal_value"], reverse=True)
     return results[:top_n]
+
+
+def free_agent_board(
+    pool: dict[str, dict],
+    roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    top_n: int = 25,
+) -> pd.DataFrame:
+    """Rank available free agents by season-average marginal starting-lineup value against this roster.
+
+    Reuses `rank_by_marginal_value` exactly like the draft plan does - not a
+    second valuation model (see `.claude/conventions/valuation_principles.md`).
+    Passes `taxi_eligible=False`: Sleeper's real accrued-experience taxi rule
+    isn't modeled here, so a candidate is only ever added to an open active
+    roster slot or via a drop, never assumed to fit an open taxi slot the
+    way a rookie safely can - a documented gap (`.claude/PROJECT_PLAN.md`),
+    not a silent one. `pool` is typically `free_agent_pool()`'s output;
+    accepting it as a plain parameter (rather than recomputing it here) lets
+    `gather_state` compute it once per refresh, not once per team looked up
+    through the Roster tab's team selector.
+
+    Evaluates every candidate in `pool` (candidates × 18 `assign_starters`
+    calls, no per-round multiplication like the draft plan's ~20,000-call
+    pass has) before sorting and slicing to `top_n` - cheap enough even at
+    free-agent-pool scale (~350-450 players) to score everyone rather than
+    pre-filtering.
+    """
+    ineligible_ids = frozenset(roster.get("taxi") or []) | frozenset(roster.get("reserve") or [])
+    reserve_filled = len(roster.get("reserve") or [])
+    ranked = rank_by_marginal_value(
+        list(pool.keys()),
+        list(roster.get("players") or []),
+        players,
+        fc_by_sleeper_id,
+        byes,
+        league,
+        top_n=top_n,
+        ineligible_ids=ineligible_ids,
+        reserve_filled=reserve_filled,
+        taxi_eligible=False,
+    )
+
+    rows = []
+    for candidate in ranked:
+        info = players.get(candidate["player_id"], {})
+        drop = candidate["drop"]
+        rows.append(
+            {
+                "name": info.get("full_name"),
+                "pos": info.get("position"),
+                "team": info.get("team"),
+                "marginal_value": round(candidate["marginal_value"], 1),
+                "drop_name": drop["name"] if drop else None,
+                "drop_is_starter": drop["is_starter"] if drop else None,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def gap_delta(
@@ -1833,9 +1933,19 @@ def gather_state(
         p["pick_no"]: p["player_id"] for p in draft_picks if p.get("roster_id") == user_roster_id and p.get("player_id")
     }
 
+    # Undrafted rookies are draft prospects, not waiver-wire pickups, for as
+    # long as this startup draft still has picks remaining - excluded from
+    # free agents via the same `available` pool already computed above for
+    # the draft plan itself, not a second rookie-eligibility computation.
+    # Once the draft is done, this is an empty set and they become real
+    # free agents again automatically.
+    total_draft_picks = draft["settings"]["teams"] * draft["settings"]["rounds"]
+    draft_eligible_rookie_ids = frozenset() if current_pick_no > total_draft_picks else frozenset(available.keys())
+    available_free_agents = free_agent_pool(players, rosters, draft_eligible_rookie_ids)
+
     replacement_level = position_replacement_levels(rosters, players, fc_by_sleeper_id, league["roster_positions"])
     user_analysis = team_roster_analysis(
-        user_roster, players, fc_by_sleeper_id, byes, league, handcuffs, replacement_level
+        user_roster, players, fc_by_sleeper_id, byes, league, handcuffs, replacement_level, available_free_agents
     )
     # Cheap for the whole league in one pass (no new API calls, just
     # positional_strength_summary reused per roster) - computed here once
@@ -1870,6 +1980,19 @@ def gather_state(
         # so the Roster tab's team selector can pass it into an
         # on-demand team_roster_analysis() call for any other team too.
         "replacement_level": replacement_level,
+        # Every non-rostered fantasy-relevant player on a real NFL roster
+        # (see free_agent_pool) - computed once per refresh, same reuse
+        # pattern as replacement_level above, so the team selector's
+        # on-demand team_roster_analysis() calls don't each recompute it.
+        "available_free_agents": available_free_agents,
+        # Informational only - no bid-threshold modeling yet (see
+        # .claude/PROJECT_PLAN.md). league["settings"]["waiver_budget"] is
+        # this league's total per-team FAAB budget (confirmed FAAB, not
+        # priority waivers: waiver_type == 2); waiver_budget_used is each
+        # roster's own spend so far, both already pulled with no new fetch.
+        "user_faab_remaining": (
+            league["settings"].get("waiver_budget", 0) - (user_roster.get("settings") or {}).get("waiver_budget_used", 0)
+        ),
         # Every team's continuous power/timeline read, indexed by roster_id
         # (see team_power_timeline_scores) - computed once for the whole
         # league here since z-scoring needs every team's row together, then

@@ -174,6 +174,67 @@ class TestPickTradeValues:
         assert picks["value"].isna().all()
 
 
+class TestFreeAgentPool:
+    """free_agent_pool should be every fantasy-relevant, real-NFL-team player not on any roster."""
+
+    def test_excludes_rostered_players(self):
+        players = {
+            "rostered_wr": make_player("WR", full_name="Rostered WR"),
+            "free_wr": make_player("WR", full_name="Free WR"),
+        }
+        rosters = [{"roster_id": 1, "players": ["rostered_wr"]}]
+
+        pool = dc.free_agent_pool(players, rosters)
+
+        assert set(pool.keys()) == {"free_wr"}
+
+    def test_excludes_players_with_no_real_nfl_team(self):
+        # Sleeper's player dataset carries retired/practice-squad-only/no-team
+        # entries that would otherwise flood the pool with irrelevant results.
+        players = {
+            "no_team": {"position": "WR", "team": None, "full_name": "No Team"},
+            "on_team": make_player("WR", full_name="On Team"),
+        }
+
+        pool = dc.free_agent_pool(players, [])
+
+        assert set(pool.keys()) == {"on_team"}
+
+    def test_excludes_non_fantasy_positions(self):
+        players = {
+            "kicker": {"position": "K", "team": "AAA", "full_name": "A Kicker"},
+            "wr": make_player("WR", full_name="A WR"),
+        }
+
+        pool = dc.free_agent_pool(players, [])
+
+        assert set(pool.keys()) == {"wr"}
+
+    def test_excludes_draft_eligible_rookies_mid_draft(self):
+        # An undrafted rookie mid-startup-draft is a draft prospect, not a
+        # waiver-wire pickup - not in rostered_player_ids either, but must
+        # still be excluded via draft_eligible_rookie_ids (gather_state's
+        # own undrafted-rookie pool for the draft plan itself).
+        players = {
+            "rookie_wr": make_player("WR", full_name="Undrafted Rookie"),
+            "veteran_wr": make_player("WR", full_name="Veteran FA"),
+        }
+
+        pool = dc.free_agent_pool(players, [], draft_eligible_rookie_ids=frozenset({"rookie_wr"}))
+
+        assert set(pool.keys()) == {"veteran_wr"}
+
+    def test_undrafted_rookie_becomes_a_real_free_agent_once_draft_is_complete(self):
+        # gather_state passes an empty draft_eligible_rookie_ids once the
+        # draft has no picks remaining - the same rookie is a real free
+        # agent again with no special-casing needed at that point.
+        players = {"rookie_wr": make_player("WR", full_name="Undrafted Rookie")}
+
+        pool = dc.free_agent_pool(players, [], draft_eligible_rookie_ids=frozenset())
+
+        assert set(pool.keys()) == {"rookie_wr"}
+
+
 class TestRosterCapacity:
     """IR/reserve players must not count against active-roster capacity, same as taxi."""
 
@@ -585,7 +646,7 @@ class TestTeamRosterAnalysis:
         roster = {"players": ["qb1", "wr1"], "taxi": [], "reserve": []}
         replacement_level = {"QB": 50.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
 
-        analysis = dc.team_roster_analysis(roster, players, fc_by_id, {}, league, {}, replacement_level)
+        analysis = dc.team_roster_analysis(roster, players, fc_by_id, {}, league, {}, replacement_level, {})
 
         assert set(analysis.keys()) == {
             "roster_needs",
@@ -593,6 +654,7 @@ class TestTeamRosterAnalysis:
             "roster_capacity",
             "roster_value",
             "sellable_players",
+            "free_agent_board",
             "roster_bye_conflicts",
             "roster_weekly_gaps",
             "roster_handcuffs",
@@ -794,6 +856,81 @@ class TestCapacityAwareDrop:
         # despite 2 nominally "open" reserve_slots that a healthy rookie can't use.
         assert ranked[0]["drop"] is not None
         assert ranked[0]["drop"]["player_id"] == "taxi_wr"
+
+    def test_taxi_eligible_false_does_not_count_open_taxi_slots_as_room(self):
+        # SIMPLE_LEAGUE: 7 active + 2 taxi = 9 total capacity with the
+        # default taxi_eligible=True. 7 existing players + 1 candidate = 8,
+        # which fits under 9 (taxi counted) but exceeds 7 (active-only) -
+        # exactly the gap free_agent_board's taxi_eligible=False closes,
+        # since Sleeper's real accrued-experience taxi rule isn't modeled
+        # and a veteran free agent can't be assumed to fit an open taxi
+        # slot the way a rookie safely can.
+        players = {f"p{i}": make_player("WR") for i in range(7)}
+        players["new_fa"] = make_player("WR")
+        fc_values = [fc_entry(f"p{i}", 100 + i) for i in range(7)] + [fc_entry("new_fa", 500)]
+        fc_by_id = dc.fc_value_by_sleeper_id(fc_values)
+        hypothetical_ids = [f"p{i}" for i in range(7)]
+
+        ranked = dc.rank_by_marginal_value(
+            candidate_ids=["new_fa"],
+            hypothetical_ids=hypothetical_ids,
+            players=players,
+            fc_by_sleeper_id=fc_by_id,
+            byes={},
+            league=SIMPLE_LEAGUE,
+            top_n=1,
+            taxi_eligible=False,
+        )
+
+        assert ranked[0]["drop"] is not None
+        # The default (taxi_eligible=True) must be completely unaffected -
+        # same call, no drop forced, since 8 <= 9 (active + taxi).
+        ranked_default = dc.rank_by_marginal_value(
+            candidate_ids=["new_fa"],
+            hypothetical_ids=hypothetical_ids,
+            players=players,
+            fc_by_sleeper_id=fc_by_id,
+            byes={},
+            league=SIMPLE_LEAGUE,
+            top_n=1,
+        )
+        assert ranked_default[0]["drop"] is None
+
+
+class TestFreeAgentBoard:
+    """free_agent_board should rank available players by marginal value against a roster,
+    reusing rank_by_marginal_value exactly like the draft plan does."""
+
+    def test_higher_value_candidate_outranks_lower_value_candidate(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": ["starter_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "great_fa": make_player("WR", full_name="Great Free Agent"),
+            "meh_fa": make_player("WR", full_name="Meh Free Agent"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 100), fc_entry("great_fa", 900), fc_entry("meh_fa", 110)]
+        )
+        pool = {"great_fa": players["great_fa"], "meh_fa": players["meh_fa"]}
+
+        board = dc.free_agent_board(pool, roster, players, fc_by_id, {}, league)
+
+        assert list(board["name"])[0] == "Great Free Agent"
+
+    def test_drop_is_populated_when_roster_is_full(self):
+        league = {"roster_positions": ["WR"]}
+        roster = {"players": ["low_value_wr"], "taxi": [], "reserve": []}
+        players = {
+            "low_value_wr": make_player("WR", full_name="Low Value WR"),
+            "great_fa": make_player("WR", full_name="Great Free Agent"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("low_value_wr", 50), fc_entry("great_fa", 900)])
+        pool = {"great_fa": players["great_fa"]}
+
+        board = dc.free_agent_board(pool, roster, players, fc_by_id, {}, league)
+
+        assert board.iloc[0]["drop_name"] == "Low Value WR"
 
 
 class TestRecommendDropIneligibility:

@@ -171,6 +171,16 @@ def print_report(state: dict[str, Any]) -> None:
     print(render_df(state["sellable_players"], "(no sellable surplus at any position right now)"))
 
     print(
+        "\n--- Free agents (ranked by marginal value; taxi-squad eligibility not modeled - "
+        "active-roster-only) ---\n"
+        "Every non-rostered player, ranked the same way the Draft Plan ranks rookies - season-"
+        "average marginal starting-lineup value against your roster, each with its own "
+        f"suggested drop. Remaining FAAB: {state['user_faab_remaining']}. No bid-sizing - "
+        "budget shown for context only."
+    )
+    print(render_df(state["free_agent_board"], "(no free agents available)"))
+
+    print(
         "\n--- Bye week impact (weeks with an active-roster player out; "
         "lineup_delta = starting-lineup value vs. a full-strength week) ---"
     )
