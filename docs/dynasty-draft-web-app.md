@@ -6,7 +6,7 @@ of requiring a terminal, and deployable to the user's Synology NAS.
 
 ## Streamlit app (`streamlit_app.py`)
 
-Four tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
+Five tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
 
 1. **Draft Plan** — the round-by-round marginal-value simulation, backup
    alternates in expanders, a full player-projection lookup, weekly-gap
@@ -14,8 +14,14 @@ Four tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
 2. **Lineup** — current optimal starters/bench.
 3. **Draft Board** — the full rookie class, tiered, with draft attribution.
 4. **Roster** — capacity, needs, value analysis, bye conflicts, weekly
-   gaps, handcuffs, sellable veterans, and the team timeline read, for any
-   team in the league via a selector (defaults to the user's own).
+   gaps, handcuffs, sellable veterans, free agents, and the team timeline
+   read, for any team in the league via a selector (defaults to the user's
+   own).
+5. **Trade Evaluator** — an arbitrary multi-asset trade (players and/or
+   picks) between two selected teams, evaluated for both sides. Its own
+   tab rather than another Roster section — it's inherently two-team, not
+   the "pick a team, see everything about them" shape every Roster section
+   shares.
 
 There is exactly one ranking method for "what should I pick next," used
 everywhere in the app — the round-by-round Draft Plan. See
@@ -92,22 +98,51 @@ constant `GLOSSARY` in `streamlit_app.py`) defining VOR, power score, and
 adj. value — one reachable place for the terms this section and Roster
 needs both use.
 
-### Sellable veterans / Draft pick trade values
+### Sellable veterans / Free agents / Draft pick trade values
 
-Two sections in the Roster tab, added for trade evaluation — see
-`docs/rookie-draft-big-board.md` and `.claude/PROJECT_PLAN.md` for what's
-deliberately out of scope.
+Three sections in the Roster tab, added for trade/roster-move evaluation
+— see `docs/rookie-draft-big-board.md` and `.claude/PROJECT_PLAN.md` for
+what's deliberately out of scope.
 
-"Sellable veterans" sits right after Roster value analysis, for whichever
-team the selector above has picked — `analysis["sellable_players"]`, same
-on-demand-per-team pattern as the rest of the tab (unlike Team timeline
-above, this doesn't need every team's row together). "Draft pick trade
-values" sits at the bottom of the tab instead, explicitly *not* filtered to
-the selected team — a pick's owner is already a column in
+"Sellable veterans" sits right after Roster value analysis, and "Free
+agents" right after that, both for whichever team the selector above has
+picked — `analysis["sellable_players"]`/`analysis["free_agent_board"]`,
+same on-demand-per-team pattern as the rest of the tab (unlike Team
+timeline above, neither needs every team's row together). "Draft pick
+trade values" sits at the bottom of the tab instead, explicitly *not*
+filtered to the selected team — a pick's owner is already a column in
 `state["pick_trade_values"]`, computed once league-wide in `gather_state`
 the same way `team_power_timeline` is; a caption says so directly so it
 doesn't read as a bug that changing the team selector above doesn't change
 this table.
+
+### Trade Evaluator (its own tab)
+
+Not folded into the Roster tab like the sections above — those are all
+"pick a team, see everything about them"; a trade is inherently two teams
+plus a hypothetical exchange, so it gets its own tab with its own second
+team selector ("Trade partner"), independent of the Roster tab's selector.
+Four `st.multiselect` widgets (players/picks given up, players/picks
+received), built from `state["rosters_by_id"]` and `state["pick_trade_values"]`
+(filtered by `owner_roster_id`) — no new data pulled, everything already in
+`state`. Recomputes reactively on every selection change (cheap — one
+`season_average_starter_value` call per side) rather than needing an
+explicit "Evaluate" button. Calls `dynasty_core.evaluate_trade()` twice,
+once per side of the identical trade (the second call swaps the roster and
+the two asset lists) — the "both sides" requirement falls out of the
+function's own symmetry, not a second code path. A pick with no resolvable
+`value` is called out in a caption rather than silently contributing
+nothing.
+
+The "Lineup value" `st.metric` shows `lineup_delta_after_drops` (the real
+number once any forced cuts are applied) rather than the raw `lineup_delta`
+whenever `recommended_drops` is non-empty — the raw number stays one hover
+away via the metric's `help=` tooltip, same "don't hide the simpler number,
+just don't lead with it when it's misleading" pattern the Team timeline
+metric already uses for its raw z-score. An `st.warning` lists each
+recommended cut by name/position, tagging any that's an actual current
+starter (not just bench depth) rather than leaving that distinction only
+visible in the underlying data.
 
 ### Player projection lookup
 

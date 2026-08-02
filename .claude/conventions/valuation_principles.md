@@ -214,3 +214,69 @@ real-world exclusivity window. Test coverage for a candidate-pool function
 should include at least one case from every *other* pool that's supposed to
 be mutually exclusive with it, not just the pool's own internal exclusion
 rules.
+
+## A capacity ceiling that restricts new entrants must not also erase credit for room already spent
+
+`roster_total_capacity()`'s `taxi_eligible` flag is meant to answer one
+narrow question: can a *new* player (a free-agent add, or the incoming
+side of a trade) land on an open taxi slot? `free_agent_board()` and
+`evaluate_trade()` (RT-2, 2026-08-02 review, see `.claude/PROJECT_PLAN.md`'s
+fix-before-merge section and `RT-11`) both pass `taxi_eligible=False` for
+veteran candidates — correctly refusing to count an *unused* taxi slot as
+room for them. But the same flag also zeroes `taxi_slots` out of the
+capacity total entirely, which silently strips credit for taxi slots the
+roster *already* has filled. Those existing occupants (almost always
+stashed rookies — the normal state for this league's rebuild strategy, not
+an exception) are still legitimately off the active/bench headcount and
+have nothing to do with the candidate/trade being evaluated. The result: a
+roster carrying even one taxi player can read as needing a forced drop, or
+flag `over_capacity`, when it actually has open bench room.
+
+Contrast with `reserve_filled`, which gets this right: it's an
+always-applied headcount of currently-occupied IR slots, never gated by an
+eligibility flag, precisely because "can a new player use this" and "is
+this already spoken for" are different questions. `taxi_slots` collapsed
+both questions into one flag.
+
+**The rule**: a flag that gates whether a *new* entrant may use a category
+of slot is not the same as whether *existing* occupants of that category
+should still count as consumed capacity. When adding an eligibility gate
+for future use of a resource, keep a separate, always-on credit for
+capacity already spent by current occupants — don't let disabling future
+eligibility also zero out the accounting for the past. Watch for this
+shape elsewhere: anywhere "is there room for X" is modeled by zeroing an
+entire slot category's *capacity* rather than just closing off further
+*entry* into it.
+
+## Exclusion filters change the outcome for everyone else, not just the excluded entity
+
+`recommend_drop()`'s `exclude_ids` parameter is meant to protect specific
+players from being *chosen* as the recommended cut (earlier-round draft
+picks in `multi_round_plan`'s `exclude_from_drop`; a trade's own incoming
+players in `evaluate_trade()`'s new `recommended_drops`, RT-13,
+2026-08-02 review). But it filters those players out of `rows` *before*
+`assign_starters()` runs — removing them from the competition used to
+decide who counts as a "starter" at all, not just from the pool of
+candidates eligible to be cut. Removing a competitor can only ever help
+the remaining candidates win a slot, never hurt them, so an existing
+droppable player can read as `is_starter: True` when, in the real roster
+(protected players correctly seated), they'd actually be bench. The
+reverse can't happen — a real starter never gets mislabeled bench by this
+mechanism — so the error only ever overstates a cut's severity. Live in
+`recommend_drop()` since before this review, but only a rare edge case
+until `evaluate_trade()` made `exclude_ids` non-empty on essentially every
+call and started surfacing `is_starter` as a direct user-facing warning
+tag rather than an internal comparison.
+
+**The rule**: "protect this entity from being selected" and "remove this
+entity from the field" are different operations. A filter meant only to
+protect a candidate from being *chosen* by a downstream ranking/assignment
+step must still let that candidate *participate* in whatever competitive
+step determines outcomes for everyone else — otherwise every other
+participant's computed status (starter/bench, winner/loser, eligible/
+ineligible) is quietly computed against a smaller field than reality.
+Apply the exclusion at the final selection step, not by stripping the
+candidate out of the shared computation upstream of it. Watch for this
+shape wherever a "protect X from Y" parameter is implemented as "delete X
+before computing Y," rather than "compute Y normally, then skip X when Y's
+result is applied."
