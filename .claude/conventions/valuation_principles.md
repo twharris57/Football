@@ -151,3 +151,30 @@ matching if that live value ever changes (see `BASELINE_SCORING`'s `rec: 1.0`
 vs. the real `ppr` param sent to FantasyCalc, `.claude/PROJECT_PLAN.md`'s
 `VA-2`, found only because this happened to be audited, not because
 anything would have failed loudly).
+
+## A field used as both an internal score input and a user-facing label needs two names
+
+`_shrunk_win_pct()` (RT-1, 2026-08-02) blends a team's real win/loss record
+toward a neutral `0.5` prior for small-sample-size reasons — correct for
+its one actual consumer, `power_score`'s z-scoring. But it overwrote the
+`win_pct` column that `team_power_timeline_scores()` already exposed, and
+that same column is what `rookie_draft.py`/`streamlit_app.py` print
+verbatim next to the literal label "Win %" — a 1-0 team now shows "60%"
+where its real record is 100%, with no visible indication the number
+isn't the record.
+
+This is the same shape of mistake as the raw/`adj_value` rule above — keep
+the corrected value next to the raw one rather than overwriting it — but
+it surfaced through a statistical correction instead of a hardcoded
+constant, on a field a UI was already printing verbatim under a label
+that promises the raw value. The correction itself wasn't wrong;
+routing it through the same column name the display path already trusted
+was.
+
+**The rule**: before applying a transform (shrinkage, smoothing, clipping,
+a market-value correction) to a field, check every existing consumer of
+that field's name, not just the one motivating the change. If any
+consumer expects the untransformed value — especially a display label
+that names the field literally ("Win %", "Value", "Rank") — expose both
+under distinct names rather than letting one name's meaning silently
+depend on which caller reads it.

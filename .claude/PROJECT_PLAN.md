@@ -31,9 +31,21 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-*Empty — no branch is currently mid-review. (PR #18's findings, previously
-listed here, cleared out on merge — see that PR's description for the
-historical record.)*
+**`feature/win-pct-shrinkage` (RT-1), reviewed 2026-08-02:**
+
+1. [ ] `_shrunk_win_pct()` overwrites the `win_pct` column that
+   `rookie_draft.py` and `streamlit_app.py` already print verbatim under
+   the literal label "Win %"/"win%" — those two consumers predate this
+   change and expect the real record. A 1-0 team now shows "60%" (not its
+   actual 100%) with no indication the number is a shrunk statistical
+   prior rather than the record itself; `power_score`'s z-scoring is the
+   only consumer that should see the shrunk value. Fix: expose the real
+   win/loss record under its own name (e.g. keep `win_pct` as the raw
+   record, add `win_pct_shrunk` or similar for the z-scoring input — or
+   the reverse naming, whichever reads more naturally at each call site)
+   so the two consumers stop sharing one column with two different
+   meanings. See `valuation_principles.md`'s new "A field used as both an
+   internal score input and a user-facing label needs two names" section.
 
 ## Now — blocking
 
@@ -312,6 +324,17 @@ methodology.
    outcomes than combine testing alone, and would slot into the same
    `_derive_rookie_buckets`/multiplier machinery as additional features
    rather than requiring a new pipeline.
+
+5. [ ] **VA-5: `win_pct` doesn't credit a tie as half a win** (assistant
+   valuation review, 2026-08-02) — `team_power_timeline_scores()` computes
+   `wins / games_played` where `games_played = wins + losses + ties`; a
+   tie counts toward the denominator but contributes nothing to the
+   numerator, so it's scored identically to a loss instead of the
+   standard 0.5-win credit. Pre-existing (not introduced by RT-1's
+   shrinkage work, which wraps this same formula unchanged), and Sleeper
+   ties are rare enough in a points-based scoring format that this hasn't
+   mattered in practice — low priority, but a real accuracy gap if it
+   ever comes up. Fix: give `wins + 0.5 * ties` credit in the numerator.
 
 ## Code quality, tests & UX polish
 
