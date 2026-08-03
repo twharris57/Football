@@ -443,6 +443,52 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   - A pick with no resolvable value (the same FantasyCalc pick-naming-mismatch
     gap `pick_trade_values` already documents) contributes `0` to that
     side's asset value, surfaced to the user rather than silently wrong.
+- **Trade-target optimizer** (`find_trade_offers()`) — the trade evaluator
+  above only scores a trade someone has already fully specified; this
+  answers the question one step earlier: given one specific asset (a
+  player *or* a pick, not a bundle — an already multi-asset offer on the
+  table is exactly what the evaluator above handles) sitting on a
+  partner's roster, is it worth pursuing, and if so what should be
+  offered for it. Composes existing primitives rather than a new
+  valuation or acceptance model (`.claude/conventions/valuation_principles.md`):
+  - **Worth pursuing** (`target_read`) — `evaluate_trade()` called with
+    zero outgoing assets: the marginal season-average lineup value of
+    acquiring the target for free, plus its own `asset_value_delta` (with
+    nothing given up, exactly the target's market value) for context —
+    both from the one call, not a second lookup path.
+  - **Offer search** — every combination (size 1–3, `TRADE_OFFER_MAX_COMBO_SIZE`)
+    of the caller's own `sellable_players()`/owned-picks pool, capped to
+    the top `TRADE_OFFER_POOL_CAP` (12) candidates by value, pre-filtered
+    to a wide `TRADE_OFFER_PREFILTER_LOW`–`TRADE_OFFER_PREFILTER_HIGH`
+    (0.5×–2.0×) band around the target's value purely to bound how many
+    combinations pay for a real `evaluate_trade()` call before the actual
+    plausibility check runs. A combo survives only if the partner's own
+    `asset_value_delta` doesn't fall more than
+    `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%, or `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE`
+    if the target's value is unresolvable) below zero — the one hard
+    "would they plausibly accept this" gate, itself just `evaluate_trade`'s
+    existing market-value read, not an invented acceptance model.
+  - **Need-aware ranking** — combos touching one of the partner's
+    currently-flagged `need_positions` (`roster_needs_summary`/
+    `need_positions`, checked against their roster as it stands today, not
+    the hypothetical post-trade roster — a known, narrower gap than the
+    Roster tab's own need-flagging) rank ahead of otherwise-equally-plausible
+    alternatives. This is a ranking tiebreaker only, never the accept/reject
+    gate — requiring both a value bar and a need match would reject
+    perfectly normal value-for-value or picks-for-depth trades that don't
+    touch a flagged need at all.
+  - Ranked best-for-the-caller first (least market value given up), then
+    need-match, then fewest assets. Returns up to `top_n` (3) — empty,
+    never a forced marginal suggestion, if nothing clears the partner's
+    bar; `combos_considered`/`combos_evaluated` let the UI say something
+    concrete ("considered N combinations") instead of a bare empty list.
+  - Lives as a second section in the Trade Evaluator tab, below the manual
+    evaluator, reusing its existing team selection.
+  - Deliberately out of scope: multi-asset targets (the manual evaluator
+    above already covers an already-specified multi-asset trade), 3-way
+    trades (same reasoning as the evaluator above), and evaluating +
+    improving an offer someone else has already proposed *to* us — a
+    related but distinct question, tracked separately in `.claude/PROJECT_PLAN.md`.
 - **Bye-week impact** and **weekly gaps** — the former
   (`roster_bye_conflicts`) shows every week with an active-roster player on
   bye: who's out, who fills in, and the resulting delta to optimal
@@ -521,6 +567,10 @@ the raw ~475-entry list on every call. Full `gather_state()` completes in
   (`taxi_eligible=False`) and shows FAAB budget for context without any
   bid-sizing logic — see the "Free agents" bullet above and
   `.claude/PROJECT_PLAN.md`'s `RT-8`/`RT-10`.
+- `find_trade_offers` targets one asset at a time (not a bundle), and its
+  need-match ranking checks the partner's roster as it stands today, not
+  the hypothetical roster after the trade — see the "Trade-target
+  optimizer" bullet above.
 
 ## Static assumptions — revisit if the league's rules ever change
 
@@ -544,3 +594,4 @@ is a deliberate decision, not a silent bug:
 | `WIN_PCT_SHRINKAGE_K = 4` (games worth of shrinkage weight toward `0.5`) | `dynasty_core.py` | A judgment call for how fast `win_pct_shrunk` (the power/timeline read's z-scoring input, not the displayed `win_pct`) should trust a real record over the neutral prior — not derived from any league setting or statistical fit | Adjust by feel if early-season `power_score` still looks too swingy or too damped |
 | `max_keepers: 1` in the league's Sleeper settings | Not modeled anywhere | Appears vestigial for a dynasty-type league (Sleeper `type: 2`) — the whole roster carries over every year, not a limited keeper count, so this setting doesn't seem to apply | Revisit only if Sleeper's dynasty/keeper interaction is ever observed to actually matter |
 | `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`) | Every other place in this codebase treats `roster_id` as an opaque key; this is the only place that assumes it's a literal range, to synthesize a future season's pick ownership without a real Sleeper draft object to read a `slot_to_roster_id` mapping from. Confirmed true for this league directly, but if Sleeper ever assigns non-contiguous IDs (e.g. after a team leaves and isn't backfilled), it would silently synthesize picks for a `roster_id` that doesn't exist | Iterate the real `rosters` list instead of a synthesized range |
+| `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers` (`dynasty_core.py`) | Judgment calls bounding the trade-target optimizer's combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |

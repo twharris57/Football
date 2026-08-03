@@ -11,6 +11,9 @@ external services you do not control" explicitly allows.
 
 from __future__ import annotations
 
+import math
+
+import pandas as pd
 import pytest
 import requests
 
@@ -21,6 +24,11 @@ SIMPLE_LEAGUE = {
     "settings": {"taxi_slots": 2},
 }
 
+# find_trade_offers() always builds a pick pool from a pick-value table, even
+# when a test's scenario doesn't involve any picks - an empty table with the
+# right columns keeps those tests from needing to fabricate irrelevant rows.
+EMPTY_PICKS = pd.DataFrame(columns=["pick", "owner", "owner_roster_id", "value"])
+
 
 def make_player(position: str, team: str = "AAA", full_name: str | None = None) -> dict:
     return {"position": position, "team": team, "full_name": full_name or f"{position}-{team}"}
@@ -28,6 +36,35 @@ def make_player(position: str, team: str = "AAA", full_name: str | None = None) 
 
 def fc_entry(sleeper_id: str, value: float, tier: int = 1, position: str | None = None) -> dict:
     return {"player": {"sleeperId": sleeper_id, "position": position}, "value": value, "maybeTier": tier}
+
+
+class TestTeamNameByRosterId:
+    """Team display names should surface which real person is behind a team,
+    not just their team's custom name - important for trade context specifically."""
+
+    def test_combines_team_name_and_username_when_both_exist(self):
+        rosters = [{"roster_id": 1, "owner_id": "u1"}]
+        users = [{"user_id": "u1", "display_name": "bob", "metadata": {"team_name": "My Epic Team Name"}}]
+
+        names = dc.team_name_by_roster_id(rosters, users)
+
+        assert names[1] == "My Epic Team Name (bob)"
+
+    def test_falls_back_to_username_alone_when_no_team_name_set(self):
+        rosters = [{"roster_id": 1, "owner_id": "u1"}]
+        users = [{"user_id": "u1", "display_name": "bob", "metadata": {}}]
+
+        names = dc.team_name_by_roster_id(rosters, users)
+
+        assert names[1] == "bob"
+
+    def test_falls_back_to_synthetic_label_when_no_user_matched(self):
+        rosters = [{"roster_id": 1, "owner_id": "missing"}]
+        users = []
+
+        names = dc.team_name_by_roster_id(rosters, users)
+
+        assert names[1] == "Roster 1"
 
 
 class TestComputePickOwnership:
@@ -398,6 +435,7 @@ class TestSellablePlayers:
         # most valuable) - wr3 is depth but a rookie (excluded) - only wr2
         # is real, sellable veteran depth.
         assert list(sellable["name"]) == ["Depth WR"]
+        assert list(sellable["player_id"]) == ["wr2"]
         assert sellable.iloc[0]["position_vor"] == pytest.approx(450.0)  # 500 - 50
 
     def test_excludes_a_depth_candidate_that_would_open_a_weekly_gap(self):
@@ -1224,6 +1262,203 @@ class TestEvaluateTrade:
         partner_side = dc.evaluate_trade(partner_roster, ["high"], ["low"], players, fc_by_id, {}, league)
 
         assert my_side["asset_value_delta"] == pytest.approx(-partner_side["asset_value_delta"])
+
+
+class TestFindTradeOffers:
+    """find_trade_offers should answer 'is this target worth pursuing' by direct reuse of
+    evaluate_trade(), then search the caller's own sellable players/picks for offers a
+    partner would plausibly accept (their own asset_value_delta staying within tolerance
+    of the target's value) - ranked best-for-the-caller first, need-matches preferred among
+    ties, never forcing a suggestion when nothing clears the partner's bar."""
+
+    def test_worth_pursuing_matches_a_direct_zero_outgoing_evaluate_trade_call(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": ["starter_wr"], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("starter_wr", 200), fc_entry("target_wr", 100)])
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="target_wr",
+        )
+
+        expected = dc.evaluate_trade(your_roster, [], ["target_wr"], players, fc_by_id, {}, league)
+        assert result["target_read"] == expected
+
+    def test_raises_when_neither_or_both_targets_given(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": [], "taxi": [], "reserve": []}
+        partner_roster = {"players": [], "taxi": [], "reserve": []}
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        with pytest.raises(ValueError):
+            dc.find_trade_offers(your_roster, partner_roster, {}, {}, {}, league, replacement_level, EMPTY_PICKS)
+        with pytest.raises(ValueError):
+            dc.find_trade_offers(
+                your_roster, partner_roster, {}, {}, {}, league, replacement_level, EMPTY_PICKS,
+                target_player_id="a", target_pick_name="b",
+            )
+
+    def test_clean_one_for_one_surfaces_the_obvious_combo(self):
+        # Your only sellable candidate ("depth_wr") is worth about the same
+        # as the target - the one plausible combo should surface as-is.
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": ["starter_wr", "depth_wr"], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "depth_wr": make_player("WR", full_name="Depth WR"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+        }
+        players["starter_wr"]["years_exp"] = 5
+        players["depth_wr"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("depth_wr", 100), fc_entry("target_wr", 100)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="target_wr",
+        )
+
+        assert len(result["offers"]) == 1
+        assert [asset["id"] for asset in result["offers"][0]["combo"]] == ["depth_wr"]
+
+    def test_lopsided_combo_is_filtered_even_when_cheap_for_you(self):
+        # cheap_wr (120) for target_wr (200) looks great for you in
+        # isolation (evaluate_trade's own asset_value_delta is positive),
+        # but it lowballs the partner well past tolerance - it must not
+        # surface as a suggested offer despite being attractive one-sided.
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": ["starter_wr", "cheap_wr"], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "cheap_wr": make_player("WR", full_name="Cheap WR"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+        }
+        players["starter_wr"]["years_exp"] = 5
+        players["cheap_wr"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("cheap_wr", 120), fc_entry("target_wr", 200)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+
+        one_sided = dc.evaluate_trade(your_roster, ["cheap_wr"], ["target_wr"], players, fc_by_id, {}, league)
+        assert one_sided["asset_value_delta"] > 0  # looks like a steal for you alone
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="target_wr",
+        )
+
+        assert result["offers"] == []
+
+    def test_no_viable_offer_returns_empty_list_not_a_forced_pick(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": ["starter_wr", "low_wr"], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "low_wr": make_player("WR", full_name="Low WR"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+        }
+        players["starter_wr"]["years_exp"] = 5
+        players["low_wr"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("low_wr", 110), fc_entry("target_wr", 200)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="target_wr",
+        )
+
+        assert result["offers"] == []
+        assert result["combos_evaluated"] > 0  # it searched - it just found nothing plausible
+
+    def test_combo_touching_a_partner_need_is_ranked_first_among_equally_plausible_options(self):
+        # Two equally-valued single-asset combos (a WR and an RB, both 100)
+        # against a 100-value target - identical asset_value_delta on your
+        # side. The partner has real WR depth but only one, old RB - RB is
+        # their flagged need, WR isn't - so the RB combo should rank first
+        # even though the two are otherwise tied.
+        league = {"roster_positions": ["WR", "RB", "BN", "BN"]}
+        your_roster = {
+            "roster_id": 1,
+            "players": ["starter_wr", "wr_offer", "starter_rb", "rb_offer"],
+            "taxi": [],
+            "reserve": [],
+        }
+        partner_roster = {"players": ["target_wr", "partner_rb", "partner_wr2"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "wr_offer": make_player("WR", full_name="WR Offer"),
+            "starter_rb": make_player("RB", full_name="Starter RB"),
+            "rb_offer": make_player("RB", full_name="RB Offer"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+            "partner_rb": make_player("RB", full_name="Partner RB"),
+            "partner_wr2": make_player("WR", full_name="Partner WR 2"),
+        }
+        players["starter_wr"]["years_exp"] = 5
+        players["wr_offer"]["years_exp"] = 3
+        players["starter_rb"]["years_exp"] = 5
+        players["rb_offer"]["years_exp"] = 3
+        players["target_wr"]["years_exp"] = 1  # young, keeps partner's WR position off the need list
+        players["partner_rb"]["years_exp"] = 5  # not young - partner's lone RB has no young core
+        players["partner_wr2"]["years_exp"] = 1
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [
+                fc_entry("starter_wr", 500),
+                fc_entry("wr_offer", 100),
+                fc_entry("starter_rb", 500),
+                fc_entry("rb_offer", 100),
+                fc_entry("target_wr", 100),
+                fc_entry("partner_rb", 50),
+                fc_entry("partner_wr2", 50),
+            ]
+        )
+        replacement_level = {"QB": 0.0, "RB": 50.0, "WR": 50.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="target_wr",
+        )
+
+        best = result["offers"][0]
+        assert [asset["id"] for asset in best["combo"]] == ["rb_offer"]
+        assert best["partner_need_match"] is True
+
+    def test_pool_and_combo_size_bounds_cap_the_search_regardless_of_pool_size(self):
+        # 30 owned picks, no sellable players at all - the pool must still
+        # cap to TRADE_OFFER_POOL_CAP before combos are generated, so the
+        # combo count stays fixed regardless of how many candidates exist.
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": [], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {"target_wr": make_player("WR", full_name="Target WR")}
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("target_wr", 100)])
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+        pick_value_table = pd.DataFrame(
+            [{"pick": f"pick_{i}", "owner": "You", "owner_roster_id": 1, "value": 100 + i} for i in range(30)]
+        )
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, pick_value_table,
+            target_player_id="target_wr",
+        )
+
+        expected_combo_count = sum(
+            math.comb(dc.TRADE_OFFER_POOL_CAP, size) for size in range(1, dc.TRADE_OFFER_MAX_COMBO_SIZE + 1)
+        )
+        assert result["combos_considered"] == expected_combo_count
 
 
 class TestRecommendDropIneligibility:
