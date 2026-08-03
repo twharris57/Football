@@ -83,6 +83,7 @@ def roster_value_analysis(
         position = info.get("position")
         fc_entry = fc_by_sleeper_id.get(player_id)
         value = fc_entry["value"] if fc_entry else None
+        team = info.get("team")
         rows.append(
             {
                 "name": info.get("full_name"),
@@ -91,7 +92,7 @@ def roster_value_analysis(
                 "years_exp": info.get("years_exp"),
                 "status": player_status_flags(player_id, info, taxi_ids, reserve_ids),
                 "status_details": player_status_details(player_id, info, taxi_ids, reserve_ids),
-                "bye": byes.get(info.get("team")),
+                "bye": byes.get(team) if team else None,
                 "value": value,
                 "adj_value": fc_entry.get("adj_value") if fc_entry else None,
             }

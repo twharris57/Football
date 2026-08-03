@@ -142,7 +142,12 @@ def season_average_starter_value(
     """
     rows = player_value_rows(player_ids, players, fc_by_sleeper_id)
     eligible_rows = [r for r in rows if r["player_id"] not in ineligible_ids]
-    bye_by_player = {r["player_id"]: byes.get(players.get(r["player_id"], {}).get("team")) for r in eligible_rows}
+
+    def _bye_for_row(row: dict) -> int | None:
+        team = players.get(row["player_id"], {}).get("team")
+        return byes.get(team) if team else None
+
+    bye_by_player = {r["player_id"]: _bye_for_row(r) for r in eligible_rows}
 
     total = 0.0
     for week in NFL_WEEKS:

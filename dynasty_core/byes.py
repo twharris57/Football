@@ -66,7 +66,8 @@ def bye_week_by_team(season: str, force_refresh: bool = False) -> dict[str, int]
 
     byes: dict[str, int] = {}
     for team in teams:
-        played = set(regular.loc[(regular["home_team"] == team) | (regular["away_team"] == team), "week"])
+        on_bye_mask = (regular["home_team"] == team) | (regular["away_team"] == team)
+        played = set(regular["week"][on_bye_mask])
         missing = all_weeks - played
         if len(missing) == 1:
             byes[team] = int(missing.pop())
@@ -102,7 +103,12 @@ def roster_bye_conflicts(
 
     rows = player_value_rows(active_ids, players, fc_by_sleeper_id)
     value_by_id = {r["player_id"]: r["adj_value"] or 0 for r in rows}
-    bye_by_player = {r["player_id"]: byes.get(players.get(r["player_id"], {}).get("team")) for r in rows}
+
+    def _bye_for_row(row: dict) -> int | None:
+        team = players.get(row["player_id"], {}).get("team")
+        return byes.get(team) if team else None
+
+    bye_by_player = {r["player_id"]: _bye_for_row(r) for r in rows}
 
     full_assignments = assign_starters(rows, league["roster_positions"])
     full_starter_ids = {pid for _, pid in full_assignments if pid}
@@ -165,7 +171,8 @@ def roster_weekly_gaps(roster: dict, players: dict[str, dict], byes: dict[str, i
     for player_id, info in roster_fantasy_players(roster, players):
         position = info["position"]
         position_totals[position] += 1
-        bye = byes.get(info.get("team"))
+        team = info.get("team")
+        bye = byes.get(team) if team else None
         if bye is not None:
             position_bye_weeks[position].append(bye)
 
