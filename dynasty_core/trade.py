@@ -61,6 +61,7 @@ def sellable_players(
     """
     roster_positions = league["roster_positions"]
     strength = positional_strength_summary(roster, players, fc_by_sleeper_id, replacement_level, roster_positions)
+    vor_by_position = strength["vor"].to_dict()
     roster_player_ids = roster.get("players") or []
     flex_slots = roster_positions.count("FLEX")
 
@@ -72,7 +73,7 @@ def sellable_players(
 
     rows = []
     for position, entries in by_position.items():
-        if strength.loc[position, "vor"] <= 0:
+        if vor_by_position[position] <= 0:
             continue
         starter_count = _position_starter_demand(position, roster_positions)
         if position in FLEX_ELIGIBLE_POSITIONS:
@@ -93,7 +94,7 @@ def sellable_players(
                     "age": info.get("age"),
                     "value": fc_entry.get("value") if fc_entry else None,
                     "adj_value": fc_entry.get("adj_value") if fc_entry else None,
-                    "position_vor": strength.loc[position, "vor"],
+                    "position_vor": vor_by_position[position],
                 }
             )
     sellable = pd.DataFrame(rows)
@@ -247,11 +248,13 @@ def find_trade_offers(
         raw_target_value = pick_value_by_name.get(target_pick_name)
         target_read = evaluate_trade(
             your_roster, [], [], players, fc_by_sleeper_id, byes, league,
-            incoming_pick_value=raw_target_value if pd.notna(raw_target_value) else 0.0,
+            incoming_pick_value=(
+                float(raw_target_value) if raw_target_value is not None and bool(pd.notna(raw_target_value)) else 0.0
+            ),
         )
 
     target_value_resolved = bool(pd.notna(raw_target_value))
-    target_value = float(raw_target_value) if target_value_resolved else 0.0
+    target_value = float(raw_target_value) if raw_target_value is not None and target_value_resolved else 0.0
 
     if not target_value_resolved:
         return {
@@ -272,7 +275,7 @@ def find_trade_offers(
     pool += [
         {"kind": "pick", "id": row["pick"], "label": row["pick"], "value": row["value"]}
         for _, row in your_picks.iterrows()
-        if pd.notna(row["value"])
+        if bool(pd.notna(row["value"]))
     ]
     if target_value > 0:
         pool = [c for c in pool if c["value"] <= TRADE_OFFER_PREFILTER_HIGH * target_value]

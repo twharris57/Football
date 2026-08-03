@@ -46,6 +46,7 @@ def player_status_details(
         details.append(("🆕", "Rookie (no NFL experience yet)"))
     injury_status = info.get("injury_status")
     if injury_status:
+        injury_status = str(injury_status)
         details.append(("🏥", INJURY_STATUS_DESCRIPTIONS.get(injury_status, injury_status)))
     if player_id in taxi_ids:
         details.append(("🌱", "Taxi squad"))
@@ -111,7 +112,7 @@ def roster_value_analysis(
             return ""
         if age is not None and age < LOW_VALUE_YOUNG_AGE:
             return "Low value, young — rebuild upside, hold"
-        aging_age = LOW_VALUE_AGING_AGE.get(position, DEFAULT_LOW_VALUE_AGING_AGE)
+        aging_age = LOW_VALUE_AGING_AGE.get(position, DEFAULT_LOW_VALUE_AGING_AGE) if position else DEFAULT_LOW_VALUE_AGING_AGE
         if age is not None and age >= aging_age:
             return "Low value, aging — drop candidate"
         return "Low value — monitor"

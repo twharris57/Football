@@ -110,7 +110,10 @@ def positional_strength_summary(
     """
     by_position: dict[str, list[float]] = {pos: [] for pos in FANTASY_POSITIONS}
     for player_id, info in roster_fantasy_players(roster, players):
-        position = info.get("position")
+        # roster_fantasy_players() already filters to FANTASY_POSITIONS, so
+        # "position" is guaranteed present here - direct subscript, not
+        # .get(), keeps the key typed as str rather than str | None.
+        position = info["position"]
         entry = fc_by_sleeper_id.get(player_id)
         adj_value = entry.get("adj_value") if entry else None
         by_position[position].append(adj_value if adj_value is not None else 0.0)
