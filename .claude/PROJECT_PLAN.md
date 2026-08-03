@@ -38,73 +38,43 @@ below as a normal backlog item, same as any other deferred work.
 
 **`feature/trade-target-optimizer` (PR #25, reviewed 2026-08-02):**
 
-- [ ] **An unresolved pick value crashes the optimizer's own safety gate via
-  silent `NaN` propagation, not the intended $25 floor.**
-  `find_trade_offers()`'s docstring and `docs/rookie-draft-big-board.md`
-  both describe unresolved target values as falling back to
-  `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25.0), but
-  `target_value = pick_value_by_name.get(target_pick_name) or 0.0` only
-  catches a *missing* key — a pick that IS in `pick_value_table` but has an
-  unmatched FantasyCalc name (the exact, already-documented pick-naming-
-  mismatch gap `pick_trade_values()` itself flags) carries a real `NaN`,
-  and `NaN or 0.0` evaluates to `NaN` (NaN is truthy in Python), not `0.0`.
-  That NaN then poisons
-  `tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * target_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)`
-  (`max(nan, 25.0) == nan`), and every `< -tolerance` comparison against
-  NaN is `False` — so the one hard acceptance gate never rejects anything,
-  every combo in the pool "passes," and the UI renders literal `+nan`
-  asset-value numbers. The pool-building code 20 lines above this
-  (`if pd.notna(row["value"])`, filtering the caller's own picks) already
-  shows the fix pattern was known — it just wasn't applied to the target-
-  resolution path. Fix: resolve `target_value` with an explicit
-  `pd.isna()`/`is None` check, not a bare `or 0.0`.
-- [ ] **An unresolved/unranked target (FantasyCalc has no `adj_value` for
+- [x] **An unresolved pick value crashes the optimizer's own safety gate via
+  silent `NaN` propagation, not the intended $25 floor.** Fixed
+  2026-08-02: `target_value` is now resolved with an explicit
+  `pd.notna()` check (covers both a missing key and a present-but-`NaN`
+  value in one check, unlike a bare `or 0.0`) into a new
+  `target_value_resolved` flag; when unresolved, the function returns
+  early with `offers: []` before `tolerance`/the acceptance gate are ever
+  computed, so a `NaN` can no longer reach either. New regression test:
+  `test_unresolved_pick_target_does_not_propagate_nan`.
+- [x] **An unresolved/unranked target (FantasyCalc has no `adj_value` for
   it) silently reads as worth $0, which defeats the acceptance gate
   entirely and surfaces "give away your cheapest asset" as the #1
-  suggested offer with no warning.** When `target_player_id` isn't in
-  `fc_by_sleeper_id` (an unranked deep bench/practice-squad player, not
-  necessarily worthless — just outside FantasyCalc's coverage),
-  `target_value` becomes `0.0`. From there: the prefilter is skipped
-  outright (`if target_value > 0 and ...`), and the gate
-  `partner_side["asset_value_delta"] < -tolerance` can essentially never
-  trigger, since `partner_side["asset_value_delta"] = combo_value - 0.0 >= 0 > -25`
-  for any nonempty combo. Every combination of the caller's sellable
-  players/picks "clears the bar," and since offers are ranked by least
-  value given up first, the tool's confidently-presented "Best offer"
-  becomes the single cheapest throwaway asset in the pool — a concrete,
-  wrong, actionable recommendation. The manual trade evaluator already has
-  the right pattern for this exact situation (`unresolved_picks` caption:
-  "No resolvable value for: X — contributing 0 to that side's asset
-  value") and `find_trade_offers()` doesn't reuse or mirror it. This is a
-  fresh instance of `valuation_principles.md`'s "Silent data-degradation
-  must surface as a warning, not just a comment" rule. Fix: detect an
-  unresolved target (no `fc_by_sleeper_id` entry, or missing/NaN pick
-  value) and surface it plainly in the returned result (and the UI) before
-  any offers are shown, rather than letting it silently degrade every
-  downstream comparison.
-- [ ] **The sellable/pick pool is capped to the 12 *highest-value*
+  suggested offer with no warning.** Fixed 2026-08-02: same
+  `target_value_resolved` fix as above covers this case too (a missing
+  `fc_by_sleeper_id` entry resolves to `None`, caught by the same
+  `pd.notna()` check) — the offer search no longer runs at all against an
+  unresolved target, so there's no fabricated `$0` baseline for any
+  throwaway asset to "clear." `streamlit_app.py`'s Trade Evaluator tab now
+  shows an explicit warning ("No resolvable market value for X...") when
+  `target_value_resolved` is `False`, mirroring the manual evaluator's
+  existing `unresolved_picks` caption. New regression test:
+  `test_unresolved_player_target_returns_no_offers_without_a_fabricated_zero_baseline`.
+- [x] **The sellable/pick pool is capped to the 12 *highest-value*
   candidates before any target-value filtering runs, which can silently
   exclude the only assets that would actually match a below-median-value
-  target.** `pool.sort(key=value, reverse=True); pool = pool[:TRADE_OFFER_POOL_CAP]`
-  keeps the top 12 by raw value and discards the rest — reasonable when
-  the pool is small (the sizing comment assumes "5-15 candidates"), but
-  this league's own documented rebuild strategy (`CLAUDE.md`: "accumulate
-  young talent," multiple future picks stacking up alongside bench depth)
-  is exactly the profile that pushes a real roster's
-  sellable-players-plus-owned-picks pool past that assumption. When it
-  does, and the target's value sits well below the caller's top-12 floor,
-  none of the actually well-matched cheap assets are ever considered — the
-  combinatorial search runs entirely over a pool of pieces that are all
-  too valuable, producing either a false "no viable offer" or a needless
-  overpay using only high-value pieces. The one existing test for this
-  bound (`test_pool_and_combo_size_bounds_cap_the_search_regardless_of_pool_size`)
-  only asserts the search *size* stays capped, using picks valued 100-129
-  clustered right around its target's value of 100 — it can't and doesn't
-  catch the case where the truncated-away low end of the pool was the
-  correct match. Fix direction: select the pool by proximity to a value
-  band around the target rather than pure descending value, or otherwise
-  guarantee the bounded pool spans both ends of the caller's value range,
-  not just the top.
+  target.** Fixed 2026-08-02: before sorting/capping, the pool now drops
+  any candidate whose value alone already exceeds
+  `TRADE_OFFER_PREFILTER_HIGH` (2×) of the target's value — a
+  mathematically sound prune, not a heuristic reorder: no combo containing
+  such a candidate could ever land in-band, since adding more assets only
+  raises `combo_value` further. This keeps the capped pool from being
+  crowded out by pieces that could never actually be used, so a low-value
+  target's genuinely matching cheap candidates survive the cap even when
+  the roster also holds many pricier ones. New regression test:
+  `test_pool_prunes_out_of_band_candidates_before_capping_so_a_low_value_target_still_finds_a_match`
+  (15 expensive picks + 5 cheap matching ones — asserts every surfaced
+  offer draws only from the cheap set). Full suite (115 tests) passes.
 
 **`feature/trade-block-monitoring` (PR #23, reviewed 2026-08-02):**
 

@@ -456,16 +456,37 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     acquiring the target for free, plus its own `asset_value_delta` (with
     nothing given up, exactly the target's market value) for context —
     both from the one call, not a second lookup path.
-  - **Offer search** — every combination (size 1–3, `TRADE_OFFER_MAX_COMBO_SIZE`)
-    of the caller's own `sellable_players()`/owned-picks pool, capped to
-    the top `TRADE_OFFER_POOL_CAP` (12) candidates by value, pre-filtered
-    to a wide `TRADE_OFFER_PREFILTER_LOW`–`TRADE_OFFER_PREFILTER_HIGH`
+  - **Target value must resolve before any search runs.** `target_value`
+    is read with an explicit `pd.notna()` check (covers a missing
+    FantasyCalc entry and a present-but-unmatched pick name — the same
+    naming-mismatch gap `pick_trade_values()` documents — in one check,
+    unlike a bare `value or 0.0`, which would let a real `NaN` slide
+    through unchanged and silently defeat every downstream comparison; see
+    `.claude/conventions/valuation_principles.md`). When it doesn't
+    resolve, `target_value_resolved` comes back `False`, the combinatorial
+    search doesn't run at all, and the Trade Evaluator tab shows an
+    explicit warning instead of a `$0`-baseline search that would make any
+    throwaway asset look like a clearing offer. `target_read` is still
+    returned either way — its lineup-value half doesn't depend on market
+    value.
+  - **Offer search** (only once the target's value has resolved) — every
+    combination (size 1–3, `TRADE_OFFER_MAX_COMBO_SIZE`) of the caller's
+    own `sellable_players()`/owned-picks pool. Any candidate whose value
+    alone already exceeds `TRADE_OFFER_PREFILTER_HIGH` (2×) of the
+    target's value is dropped before the pool is capped to the top
+    `TRADE_OFFER_POOL_CAP` (12) candidates by value — a provable prune,
+    not a heuristic: no combo containing such a candidate could ever land
+    in-band, since adding more assets only raises `combo_value` further,
+    so pruning it first keeps the cap from being crowded out by pieces
+    that could never actually be used (otherwise a low-value target's own
+    genuinely matching cheap candidates could be silently squeezed out by
+    the caller's pricier ones). The surviving pool is then pre-filtered to
+    a wide `TRADE_OFFER_PREFILTER_LOW`–`TRADE_OFFER_PREFILTER_HIGH`
     (0.5×–2.0×) band around the target's value purely to bound how many
     combinations pay for a real `evaluate_trade()` call before the actual
     plausibility check runs. A combo survives only if the partner's own
     `asset_value_delta` doesn't fall more than
-    `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%, or `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE`
-    if the target's value is unresolvable) below zero — the one hard
+    `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) below zero — the one hard
     "would they plausibly accept this" gate, itself just `evaluate_trade`'s
     existing market-value read, not an invented acceptance model.
   - **Need-aware ranking** — combos touching one of the partner's

@@ -1460,6 +1460,85 @@ class TestFindTradeOffers:
         )
         assert result["combos_considered"] == expected_combo_count
 
+    def test_pool_prunes_out_of_band_candidates_before_capping_so_a_low_value_target_still_finds_a_match(self):
+        # 15 expensive picks (500 each) plus 5 cheap picks (20-28) that
+        # actually match a 30-value target. Capping the pool by raw
+        # descending value alone (the old behavior) would keep only the 15
+        # expensive picks - none of which could ever land in-band, since
+        # adding more assets only raises combo_value further - starving the
+        # search of the genuinely matching cheap ones entirely. The pre-cap
+        # prune (drop anything already over TRADE_OFFER_PREFILTER_HIGH of
+        # the target's value) must remove the out-of-band picks first so
+        # the cheap ones survive into the capped pool.
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": [], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {"target_wr": make_player("WR", full_name="Target WR")}
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("target_wr", 30)])
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+        expensive = [{"pick": f"expensive_{i}", "owner": "You", "owner_roster_id": 1, "value": 500} for i in range(15)]
+        cheap = [{"pick": f"cheap_{i}", "owner": "You", "owner_roster_id": 1, "value": 20 + i * 2} for i in range(5)]
+        pick_value_table = pd.DataFrame(expensive + cheap)
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, pick_value_table,
+            target_player_id="target_wr",
+        )
+
+        assert result["offers"] != []
+        assert all(asset["id"].startswith("cheap_") for offer in result["offers"] for asset in offer["combo"])
+
+    def test_unresolved_player_target_returns_no_offers_without_a_fabricated_zero_baseline(self):
+        # unranked_target has no FantasyCalc entry at all - a real data gap,
+        # not a genuinely-worthless player. The search must not treat that
+        # as "worth $0" and go looking for a plausible offer against a
+        # fabricated baseline (which would make literally any throwaway
+        # asset look like a clearing offer).
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": ["depth_wr"], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["unranked_target"], "taxi": [], "reserve": []}
+        players = {
+            "depth_wr": make_player("WR", full_name="Depth WR"),
+            "unranked_target": make_player("WR", full_name="Unranked Target"),
+        }
+        players["depth_wr"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("depth_wr", 5)])
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="unranked_target",
+        )
+
+        assert result["target_value_resolved"] is False
+        assert result["offers"] == []
+        assert result["combos_considered"] == 0
+        assert result["combos_evaluated"] == 0
+
+    def test_unresolved_pick_target_does_not_propagate_nan(self):
+        # A pick present in the table but with an unmatched FantasyCalc
+        # name (pick_trade_values()'s own documented naming-mismatch gap)
+        # carries a real NaN, not a missing key - `NaN or 0.0` would
+        # otherwise leave target_value as NaN and poison every comparison
+        # built from it (tolerance, the acceptance gate) without raising.
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": [], "taxi": [], "reserve": []}
+        partner_roster = {"players": [], "taxi": [], "reserve": []}
+        pick_value_table = pd.DataFrame(
+            [{"pick": "2027 1st", "owner": "Them", "owner_roster_id": 2, "value": float("nan")}]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, {}, {}, {}, league, replacement_level, pick_value_table,
+            target_pick_name="2027 1st",
+        )
+
+        assert result["target_value_resolved"] is False
+        assert result["target_value"] == 0.0
+        assert result["offers"] == []
+        assert not math.isnan(result["target_read"]["asset_value_delta"])
+
 
 class TestRecommendDropIneligibility:
     """A taxi/IR player must never be misclassified as a "starter", even if its

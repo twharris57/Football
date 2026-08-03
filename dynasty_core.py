@@ -1735,16 +1735,22 @@ def find_trade_offers(
       both from the one call, not a second lookup path.
     - `offers` - every combination (size 1..TRADE_OFFER_MAX_COMBO_SIZE) of
       your own sellable_players()/pick_value_table pool (capped to the top
-      TRADE_OFFER_POOL_CAP by value), pre-filtered to a wide band around
-      the target's value purely to bound how many pay for a real
-      evaluate_trade() call, then verified two-sided exactly like the
+      TRADE_OFFER_POOL_CAP by value after first dropping any candidate
+      whose value alone already exceeds TRADE_OFFER_PREFILTER_HIGH of the
+      target's value - no combo containing such a candidate could ever
+      land in-band, since adding more assets only raises combo_value
+      further, so pruning it before the cap keeps the capped pool from
+      being crowded out by pieces that could never actually be used, which
+      otherwise silently starves a below-median-value target of its own
+      genuinely matching low-value candidates), pre-filtered to a wide
+      band around the target's value purely to bound how many pay for a
+      real evaluate_trade() call, then verified two-sided exactly like the
       trade evaluator does manually. A combo survives only if the
       partner's own asset_value_delta doesn't come out too lopsided
       against them (TRADE_OFFER_PARTNER_TOLERANCE_PCT of the target's
-      value, or TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE if unresolvable) - the
-      one hard "would they plausibly accept this" gate, itself just
-      evaluate_trade's existing market-value read, not an invented
-      acceptance model. Combos touching one of the partner's
+      value) - the one hard "would they plausibly accept this" gate,
+      itself just evaluate_trade's existing market-value read, not an
+      invented acceptance model. Combos touching one of the partner's
       currently-flagged need_positions (checked against their roster as
       it stands today, not the hypothetical post-trade roster - a known,
       narrower gap than the Roster tab's own need-flagging, acceptable
@@ -1754,6 +1760,26 @@ def find_trade_offers(
       up), then need-match, then fewest assets. Returns up to `top_n` -
       empty if nothing clears the partner's bar, never a forced marginal
       suggestion.
+
+    `target_value_resolved` is False when the target has no real market
+    value to search against - a player FantasyCalc doesn't rank, or a pick
+    name that doesn't match FantasyCalc's own naming convention (the same
+    gap `pick_trade_values()` documents). Resolved with an explicit
+    `pd.notna()` check, not a bare `value or 0.0` - a present-but-unresolved
+    pick carries a real `NaN`, which is truthy in Python and would
+    otherwise slide past an `or` fallback unchanged and then silently
+    defeat every downstream comparison built from it (see
+    .claude/conventions/valuation_principles.md). When unresolved, the
+    offer search doesn't run at all - there is no real value to plausibly
+    match an offer against - and `offers`/`combos_considered`/
+    `combos_evaluated` come back empty rather than searching against a
+    fabricated `0.0` baseline, which would otherwise make every combo in
+    the pool look "plausible" (including a token, worthless throw-in) and
+    surface one as a confidently-ranked top suggestion. `target_read` is
+    still computed either way - the lineup-value half of the read doesn't
+    depend on market value - but its own `asset_value_delta` is `0.0` for
+    the same reason it always has been when a market value can't be found,
+    same as the manual evaluator's existing `unresolved_picks` handling.
 
     `combos_considered`/`combos_evaluated` are the raw combo count and the
     count surviving the value pre-filter, so a "nothing found" result can
@@ -1766,13 +1792,27 @@ def find_trade_offers(
 
     if target_player_id:
         target_entry = fc_by_sleeper_id.get(target_player_id)
-        target_value = (target_entry.get("adj_value") if target_entry else None) or 0.0
+        raw_target_value = target_entry.get("adj_value") if target_entry else None
         target_read = evaluate_trade(your_roster, [], [target_player_id], players, fc_by_sleeper_id, byes, league)
     else:
-        target_value = pick_value_by_name.get(target_pick_name) or 0.0
+        raw_target_value = pick_value_by_name.get(target_pick_name)
         target_read = evaluate_trade(
-            your_roster, [], [], players, fc_by_sleeper_id, byes, league, incoming_pick_value=target_value
+            your_roster, [], [], players, fc_by_sleeper_id, byes, league,
+            incoming_pick_value=raw_target_value if pd.notna(raw_target_value) else 0.0,
         )
+
+    target_value_resolved = bool(pd.notna(raw_target_value))
+    target_value = float(raw_target_value) if target_value_resolved else 0.0
+
+    if not target_value_resolved:
+        return {
+            "target_value": target_value,
+            "target_value_resolved": False,
+            "target_read": target_read,
+            "offers": [],
+            "combos_considered": 0,
+            "combos_evaluated": 0,
+        }
 
     your_sellable = sellable_players(your_roster, players, fc_by_sleeper_id, replacement_level, league, byes)
     pool = [
@@ -1785,6 +1825,8 @@ def find_trade_offers(
         for _, row in your_picks.iterrows()
         if pd.notna(row["value"])
     ]
+    if target_value > 0:
+        pool = [c for c in pool if c["value"] <= TRADE_OFFER_PREFILTER_HIGH * target_value]
     pool.sort(key=lambda c: c["value"], reverse=True)
     pool = pool[:TRADE_OFFER_POOL_CAP]
 
@@ -1842,6 +1884,7 @@ def find_trade_offers(
 
     return {
         "target_value": target_value,
+        "target_value_resolved": True,
         "target_read": target_read,
         "offers": offers[:top_n],
         "combos_considered": combos_considered,

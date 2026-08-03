@@ -1003,7 +1003,12 @@ with trade_tab:
 
         st.markdown("**Suggested offers**")
         offers = offer_result["offers"]
-        if not offers:
+        if not offer_result["target_value_resolved"]:
+            st.warning(
+                f"No resolvable market value for {target_label} — can't search for a plausible offer "
+                "without a value to match against. The lineup-value read above is still valid."
+            )
+        elif not offers:
             st.info(
                 f"No combination of your sellable players/picks clears {partner_name}'s "
                 f"plausibility bar for {target_label} — nothing to suggest. Considered "
