@@ -36,83 +36,7 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-**`feature/trade-target-optimizer` (PR #25, reviewed 2026-08-02):**
-
-- [x] **An unresolved pick value crashes the optimizer's own safety gate via
-  silent `NaN` propagation, not the intended $25 floor.** Fixed
-  2026-08-02: `target_value` is now resolved with an explicit
-  `pd.notna()` check (covers both a missing key and a present-but-`NaN`
-  value in one check, unlike a bare `or 0.0`) into a new
-  `target_value_resolved` flag; when unresolved, the function returns
-  early with `offers: []` before `tolerance`/the acceptance gate are ever
-  computed, so a `NaN` can no longer reach either. New regression test:
-  `test_unresolved_pick_target_does_not_propagate_nan`.
-- [x] **An unresolved/unranked target (FantasyCalc has no `adj_value` for
-  it) silently reads as worth $0, which defeats the acceptance gate
-  entirely and surfaces "give away your cheapest asset" as the #1
-  suggested offer with no warning.** Fixed 2026-08-02: same
-  `target_value_resolved` fix as above covers this case too (a missing
-  `fc_by_sleeper_id` entry resolves to `None`, caught by the same
-  `pd.notna()` check) — the offer search no longer runs at all against an
-  unresolved target, so there's no fabricated `$0` baseline for any
-  throwaway asset to "clear." `streamlit_app.py`'s Trade Evaluator tab now
-  shows an explicit warning ("No resolvable market value for X...") when
-  `target_value_resolved` is `False`, mirroring the manual evaluator's
-  existing `unresolved_picks` caption. New regression test:
-  `test_unresolved_player_target_returns_no_offers_without_a_fabricated_zero_baseline`.
-- [x] **The sellable/pick pool is capped to the 12 *highest-value*
-  candidates before any target-value filtering runs, which can silently
-  exclude the only assets that would actually match a below-median-value
-  target.** Fixed 2026-08-02: before sorting/capping, the pool now drops
-  any candidate whose value alone already exceeds
-  `TRADE_OFFER_PREFILTER_HIGH` (2×) of the target's value — a
-  mathematically sound prune, not a heuristic reorder: no combo containing
-  such a candidate could ever land in-band, since adding more assets only
-  raises `combo_value` further. This keeps the capped pool from being
-  crowded out by pieces that could never actually be used, so a low-value
-  target's genuinely matching cheap candidates survive the cap even when
-  the roster also holds many pricier ones. New regression test:
-  `test_pool_prunes_out_of_band_candidates_before_capping_so_a_low_value_target_still_finds_a_match`
-  (15 expensive picks + 5 cheap matching ones — asserts every surfaced
-  offer draws only from the cheap set). Full suite (115 tests) passes.
-
-**`feature/trade-block-monitoring` (PR #23, reviewed 2026-08-02):**
-
-- [x] **`evaluate_trade()`'s `over_capacity` misfired for any roster
-  already carrying taxi-squad players — the norm for this league, not an
-  edge case.** Fixed 2026-08-02: `roster_total_capacity()` gained a
-  `taxi_filled` parameter, credited whenever `taxi_eligible=False`
-  instead of zeroing taxi capacity outright — mirrors how `reserve_filled`
-  already worked, so an existing taxi stash counts as room already spent
-  rather than reading as already over capacity before anything changes.
-  Threaded through `rank_by_marginal_value()`/`free_agent_board()`
-  (`RT-11`, identical root cause, fixed in the same change) and
-  `evaluate_trade()`. Also fixed the smaller, same-shaped nuance found in
-  the same review: `evaluate_trade`'s `reserve_filled`/`taxi_filled` are
-  now computed *post*-trade (excluding any outgoing player who was
-  currently on IR/taxi), since trading one of them away genuinely frees
-  that slot. Verified with new tests: an existing taxi occupant no longer
-  forces an unnecessary drop in `rank_by_marginal_value`/`free_agent_board`,
-  doesn't cause a false `over_capacity` in `evaluate_trade`, and trading
-  away an IR player correctly shrinks post-trade `capacity` by one. See
-  `.claude/conventions/valuation_principles.md`'s "A capacity ceiling that
-  restricts new entrants must not also erase credit for room already
-  spent" rule.
-- [x] **`recommend_drop()`'s `is_starter` tag could overstate a forced
-  cut's severity whenever `exclude_ids` was non-empty (`RT-13`).** Fixed
-  2026-08-02: `assign_starters()` now runs against the *full* candidate
-  list before `exclude_ids` is applied, so a protected player (a trade's
-  incoming side, or a draft plan's earlier picks) still legitimately
-  occupies a slot and can still push someone else to bench when deciding
-  who else counts as a starter — `exclude_ids` now only gates which
-  candidate can be *chosen* as the drop, applied after `starter_ids` is
-  computed. New regression test (`TestRecommendDropExcludedCompetition`)
-  constructs the exact failure mode: two higher-value excluded players
-  correctly win the roster's only starting slot, so the sole droppable
-  candidate reads `is_starter: False`, not the `True` the old
-  exclude-before-assign order would have produced. See
-  `.claude/conventions/valuation_principles.md`'s "Exclusion filters
-  change the outcome for everyone else" rule.
+*Empty — nothing under active review right now.*
 
 ## Now — blocking
 
@@ -139,9 +63,8 @@ shrinkage on that read's `win_pct` are done** — see
 `docs/rookie-draft-big-board.md`'s "Roster needs" and "Team timeline /
 power-timeline read" sections for the full methodology.
 
-**Trade targets & sells v1 (`sellable_players()`, `pick_trade_values()`) is
-done** — see `docs/rookie-draft-big-board.md`'s "Trade targets & sells"
-section for the full methodology.
+**Trade targets & sells v1 is done** — see `docs/rookie-draft-big-board.md`'s
+"Trade targets & sells" section.
 
 Deliberately out of v1, not forgotten:
 - **Selling starters, not just depth** — the "sellable vs. just
@@ -167,48 +90,17 @@ Deliberately out of v1, not forgotten:
   decision (extend the exclusion, or leave it and rely on the human)
   rather than an unexamined inconsistency between the two features.
 
-**Free agent / roster-moves evaluator v1 (`free_agent_board()`) is done** —
-see `docs/rookie-draft-big-board.md`'s "Free agents" section for the full
-methodology. Ranks every available (non-rostered) player by marginal value
-against a roster, reusing `rank_by_marginal_value` exactly like the draft
-plan does; active-roster-only capacity (`taxi_eligible=False` — Sleeper's
-real accrued-experience taxi rule isn't modeled, see `RT-8` below);
-remaining FAAB shown for context, no bid-sizing (see `RT-10` below); no
-in-season change monitoring, recomputed fresh every refresh instead (see
-`RT-9` below).
+**Free agent / roster-moves evaluator v1 is done** — see
+`docs/rookie-draft-big-board.md`'s "Free agents" section. Open follow-ups:
+`RT-8` (real taxi eligibility), `RT-9` (in-season change monitoring),
+`RT-10` (FAAB bid-sizing).
 
-**Trade evaluator (`evaluate_trade()`) is done** — see
-`docs/rookie-draft-big-board.md`'s "Trade evaluator" section for the full
-methodology. Reframed from the originally-scoped "watch the trade block"
-(user feedback, 2026-08-02): real trade offers are two-sided and often
-multi-asset (players and/or picks on either side), so this evaluates an
-arbitrary proposed trade between two selected teams — season-average
-marginal lineup value plus a market-value (`adj_value`/pick `value`) read,
-shown for both sides — reusing `season_average_starter_value` and
-`pick_trade_values` rather than a new valuation model. 3-way trades aren't
-supported (rare, disproportionate complexity). Manual/on-demand, no trade
-feed (Sleeper doesn't expose trade discussions) — see `RT-6` below for the
-contextual-research idea this could still feed into.
+**Trade evaluator is done** — see `docs/rookie-draft-big-board.md`'s
+"Trade evaluator" section. `RT-6` below is the contextual-research idea
+this could still feed into.
 
-**Trade-target optimizer (`find_trade_offers()`) is done** — see
-`docs/rookie-draft-big-board.md`'s "Trade-target optimizer" section for the
-full methodology. Given one asset on a partner's roster (a player or a
-pick, not a bundle — an already multi-asset offer on the table is exactly
-what the trade evaluator above already handles), answers both of `RT-12`'s
-questions by composing existing primitives, not a new valuation model:
-"worth pursuing" reuses `evaluate_trade()` with zero outgoing; "what to
-offer" searches combinations (size 1-3) of the caller's own
-`sellable_players()`/`pick_trade_values()` pool, verifies each two-sided
-through `evaluate_trade()`, and gates on the partner's own asset-value read
-staying within a plausible tolerance of the target's value — the one hard
-acceptance bar, not an invented model. Combos touching a partner
-`need_positions` flag rank ahead of otherwise-equal alternatives. Returns
-nothing rather than forcing a marginal suggestion when no combo clears the
-bar. Lives in the Trade Evaluator tab as a second section below the
-existing two-sided evaluator, reusing its team selection. Deliberately out
-of scope: multi-asset targets, 3-way trades (same as the evaluator above),
-and recomputing the partner's needs against the hypothetical post-trade
-roster rather than today's.
+**Trade-target optimizer is done** — see `docs/rookie-draft-big-board.md`'s
+"Trade-target optimizer" section. Follow-ups below: `RT-14`, `RT-15`.
 
 - [ ] **RT-14: Evaluate and improve an offer someone else has already made
   *to* us** (user-flagged 2026-08-02, filed while scoping `RT-12`) — a

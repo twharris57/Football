@@ -39,32 +39,20 @@ refresh. Results are cached to disk (no TTL — the underlying seasons are
 historical and don't change on a clock) and recomputed only on a "force
 full refresh."
 
-`_sane_ratio()` guards every computed ratio before it's used: a
-near-zero/negative pooled `baseline_points` (`<= 1.0`, which would blow the
-ratio up or invert its sign) or a result outside `MULTIPLIER_BOUNDS`
-(`[0.5, 2.0]`) falls back further up the chain instead — real observed
-ratios land in `[1.08, 1.61]`, comfortably inside the bound, so this is a
-defensive floor against a bad data pull, not a normal code path. Covered by
+`_sane_ratio()` guards every computed ratio: a near-zero/negative pooled
+`baseline_points` or a result outside `MULTIPLIER_BOUNDS` (`[0.5, 2.0]`)
+falls back further up the chain instead of being used directly — real
+observed ratios land in `[1.08, 1.61]`, so this is a defensive floor
+against a bad data pull, not a normal code path. Covered by
 `tests/test_player_scoring.py` (`TestSaneRatio`).
 
-**The correction never lowers value for RB/WR/TE, and empirically hasn't
-for QB either.** For RB/WR/TE, every scoring-rule difference this league's
-`scoring_settings` add on top of `BASELINE_SCORING` — first-down bonuses,
-long-play bonuses, the TE premium — is strictly additive; there's no
-category `real` scores that `baseline` doesn't. That makes `ratio ≥ 1` a
-structural guarantee for those three positions, not an empirical
-coincidence — `real_points` can never fall below `baseline_points` when
-every rule difference only adds. QB is the one position with a genuine
-downward term (the INT penalty and pick-six penalty exist in `real` but not
-`baseline`), so a sub-1.0 ratio is theoretically possible there — nothing
-in `_sane_ratio()`'s `[0.5, 2.0]` bounds would prevent it, only a ratio
-below `0.5` gets rejected. It just hasn't happened: even the lowest-ratio
-QB in the real 3-season pool sits at 1.23, since the 6pt-vs-4pt TD bump and
-this league's higher passing-yardage rate are large, broad-based lifts that
-dwarf the INT/pick-six penalty increase for any QB with real starting
-volume. A QB with an extreme INT/pick-six-to-production ratio, while still
-clearing the 200-attempt qualifying bar, could in principle be the first
-case where `adj_value < value`.
+**The correction never lowers value for RB/WR/TE** — every scoring-rule
+difference this league adds for those positions is strictly additive, so
+`ratio ≥ 1` is structurally guaranteed, not just observed. QB is the one
+position with a real downward term (INT/pick-six penalties), so
+`adj_value < value` is theoretically possible there, but hasn't happened
+in the real data (lowest observed QB ratio: 1.23) — the TD/yardage-rate
+lift dwarfs the penalty for any real-volume starter.
 
 Because there's no renormalization step, this also isn't a zero-sum
 reallocation — the correction doesn't shift value *from* one position *to*
@@ -223,20 +211,11 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   (computed once per refresh across every roster) applies regardless of
   whose roster is being viewed.
 
-  `_position_starter_demand()` adds `roster_positions.count("SUPER_FLEX")`
-  to QB's demand specifically, matching the `num_qbs` pattern the
-  market-value call already uses (`count("QB") + count("SUPER_FLEX")`) —
-  in this confirmed superflex league, roughly two QBs per team are
-  startable, not one, and a dedicated-slot-only count would silently
-  understate QB's real replacement-level rank (12 vs. the correct ~24) and
-  systematically understate QB's `vor`. FLEX demand for RB/WR/TE is **not**
-  covered by this — unlike SUPER_FLEX's near-total lean toward a 2nd QB,
-  FLEX splits demand across three positions with no similarly clean
-  allocation; doing it properly needs a joint model of relative positional
-  depth, not a simple per-position count. Same "ignores FLEX" simplification
-  `roster_weekly_gaps` makes deliberately. See
-  `.claude/conventions/valuation_principles.md` for the durable rule this
-  follows ("superflex inflates QB value — model it as such, everywhere").
+  `_position_starter_demand()` counts `SUPER_FLEX` slots toward QB demand
+  (not FLEX toward RB/WR/TE — no similarly clean allocation exists there;
+  same simplification `roster_weekly_gaps` makes). See
+  `.claude/conventions/valuation_principles.md`'s "superflex inflates QB
+  value" rule for why.
 - **Team timeline / power-timeline read** (`team_power_timeline_scores()`)
   — every team's rebuild-vs-contend read, not just the user's own, as a
   *continuous* score rather than a fixed two- or three-point label — display
@@ -443,73 +422,28 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   - A pick with no resolvable value (the same FantasyCalc pick-naming-mismatch
     gap `pick_trade_values` already documents) contributes `0` to that
     side's asset value, surfaced to the user rather than silently wrong.
-- **Trade-target optimizer** (`find_trade_offers()`) — the trade evaluator
-  above only scores a trade someone has already fully specified; this
-  answers the question one step earlier: given one specific asset (a
-  player *or* a pick, not a bundle — an already multi-asset offer on the
-  table is exactly what the evaluator above handles) sitting on a
-  partner's roster, is it worth pursuing, and if so what should be
-  offered for it. Composes existing primitives rather than a new
-  valuation or acceptance model (`.claude/conventions/valuation_principles.md`):
-  - **Worth pursuing** (`target_read`) — `evaluate_trade()` called with
-    zero outgoing assets: the marginal season-average lineup value of
-    acquiring the target for free, plus its own `asset_value_delta` (with
-    nothing given up, exactly the target's market value) for context —
-    both from the one call, not a second lookup path.
-  - **Target value must resolve before any search runs.** `target_value`
-    is read with an explicit `pd.notna()` check (covers a missing
-    FantasyCalc entry and a present-but-unmatched pick name — the same
-    naming-mismatch gap `pick_trade_values()` documents — in one check,
-    unlike a bare `value or 0.0`, which would let a real `NaN` slide
-    through unchanged and silently defeat every downstream comparison; see
-    `.claude/conventions/valuation_principles.md`). When it doesn't
-    resolve, `target_value_resolved` comes back `False`, the combinatorial
-    search doesn't run at all, and the Trade Evaluator tab shows an
-    explicit warning instead of a `$0`-baseline search that would make any
-    throwaway asset look like a clearing offer. `target_read` is still
-    returned either way — its lineup-value half doesn't depend on market
-    value.
-  - **Offer search** (only once the target's value has resolved) — every
-    combination (size 1–3, `TRADE_OFFER_MAX_COMBO_SIZE`) of the caller's
-    own `sellable_players()`/owned-picks pool. Any candidate whose value
-    alone already exceeds `TRADE_OFFER_PREFILTER_HIGH` (2×) of the
-    target's value is dropped before the pool is capped to the top
-    `TRADE_OFFER_POOL_CAP` (12) candidates by value — a provable prune,
-    not a heuristic: no combo containing such a candidate could ever land
-    in-band, since adding more assets only raises `combo_value` further,
-    so pruning it first keeps the cap from being crowded out by pieces
-    that could never actually be used (otherwise a low-value target's own
-    genuinely matching cheap candidates could be silently squeezed out by
-    the caller's pricier ones). The surviving pool is then pre-filtered to
-    a wide `TRADE_OFFER_PREFILTER_LOW`–`TRADE_OFFER_PREFILTER_HIGH`
-    (0.5×–2.0×) band around the target's value purely to bound how many
-    combinations pay for a real `evaluate_trade()` call before the actual
-    plausibility check runs. A combo survives only if the partner's own
-    `asset_value_delta` doesn't fall more than
-    `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) below zero — the one hard
-    "would they plausibly accept this" gate, itself just `evaluate_trade`'s
-    existing market-value read, not an invented acceptance model.
-  - **Need-aware ranking** — combos touching one of the partner's
-    currently-flagged `need_positions` (`roster_needs_summary`/
-    `need_positions`, checked against their roster as it stands today, not
-    the hypothetical post-trade roster — a known, narrower gap than the
-    Roster tab's own need-flagging) rank ahead of otherwise-equally-plausible
-    alternatives. This is a ranking tiebreaker only, never the accept/reject
-    gate — requiring both a value bar and a need match would reject
-    perfectly normal value-for-value or picks-for-depth trades that don't
-    touch a flagged need at all.
-  - Ranked best-for-the-caller first (least market value given up), then
-    need-match, then fewest assets. Returns up to `top_n` (3) — empty,
-    never a forced marginal suggestion, if nothing clears the partner's
-    bar; `combos_considered`/`combos_evaluated` let the UI say something
-    concrete ("considered N combinations") instead of a bare empty list.
-  - Lives as a second section in the Trade Evaluator tab, below the manual
-    evaluator, reusing its existing team selection.
-  - Deliberately out of scope: multi-asset targets (the manual evaluator
-    above already covers an already-specified multi-asset trade), 3-way
-    trades (same reasoning as the evaluator above), and evaluating +
-    improving an offer someone else has already proposed *to* us — a
-    related but distinct question, tracked separately in `.claude/PROJECT_PLAN.md`.
+- **Trade-target optimizer** (`find_trade_offers()`) — one step earlier
+  than the evaluator above: given one asset (player or pick, not a bundle)
+  on a partner's roster, is it worth pursuing and what should be offered
+  for it. Composes existing primitives, no new valuation model
+  (`.claude/conventions/valuation_principles.md`). `target_read` reuses
+  `evaluate_trade()` with zero outgoing for the marginal lineup value plus
+  market value of acquiring it for free. The offer search only runs once
+  the target's value actually resolves (a `pd.notna()` check, not a bare
+  `or 0.0` — see `valuation_principles.md`'s NaN rule) — otherwise it
+  returns nothing rather than searching against a fabricated `$0`
+  baseline. It then searches combinations (size 1–3) of the caller's own
+  sellable players/picks, pruned to a plausible value band around the
+  target before capping the pool (`TRADE_OFFER_POOL_CAP`/`PREFILTER_*` in
+  `dynasty_core/trade.py`), and verifies each two-sided through
+  `evaluate_trade()` — the one hard gate is the partner's own
+  `asset_value_delta` staying within `TRADE_OFFER_PARTNER_TOLERANCE_PCT`
+  of zero. Combos touching one of the partner's current `need_positions`
+  rank ahead of otherwise-equal alternatives (a tiebreaker only, not a
+  second gate). Returns up to `top_n`, empty if nothing clears the bar.
+  Lives in the Trade Evaluator tab below the manual evaluator. Out of
+  scope: multi-asset targets, 3-way trades, and improving an offer someone
+  else proposed *to* us (tracked in `.claude/PROJECT_PLAN.md`).
 - **Bye-week impact** and **weekly gaps** — the former
   (`roster_bye_conflicts`) shows every week with an active-roster player on
   bye: who's out, who fills in, and the resulting delta to optimal
@@ -609,10 +543,10 @@ is a deliberate decision, not a silent bug:
 | Roster only uses QB/RB/WR/TE/FLEX/SUPER_FLEX slot types | `assign_starters`, `roster_weekly_gaps` | Any other Sleeper slot type (`WRRB_FLEX`, `REC_FLEX`, K, DEF, IDP) would be silently ignored — not assigned, not counted, no error | Extend `FLEX_ELIGIBLE_POSITIONS`/`SUPERFLEX_ELIGIBLE_POSITIONS` and the slot-processing loop for the new type |
 | `POSITION_VALUE_MULTIPLIER` (`QB: 1.175`, `TE: 1.202`) | `dynasty_core.py` | Last-resort fallback only — stale numbers only matter if the whole `player_scoring.py` enrichment fails for a refresh | Re-run `scripts/derive_position_multipliers.py`; not urgent since it's a fallback, not the primary path |
 | `player_scoring.BASELINE_SCORING` (FantasyCalc's assumed scoring model) | `player_scoring.py` | The entire per-player correction ratio is only as good as this guess — FantasyCalc doesn't publish its real formula, so it can't be verified directly | No way to verify against FantasyCalc directly; revisit only if FantasyCalc publishes methodology notes, or the correction looks systematically off |
-| `BASELINE_SCORING["rec"] = 1.0`, hardcoded independent of the real `ppr` sent to FantasyCalc | `player_scoring.py` | `get_dynasty_values()` sends this league's real PPR to FantasyCalc, so its market value is calibrated to it — but `BASELINE_SCORING` assumes `1.0` regardless. Harmless while the league stays full PPR; if it's ever changed, the correction ratio would silently conflate the intended residual-scoring delta with an unintended PPR delta FantasyCalc's own call already priced in (`.claude/PROJECT_PLAN.md`, Valuation & data accuracy) | Thread the real `ppr` value into `BASELINE_SCORING["rec"]` instead of the literal `1.0` |
+| `BASELINE_SCORING["rec"] = 1.0`, hardcoded independent of the real `ppr` sent to FantasyCalc | `player_scoring.py` | Harmless while the league stays full PPR; if PPR ever changes, the correction ratio would silently conflate the intended scoring delta with an unpriced PPR delta (`.claude/PROJECT_PLAN.md`, Valuation & data accuracy) | Thread the real `ppr` value into `BASELINE_SCORING["rec"]` instead of the literal `1.0` |
 | `player_scoring.QUALIFYING_VOLUME` (QB ≥200 att / RB ≥100 carries / WR ≥50 targets / TE ≥30 targets) | `player_scoring.py` | Not derived from any league rule — a manual judgment call for "enough volume to trust a personalized ratio" | Revisit only if personalized ratios look noisy for borderline players |
 | `YOUNG_CORE_MAX_YOE` / `YOUNG_CORE_NEED_THRESHOLD` / `LOW_VALUE_YOUNG_AGE` / `LOW_VALUE_AGING_AGE` | `dynasty_core.py` | Subjective heuristics behind the rebuild-strategy "need"/"low value" flags, not derived from any league setting | Adjust by feel as the roster ages into (or out of) the rebuild window |
 | `WIN_PCT_SHRINKAGE_K = 4` (games worth of shrinkage weight toward `0.5`) | `dynasty_core.py` | A judgment call for how fast `win_pct_shrunk` (the power/timeline read's z-scoring input, not the displayed `win_pct`) should trust a real record over the neutral prior — not derived from any league setting or statistical fit | Adjust by feel if early-season `power_score` still looks too swingy or too damped |
 | `max_keepers: 1` in the league's Sleeper settings | Not modeled anywhere | Appears vestigial for a dynasty-type league (Sleeper `type: 2`) — the whole roster carries over every year, not a limited keeper count, so this setting doesn't seem to apply | Revisit only if Sleeper's dynasty/keeper interaction is ever observed to actually matter |
-| `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`) | Every other place in this codebase treats `roster_id` as an opaque key; this is the only place that assumes it's a literal range, to synthesize a future season's pick ownership without a real Sleeper draft object to read a `slot_to_roster_id` mapping from. Confirmed true for this league directly, but if Sleeper ever assigns non-contiguous IDs (e.g. after a team leaves and isn't backfilled), it would silently synthesize picks for a `roster_id` that doesn't exist | Iterate the real `rosters` list instead of a synthesized range |
+| `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`) | The only place in this codebase that treats `roster_id` as a range rather than an opaque key (needed to synthesize future pick ownership with no real draft object). Confirmed true today; a non-contiguous ID (e.g. a departed team) would silently synthesize a phantom pick | Iterate the real `rosters` list instead of a synthesized range |
 | `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers` (`dynasty_core.py`) | Judgment calls bounding the trade-target optimizer's combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |

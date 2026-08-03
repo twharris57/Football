@@ -56,49 +56,27 @@ league are worth scouting first."
 
 ### Roster needs: VOR / Weak columns
 
-The "Roster needs" table has two columns from `positional_strength_summary`
-(see `docs/rookie-draft-big-board.md` for the full methodology) alongside
-the young-core `Need` flag: `VOR` (value-over-replacement) and `Weak`
-(`VOR <= 0`) — a position whose actual starters aren't worth what's freely
-available anywhere else in the league. `team_roster_analysis()` joins this
-onto the existing `roster_needs` table rather than adding a separate one,
-since they're two answers about the same position a user would want side by
-side. The "How this works" expander explains why they can disagree (plenty
-of bodies but no real value, or the reverse) and why VOR compares against
-the whole league rather than the rest of the team's own roster (the latter
-would let one elite player elsewhere distort every other position's
-apparent strength). Works through the team selector above unchanged:
-`replacement_level` (the league-wide baseline) is computed once per refresh
-in `gather_state` and passed into every `team_roster_analysis()` call,
-including the on-demand ones for other teams.
+The "Roster needs" table adds `VOR`/`Weak` columns from
+`positional_strength_summary` (methodology: `docs/rookie-draft-big-board.md`)
+alongside the young-core `Need` flag, joined by `team_roster_analysis()`
+since they're two answers about the same position. Works through the team
+selector above unchanged; `replacement_level` is computed once per refresh
+and passed into every on-demand `team_roster_analysis()` call.
 
 ### Team timeline
 
-A "Team timeline" section sits above Roster capacity, for whichever team
-the selector above has picked — the continuous power/timeline read
-(`team_power_timeline_scores()`, see `docs/rookie-draft-big-board.md` for
-the full methodology). Unlike the VOR/Weak columns above, this isn't
-computed per-team on demand: every team's row is needed together for the
-z-scoring itself, so `gather_state` computes the whole league's table once
-and the UI just looks up
-`state["team_power_timeline"].loc[selected_roster_id]`. Shown as an
-`st.metric` (phase label + the underlying continuous score) plus a caption
-breaking out the three component signals (VOR, weighted age, win %), so the
-*why* behind the label is always visible. The CLI mirrors this with a plain
-`--- Team timeline ---` line for the user's own team.
+Sits above Roster capacity, for whichever team is selected — the
+continuous power/timeline read (`team_power_timeline_scores()`, methodology
+in the other doc). Computed for the whole league at once in `gather_state`
+(the z-scoring needs every team together), unlike the VOR/Weak columns
+above. Shown as `rank`/`league_size` (e.g. "3 of 12") rather than the raw
+z-score — reads better cold, with the raw score one hover away via
+`help=`. Pre-season, the win % caption reads "no games played yet" instead
+of a misleading flat 50%. The CLI mirrors this with a `--- Team timeline
+---` line for the user's own team.
 
-The `st.metric` value shows `rank`/`league_size` (e.g. "3 of 12") rather
-than the raw score — a plain rank reads better cold than a z-score, with
-the raw score and its 0/± meaning one hover away via the metric's `help=`
-tooltip. Pre-season, the win % caption reads "no games played yet" instead
-of a flat 50% for every team (`games_played == 0`, exposed in the same
-table) — the raw number is real math (a neutral default contributing zero
-variance) but misleading as a literal win rate before any games exist.
-
-A "❓ Glossary" button next to the page title opens an `st.dialog` (module
-constant `GLOSSARY` in `streamlit_app.py`) defining VOR, power score, and
-adj. value — one reachable place for the terms this section and Roster
-needs both use.
+A "❓ Glossary" button next to the page title opens an `st.dialog` (`GLOSSARY`
+in `streamlit_app.py`) defining VOR, power score, and adj. value.
 
 ### Sellable veterans / Free agents / Draft pick trade values
 
@@ -120,82 +98,38 @@ this table.
 
 ### Trade Evaluator (its own tab)
 
-Not folded into the Roster tab like the sections above — those are all
-"pick a team, see everything about them"; a trade is inherently two teams
-plus a hypothetical exchange, so it gets its own tab with its own second
-team selector ("Trade partner"), independent of the Roster tab's selector.
-Four `st.multiselect` widgets (players/picks given up, players/picks
-received), built from `state["rosters_by_id"]` and `state["pick_trade_values"]`
-(filtered by `owner_roster_id`) — no new data pulled, everything already in
-`state`. Recomputes reactively on every selection change (cheap — one
-`season_average_starter_value` call per side) rather than needing an
-explicit "Evaluate" button. Calls `dynasty_core.evaluate_trade()` twice,
-once per side of the identical trade (the second call swaps the roster and
-the two asset lists) — the "both sides" requirement falls out of the
-function's own symmetry, not a second code path. A pick with no resolvable
-`value` is called out in a caption rather than silently contributing
-nothing.
+Its own tab, not folded into Roster — a trade is inherently two teams plus
+a hypothetical exchange, so it gets its own "Trade partner" selector,
+independent of the Roster tab's. Four multiselects (players/picks given
+up/received) built from data already in `state`; recomputes reactively on
+every change rather than needing an "Evaluate" button. Calls
+`dynasty_core.evaluate_trade()` twice, once per side — "both sides" falls
+out of the function's own symmetry, not a second code path. The "Lineup
+value" metric shows `lineup_delta_after_drops` (post-forced-cuts) rather
+than the raw `lineup_delta` when cuts are needed, raw number one hover
+away via `help=` — same pattern as the Team timeline metric's raw z-score.
 
-The "Lineup value" `st.metric` shows `lineup_delta_after_drops` (the real
-number once any forced cuts are applied) rather than the raw `lineup_delta`
-whenever `recommended_drops` is non-empty — the raw number stays one hover
-away via the metric's `help=` tooltip, same "don't hide the simpler number,
-just don't lead with it when it's misleading" pattern the Team timeline
-metric already uses for its raw z-score. An `st.warning` lists each
-recommended cut by name/position, tagging any that's an actual current
-starter (not just bench depth) rather than leaving that distinction only
-visible in the underlying data. `_show_trade_side()` (the shared renderer
-for both) is defined once at the top of the tab, not inside the manual
-evaluator's `else:` branch, so the Trade-target optimizer section below
-can call it before the manual evaluator's own multiselects are ever
-touched.
-
-A second section, "Trade-target optimizer," sits below the manual
-evaluator in the same tab and reuses its Your team/Trade partner selection
-directly — no second, possibly-desynced team picker. A `st.radio` chooses
-Player vs. Pick, then a `st.selectbox` (built from the same
-`_trade_player_options`/`_trade_pick_options` helpers, scoped to the
-partner) picks the one target asset. `dynasty_core.find_trade_offers()`
-runs on selection, and `_show_trade_side()` renders the "if you acquired
-this for free" read plus, in its own `st.expander` per candidate (best
-offer expanded by default, alternatives collapsed), both sides of each
-suggested offer — an `st.info` explains directly when nothing clears the
-partner's plausibility bar, rather than the section going silently empty.
+A second section, "Trade-target optimizer," sits below and reuses the same
+team selection. Pick Player vs. Pick, select the one target asset,
+`dynasty_core.find_trade_offers()` runs on selection and renders the
+"acquire for free" read plus each suggested offer's both sides in its own
+expander (best offer expanded by default) — an `st.info` explains directly
+when nothing clears the partner's bar.
 
 ### Player projection lookup
 
-Each round's "Backup options" table only shows the top
-`MAX_DISPLAYED_ALTERNATES` (2) alternates by default. `dynasty_core.
-rank_by_marginal_value` already scores *every* available candidate before
-sorting and slicing to the displayed few, so exposing the rest costs
-nothing extra — `top_n` is `len(candidate_ids)` for upcoming rounds, and
-the full ranked list is returned as `all_candidates_by_pick` alongside the
-existing `alternates_by_pick`. Each round's expander gets a `st.selectbox`
-built from that full list (sorted best-first), showing
-`Name (POS) — marginal value` per option. Deliberately skips
-`alternate_gap_note` for the full list — fine for 2 backups, not worth a
-per-candidate weekly-gap comparison for a ~200-player pool most of which
-nobody will ever look up. Web-only — the CLI has no interactive selectbox
-equivalent, so its `alternates_by_pick` table output is unchanged.
-
-The displayed marginal value for the top alternates comes from the cheap
-`recommend_drop()` heuristic every candidate was scored with during ranking
-(lowest-value bench player, full stop) — accurate enough to sort ~227
-candidates quickly, but not a real per-candidate answer to "what should I
-actually drop for *this* player." Once a candidate is selected from the
-full list, the app instead calls `dynasty_core.best_position_relevant_drop()`
-fresh (using that round's roster snapshot from `hypothetical_ids_by_pick`)
-— a real search, restricted to players who share a slot type with the
-*specific* selected candidate (own position, plus FLEX/SUPER_FLEX-eligible
-positions if the league's `roster_positions` actually has those slots and
-the candidate qualifies), over every resulting season-average marginal
-value, not just whichever player has the lowest raw `adj_value`. In this
-league SUPER_FLEX covers all four fantasy positions, so that restriction is
-effectively "any rostered skill player" — a correct reflection of the real
-slot structure. It's deliberately only computed on-demand for the one
-selected candidate, not precomputed for all ~227 — evaluating every drop
-option for every candidate during the main ranking pass would multiply that
-pass's cost by the size of the search pool.
+Each round's "Backup options" table defaults to the top
+`MAX_DISPLAYED_ALTERNATES` (2), but `rank_by_marginal_value` already scores
+every candidate, so the full ranked list is exposed via a `st.selectbox`
+per round at no extra cost (`Name (POS) — marginal value`, web-only — the
+CLI is unchanged). The top alternates' displayed value comes from the
+cheap `recommend_drop()` heuristic used during ranking; selecting a
+candidate from the full list instead triggers a real
+`dynasty_core.best_position_relevant_drop()` search on-demand, restricted
+to players sharing a slot type with that specific candidate (effectively
+"any skill player" here, since SUPER_FLEX covers all four positions) —
+only computed for the one selected candidate, not precomputed for the
+whole pool.
 
 ### Sidebar league name and version footer
 
@@ -284,42 +218,23 @@ to last-row-wins.
 
 Conventions applied consistently across every tab:
 
-- **Human-readable column labels.** Every table's underlying DataFrame
-  keeps its plain snake_case column names (so the rest of the codebase and
-  its tests can keep referring to them normally) — only the *displayed*
-  header is relabeled, via `st.dataframe`'s `column_config` and a small
-  `cols()` helper (`streamlit_app.py`) that builds a
-  `{column: st.column_config.Column(label, help=...)}` dict from
-  `(key, label)`/`(key, label, help_text)` tuples. The special `"_index"`
-  key relabels an index-as-column table's header too (e.g. Roster Needs'
-  `pos` index shows as "Pos").
-- **Decimal precision capped at 2 digits, display-only.** `st.dataframe`
-  otherwise shows whatever precision the underlying float happens to carry
-  (`adj_value`'s real-scoring multiplier routinely produces values like
-  `7827.988709`). `cols()` takes the DataFrame itself (dtypes only, never
-  mutated) and checks each column with `pd.api.types.is_float_dtype` — a
-  float column gets `st.column_config.NumberColumn(format="%.2f")` instead
-  of the plain `Column` a string/int/bool column gets, uniformly across
-  every float column rather than a hand-picked precision per column. The
-  CLI mirrors this via `to_string(float_format=...)` (see below) — same
-  cap, different mechanism since the CLI has no per-column config to hook
-  into.
-- **Per-cell hover tooltips need custom HTML, not `st.dataframe`.**
-  `column_config`'s `help` text only tooltips the column *header*, not
-  individual cells. Roster Value Analysis's `status` icons each need their
-  own detail (e.g. the actual `injury_status` word), so that one table
-  renders as plain HTML (`show_status_table()`) instead of the shared
-  `show_df()`/`cols()` approach — a deliberate, scoped exception. Cell text
-  is `html.escape()`d; the `status` column wraps each icon in
-  `<span title="...">` using `dynasty_core.player_status_details()`'s
-  (icon, description) pairs. Since this table bypasses `cols()` entirely,
-  its own cell-rendering loop separately applies the same 2-decimal cap to
-  any `float` cell value.
+- **Human-readable column labels**, display-only — DataFrames keep plain
+  snake_case columns for the rest of the codebase/tests; a `cols()` helper
+  builds `st.dataframe`'s `column_config` from `(key, label[, help])`
+  tuples (`"_index"` relabels an index-as-column header, e.g. Roster
+  Needs' `pos` → "Pos").
+- **Decimal precision capped at 2 digits, display-only** — `cols()` checks
+  each column's dtype and applies `NumberColumn(format="%.2f")` to floats
+  uniformly (raw `adj_value` routinely carries 6+ digits). The CLI mirrors
+  this via `to_string(float_format=...)`.
+- **Per-cell hover tooltips need custom HTML** — `column_config`'s `help`
+  only tooltips column headers, not cells. Roster Value Analysis's
+  `status` icons need per-cell detail (the actual `injury_status` word),
+  so that one table renders as escaped HTML (`show_status_table()`)
+  instead of the shared `show_df()`/`cols()` path — a scoped exception,
+  applying the same 2-decimal cap manually since it bypasses `cols()`.
 - **Methodology text lives in a closed "How this works" expander**, not a
-  bare `st.caption`, on every tab/section that has one — keeps the actual
-  data above the fold on a phone instead of pushing it down on every
-  refresh. Bulleted term-definition lists rather than run-on prose —
-  `st.caption` renders Markdown, including lists, same as `st.markdown`.
+  bare caption — keeps data above the fold on mobile.
 
 ## CLI (`rookie_draft.py`)
 
