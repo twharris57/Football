@@ -36,6 +36,46 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
+**`feature/trade-target-optimizer` (PR #25, reviewed 2026-08-02):**
+
+- [x] **An unresolved pick value crashes the optimizer's own safety gate via
+  silent `NaN` propagation, not the intended $25 floor.** Fixed
+  2026-08-02: `target_value` is now resolved with an explicit
+  `pd.notna()` check (covers both a missing key and a present-but-`NaN`
+  value in one check, unlike a bare `or 0.0`) into a new
+  `target_value_resolved` flag; when unresolved, the function returns
+  early with `offers: []` before `tolerance`/the acceptance gate are ever
+  computed, so a `NaN` can no longer reach either. New regression test:
+  `test_unresolved_pick_target_does_not_propagate_nan`.
+- [x] **An unresolved/unranked target (FantasyCalc has no `adj_value` for
+  it) silently reads as worth $0, which defeats the acceptance gate
+  entirely and surfaces "give away your cheapest asset" as the #1
+  suggested offer with no warning.** Fixed 2026-08-02: same
+  `target_value_resolved` fix as above covers this case too (a missing
+  `fc_by_sleeper_id` entry resolves to `None`, caught by the same
+  `pd.notna()` check) — the offer search no longer runs at all against an
+  unresolved target, so there's no fabricated `$0` baseline for any
+  throwaway asset to "clear." `streamlit_app.py`'s Trade Evaluator tab now
+  shows an explicit warning ("No resolvable market value for X...") when
+  `target_value_resolved` is `False`, mirroring the manual evaluator's
+  existing `unresolved_picks` caption. New regression test:
+  `test_unresolved_player_target_returns_no_offers_without_a_fabricated_zero_baseline`.
+- [x] **The sellable/pick pool is capped to the 12 *highest-value*
+  candidates before any target-value filtering runs, which can silently
+  exclude the only assets that would actually match a below-median-value
+  target.** Fixed 2026-08-02: before sorting/capping, the pool now drops
+  any candidate whose value alone already exceeds
+  `TRADE_OFFER_PREFILTER_HIGH` (2×) of the target's value — a
+  mathematically sound prune, not a heuristic reorder: no combo containing
+  such a candidate could ever land in-band, since adding more assets only
+  raises `combo_value` further. This keeps the capped pool from being
+  crowded out by pieces that could never actually be used, so a low-value
+  target's genuinely matching cheap candidates survive the cap even when
+  the roster also holds many pricier ones. New regression test:
+  `test_pool_prunes_out_of_band_candidates_before_capping_so_a_low_value_target_still_finds_a_match`
+  (15 expensive picks + 5 cheap matching ones — asserts every surfaced
+  offer draws only from the cheap set). Full suite (115 tests) passes.
+
 **`feature/trade-block-monitoring` (PR #23, reviewed 2026-08-02):**
 
 - [x] **`evaluate_trade()`'s `over_capacity` misfired for any roster
@@ -150,48 +190,87 @@ supported (rare, disproportionate complexity). Manual/on-demand, no trade
 feed (Sleeper doesn't expose trade discussions) — see `RT-6` below for the
 contextual-research idea this could still feed into.
 
-- [ ] **RT-12: Trade-target optimizer — given an asset on the trade block
-  (or an offer already on the table), decide whether to pursue it and
-  construct a mutually-beneficial deal** (user-flagged 2026-08-02, next up
-  after the trade evaluator). Two questions the trade evaluator (`RT-2`,
-  done) doesn't answer because it only scores an offer someone already
-  made:
-  1. **Worth pursuing at all?** Reuse the same marginal-lineup-value calc
-     `rank_by_marginal_value`/`free_agent_board` already use for a single
-     candidate (season-average starter value with the target added vs.
-     without) alongside the target's market `adj_value`/pick `value` for
-     context — the same "good player, not actually a fit" signal
-     `sellable_players`/roster-needs already surface elsewhere, just
-     pointed at someone else's asset instead of your own roster.
-  2. **If so, what to offer?** Search your own `sellable_players()`/
-     `pick_trade_values()` pool for a combination the partner would
-     plausibly accept *and* that's genuinely mutually beneficial (not just
-     cheap for your side), verify the resulting combo through
-     `evaluate_trade()` itself (both sides, reusing it exactly as built —
-     not a new valuation path), and present the best option plus one or
-     two viable alternatives, same top-N pattern as the draft plan's
-     backup options. If nothing clears both sides' bars, say so directly
-     instead of forcing a marginal offer.
-  **User's explicit direction for where to start**: build the full
-  version first — one that also models the *partner's* own
-  `roster_needs_summary`/`team_roster_analysis` so a recommended offer is
-  actually mutually beneficial, not just an efficient use of your own
-  assets — and see how complex that turns out to be before falling back
-  to the simpler version (search only your own sellable pool for the
-  lowest-lineup-cost combination that clears the target's asset-value ask,
-  with no partner-side modeling, still verified through `evaluate_trade()`).
-  Complexity risks to watch for while scoping the full version: realistic
-  partner-acceptance modeling needs their live roster analysis, not just
-  their asset's market value, and combinatorial search over multi-asset
-  offers (players + picks, both directions) can get expensive fast without
-  bounds (e.g. capping combo size, pruning candidates by value proximity
-  before running them through `evaluate_trade()`). Per this project's "one
-  valuation strategy" principle, this should compose existing primitives
-  (`rank_by_marginal_value`, `sellable_players`, `pick_trade_values`,
-  `evaluate_trade`) rather than invent a new ranking or acceptance model.
-  Natural fit alongside `RT-6`'s contextual-research idea once that
-  exists — "worth pursuing" could eventually factor in hype/injury context
-  beyond the stats-based read, but that's not required for a first version.
+**Trade-target optimizer (`find_trade_offers()`) is done** — see
+`docs/rookie-draft-big-board.md`'s "Trade-target optimizer" section for the
+full methodology. Given one asset on a partner's roster (a player or a
+pick, not a bundle — an already multi-asset offer on the table is exactly
+what the trade evaluator above already handles), answers both of `RT-12`'s
+questions by composing existing primitives, not a new valuation model:
+"worth pursuing" reuses `evaluate_trade()` with zero outgoing; "what to
+offer" searches combinations (size 1-3) of the caller's own
+`sellable_players()`/`pick_trade_values()` pool, verifies each two-sided
+through `evaluate_trade()`, and gates on the partner's own asset-value read
+staying within a plausible tolerance of the target's value — the one hard
+acceptance bar, not an invented model. Combos touching a partner
+`need_positions` flag rank ahead of otherwise-equal alternatives. Returns
+nothing rather than forcing a marginal suggestion when no combo clears the
+bar. Lives in the Trade Evaluator tab as a second section below the
+existing two-sided evaluator, reusing its team selection. Deliberately out
+of scope: multi-asset targets, 3-way trades (same as the evaluator above),
+and recomputing the partner's needs against the hypothetical post-trade
+roster rather than today's.
+
+- [ ] **RT-14: Evaluate and improve an offer someone else has already made
+  *to* us** (user-flagged 2026-08-02, filed while scoping `RT-12`) — a
+  third, distinct question alongside the trade evaluator (`RT-2`: score a
+  fully-specified trade) and the trade-target optimizer (`RT-12`: given a
+  target, decide whether to pursue it and what to offer for it). Here the
+  *partner* has proposed a specific trade to us; this would (1) evaluate it
+  exactly like the manual trade evaluator already does — no new logic
+  needed for that half — and then (2) suggest how to *improve* it: a
+  counter-offer search, structurally close to `find_trade_offers()`'s
+  combinatorial search but starting from the partner's actual proposed
+  assets as a baseline to adjust (add/swap/drop an asset on either side)
+  rather than searching from scratch against a single target. Likely
+  reuses the bulk of `find_trade_offers()`'s search/scoring machinery
+  rather than inventing a second one — worth checking during scoping
+  whether the two can share a common search helper instead of duplicating
+  the combo-generation/plausibility-gate logic twice.
+- [ ] **RT-16: Need-match tiebreaker in `find_trade_offers()` reuses
+  `roster_needs_summary`'s rebuild-timeline "need" flag on the *partner's*
+  roster, which may not mean what it implies for a partner not running the
+  same rebuild strategy** (assistant valuation review, 2026-08-02) —
+  `need` is specifically "fewer than `YOUNG_CORE_NEED_THRESHOLD` young
+  players at this position" (`docs/rookie-draft-big-board.md`'s "two
+  different signals" section), a rebuild-*timeline* question, not a
+  general "does this team want more here" signal. Every other place this
+  project uses `need_positions()` applies it to the *caller's own* roster
+  to bias the caller's own draft/trade choices toward their own rebuild
+  plan (`RT-4` is the open item tracking that this flag should evolve with
+  rebuild phase at all). `find_trade_offers()` is the first place it's
+  applied to someone *else's* roster to guess what they'd want — a
+  win-now partner might not care about "young core" at this position at
+  all, or might specifically want to trade youth away for a proven
+  veteran, the opposite of what the flag implies. Low severity since it's
+  explicitly a ranking tiebreaker only (already noted in the function's
+  own docstring, never the accept/reject gate), but worth either a doc
+  caveat that this tiebreaker assumes every partner is need-reading the
+  same way a rebuilding team would, or reconsidering what "need" should
+  mean when read on someone else's roster.
+- [ ] **RT-15: Scan a partner's whole roster for viable trade opportunities,
+  not one target at a time** (user-flagged 2026-08-02, filed while
+  reviewing `RT-12`) — the trade-target optimizer only ever evaluates one
+  hand-picked target; there's no way to see which of a partner's players
+  are worth pursuing at all without stepping through each one via the
+  dropdown. User's explicit spec: the full viable-offer scan (run
+  `find_trade_offers()` for every candidate on the partner's roster, not
+  just the cheap marginal-value read), triggered by a button rather than
+  reactively on every selection change (this is meaningfully more
+  expensive than anything else in the tab - up to `TRADE_OFFER_POOL_CAP`-bounded
+  combos × 2 `evaluate_trade()` calls, per candidate, times every player on
+  the roster), surfaced as a summary table of the top 3-5 best
+  opportunities. New section at the bottom of the Trade Evaluator tab,
+  below the trade-target optimizer. Needs a real design pass before
+  building: how to summarize an opportunity in one table row (target,
+  best combo, your lineup/asset delta, need-match flag - probably a
+  flattened version of what `_show_trade_side`/the offer expanders already
+  show per-target), whether "best" ranks across targets the same way
+  `find_trade_offers()` already ranks combos within one target, and
+  whether the per-candidate cost needs a cheaper first-pass filter (e.g.
+  skip the full combinatorial search for a candidate whose `target_read`
+  marginal value is clearly not worth pursuing at all) to keep a
+  whole-roster scan responsive - not decided yet, scope during
+  implementation.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all
@@ -458,6 +537,11 @@ assumption changes.
   via `team_roster_analysis` and again via `team_power_timeline_scores`
   each refresh. Trivial cost at this scale (`gather_state` still
   completes in ~4s); not worth restructuring.
+- [ ] **DL-6: `team_name_by_roster_id` can show a duplicated name**
+  (assistant valuation review, 2026-08-02) — if an owner's custom Sleeper
+  `team_name` happens to equal their `display_name` (username), the
+  combined label reads "Bob (Bob)" instead of collapsing to just "Bob".
+  Cosmetic edge case, not worth guarding.
 - [ ] **DL-5: Review "How this works" expanders for content to extract into the
   Glossary** (user-flagged 2026-08-01) — the Glossary dialog
   (`streamlit_app.py`'s `GLOSSARY`) currently only covers VOR, power

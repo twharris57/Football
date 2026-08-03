@@ -635,11 +635,12 @@ with roster_tab:
             "against, not a recommendation - rookies are excluded (long-term upside to hold, "
             "not surplus to sell)."
         )
+    sellable_display = analysis["sellable_players"].drop(columns="player_id", errors="ignore")
     show_df(
-        analysis["sellable_players"],
+        sellable_display,
         "(no sellable surplus at any position right now)",
         column_config=cols(
-            analysis["sellable_players"],
+            sellable_display,
             ("name", "Player"),
             ("pos", "Position"),
             ("age", "Age"),
@@ -884,6 +885,27 @@ with trade_tab:
     if unresolved_picks:
         st.caption(f"No resolvable value for: {', '.join(unresolved_picks)} — contributing 0 to that side's asset value.")
 
+    def _show_trade_side(label: str, result: dict) -> None:
+        st.markdown(f"**{label}**")
+        drops = result["recommended_drops"]
+        st.metric(
+            "Lineup value",
+            f"{result['lineup_delta_after_drops']:+.1f}",
+            help=(
+                f"Before any forced cuts: {result['lineup_delta']:+.1f}. "
+                "Differs when a required drop was an actual starter, not just bench depth."
+                if drops
+                else None
+            ),
+        )
+        st.metric("Asset value", f"{result['asset_value_delta']:+.1f}")
+        if result["over_capacity"]:
+            drop_list = ", ".join(f"{d['name']} ({d['pos']})" + (" — starter" if d["is_starter"] else "") for d in drops)
+            st.warning(
+                f"Over roster capacity ({result['roster_size_after']}/{result['capacity']}) — "
+                f"recommended cut{'s' if len(drops) != 1 else ''}: {drop_list or 'none available'}."
+            )
+
     if not (outgoing_players or outgoing_picks or incoming_players or incoming_picks):
         st.write("(select at least one asset on either side to evaluate a trade)")
     else:
@@ -910,32 +932,101 @@ with trade_tab:
             incoming_pick_value=outgoing_pick_value,
         )
 
-        def _show_trade_side(label: str, result: dict) -> None:
-            st.markdown(f"**{label}**")
-            drops = result["recommended_drops"]
-            st.metric(
-                "Lineup value",
-                f"{result['lineup_delta_after_drops']:+.1f}",
-                help=(
-                    f"Before any forced cuts: {result['lineup_delta']:+.1f}. "
-                    "Differs when a required drop was an actual starter, not just bench depth."
-                    if drops
-                    else None
-                ),
-            )
-            st.metric("Asset value", f"{result['asset_value_delta']:+.1f}")
-            if result["over_capacity"]:
-                drop_list = ", ".join(f"{d['name']} ({d['pos']})" + (" — starter" if d["is_starter"] else "") for d in drops)
-                st.warning(
-                    f"Over roster capacity ({result['roster_size_after']}/{result['capacity']}) — "
-                    f"recommended cut{'s' if len(drops) != 1 else ''}: {drop_list or 'none available'}."
-                )
-
         your_side_col, partner_side_col = st.columns(2)
         with your_side_col:
             _show_trade_side("Your side", your_result)
         with partner_side_col:
             _show_trade_side(f"{trade_team_names[partner_team_id]}'s side", partner_result)
+
+    st.divider()
+    st.subheader("Trade-target optimizer")
+    with st.expander("How this works"):
+        st.caption(
+            "Given one specific asset on the trade partner's roster, decide whether it's "
+            "worth pursuing and search your own sellable depth/picks for a combination they'd "
+            "plausibly accept.\n"
+            "- **Worth pursuing** — the same season-average marginal-lineup read as elsewhere, "
+            "for acquiring this one asset for free, shown alongside its market value.\n"
+            "- **Offer search** — every combination (up to 3 assets) of your own sellable "
+            "players/picks, verified two-sided through the same evaluate_trade() check as the "
+            "evaluator above — not a new valuation model. A combo only surfaces if the "
+            "partner's own asset-value read doesn't come out too lopsided against them (the "
+            "real plausibility bar, not just 'cheap for you'); combos that also touch a "
+            "flagged need on the partner's roster today are preferred among otherwise-similar "
+            "options. Capped to your top 12 highest-value sellable assets so this stays fast.\n"
+            "- If nothing clears the partner's bar, this says so directly instead of forcing a "
+            "marginal offer."
+        )
+
+    partner_name = trade_team_names[partner_team_id]
+    target_kind = st.radio("Target type", ["Player", "Pick"], key="optimizer_target_kind", horizontal=True)
+    target_player_id = target_pick_name = None
+    if target_kind == "Player":
+        partner_player_options = _trade_player_options(partner_trade_roster)
+        if not partner_player_options:
+            st.write(f"{partner_name} has no fantasy-relevant players to target.")
+        else:
+            target_player_id = st.selectbox(
+                f"Asset on {partner_name}'s roster",
+                partner_player_options,
+                format_func=_trade_player_label,
+                key="optimizer_target_player",
+            )
+    else:
+        partner_pick_options = _trade_pick_options(partner_team_id)
+        if not partner_pick_options:
+            st.write(f"{partner_name} has no tracked picks to target.")
+        else:
+            target_pick_name = st.selectbox(
+                f"Pick owned by {partner_name}",
+                partner_pick_options,
+                format_func=_trade_pick_label,
+                key="optimizer_target_pick",
+            )
+
+    if target_player_id or target_pick_name:
+        target_label = _trade_player_label(target_player_id) if target_player_id else target_pick_name
+        offer_result = dynasty_core.find_trade_offers(
+            your_trade_roster,
+            partner_trade_roster,
+            trade_players,
+            state["fc_by_sleeper_id"],
+            state["byes"],
+            state["league"],
+            state["replacement_level"],
+            trade_pick_values,
+            target_player_id=target_player_id,
+            target_pick_name=target_pick_name,
+        )
+
+        _show_trade_side(f"If you acquired {target_label} for free", offer_result["target_read"])
+
+        st.markdown("**Suggested offers**")
+        offers = offer_result["offers"]
+        if not offer_result["target_value_resolved"]:
+            st.warning(
+                f"No resolvable market value for {target_label} — can't search for a plausible offer "
+                "without a value to match against. The lineup-value read above is still valid."
+            )
+        elif not offers:
+            st.info(
+                f"No combination of your sellable players/picks clears {partner_name}'s "
+                f"plausibility bar for {target_label} — nothing to suggest. Considered "
+                f"{offer_result['combos_evaluated']} combinations within a plausible value range."
+            )
+        else:
+            for i, offer in enumerate(offers):
+                combo_label = ", ".join(a["label"] for a in offer["combo"])
+                title = f"{'Best offer' if i == 0 else f'Alternative {i}'}: give {combo_label} → receive {target_label}"
+                with st.expander(title, expanded=(i == 0)):
+                    st.caption(f"**You give:** {combo_label}  \n**You receive:** {target_label}")
+                    off_col1, off_col2 = st.columns(2)
+                    with off_col1:
+                        _show_trade_side("Your side", offer["your_side"])
+                    with off_col2:
+                        _show_trade_side(f"{partner_name}'s side", offer["partner_side"])
+                    if offer["partner_need_match"]:
+                        st.caption(f"Also addresses a flagged need on {partner_name}'s roster.")
 
 st.divider()
 st.caption(f"Dynasty Rookie Draft · build {APP_VERSION}")

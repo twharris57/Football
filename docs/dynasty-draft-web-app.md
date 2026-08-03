@@ -18,10 +18,12 @@ Five tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
    read, for any team in the league via a selector (defaults to the user's
    own).
 5. **Trade Evaluator** — an arbitrary multi-asset trade (players and/or
-   picks) between two selected teams, evaluated for both sides. Its own
-   tab rather than another Roster section — it's inherently two-team, not
-   the "pick a team, see everything about them" shape every Roster section
-   shares.
+   picks) between two selected teams, evaluated for both sides, plus a
+   trade-target optimizer (given one specific asset on the partner's
+   roster, is it worth pursuing and what should be offered for it). Its
+   own tab rather than another Roster section — it's inherently two-team,
+   not the "pick a team, see everything about them" shape every Roster
+   section shares.
 
 There is exactly one ranking method for "what should I pick next," used
 everywhere in the app — the round-by-round Draft Plan. See
@@ -142,7 +144,23 @@ just don't lead with it when it's misleading" pattern the Team timeline
 metric already uses for its raw z-score. An `st.warning` lists each
 recommended cut by name/position, tagging any that's an actual current
 starter (not just bench depth) rather than leaving that distinction only
-visible in the underlying data.
+visible in the underlying data. `_show_trade_side()` (the shared renderer
+for both) is defined once at the top of the tab, not inside the manual
+evaluator's `else:` branch, so the Trade-target optimizer section below
+can call it before the manual evaluator's own multiselects are ever
+touched.
+
+A second section, "Trade-target optimizer," sits below the manual
+evaluator in the same tab and reuses its Your team/Trade partner selection
+directly — no second, possibly-desynced team picker. A `st.radio` chooses
+Player vs. Pick, then a `st.selectbox` (built from the same
+`_trade_player_options`/`_trade_pick_options` helpers, scoped to the
+partner) picks the one target asset. `dynasty_core.find_trade_offers()`
+runs on selection, and `_show_trade_side()` renders the "if you acquired
+this for free" read plus, in its own `st.expander` per candidate (best
+offer expanded by default, alternatives collapsed), both sides of each
+suggested offer — an `st.info` explains directly when nothing clears the
+partner's plausibility bar, rather than the section going silently empty.
 
 ### Player projection lookup
 

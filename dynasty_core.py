@@ -8,6 +8,7 @@ dashboard (`streamlit_app.py`) so the two stay in sync on one code path.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import time
@@ -36,6 +37,19 @@ YOUNG_CORE_MAX_YOE = 2
 YOUNG_CORE_NEED_THRESHOLD = 2
 LOW_VALUE_YOUNG_AGE = 24
 MAX_DISPLAYED_ALTERNATES = 2
+
+# Trade-target optimizer (RT-12) bounds - judgment calls, not derived from
+# any league rule, same status as the rebuild-strategy constants below.
+# Sized for this league's realistic team count (~12) and per-team
+# sellable-pool size (typically 5-15 candidates between bench depth and
+# owned picks) - bounds the combinatorial search before the expensive
+# evaluate_trade() calls.
+TRADE_OFFER_POOL_CAP = 12
+TRADE_OFFER_MAX_COMBO_SIZE = 3
+TRADE_OFFER_PREFILTER_LOW = 0.5
+TRADE_OFFER_PREFILTER_HIGH = 2.0
+TRADE_OFFER_PARTNER_TOLERANCE_PCT = 0.15
+TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE = 25.0
 
 # Dynasty aging curves differ meaningfully by position - RBs decline earliest,
 # QBs latest (and often keep starting well into their mid-30s in a passing
@@ -91,13 +105,24 @@ def resolve_user_roster_id(users: list[dict], rosters: list[dict], username: str
 
 
 def team_name_by_roster_id(rosters: list[dict], users: list[dict]) -> dict[int, str]:
-    """Map roster_id to a display name (team name if set, else Sleeper username)."""
+    """Map roster_id to a display name: team name plus the owner's Sleeper
+    username in parentheses when both exist (e.g. "My Epic Team Name
+    (bob)") - knowing which real person is on the other end of a trade
+    matters, not just their team's display name. Falls back to just the
+    username, or a synthetic "Roster N" label, when there's no set team
+    name or no matched user at all - never username duplicated in both
+    slots.
+    """
     user_by_id = {u["user_id"]: u for u in users}
     names = {}
     for roster in rosters:
         user = user_by_id.get(roster["owner_id"])
         team_name = (user.get("metadata") or {}).get("team_name") if user else None
-        names[roster["roster_id"]] = team_name or (user or {}).get("display_name") or f"Roster {roster['roster_id']}"
+        username = (user or {}).get("display_name")
+        if team_name and username:
+            names[roster["roster_id"]] = f"{team_name} ({username})"
+        else:
+            names[roster["roster_id"]] = team_name or username or f"Roster {roster['roster_id']}"
     return names
 
 
@@ -1072,8 +1097,10 @@ def sellable_players(
     not surplus to sell). Deliberately excludes actual starters — that's a
     bigger strategic call, left for a human to judge against a specific
     offer. Returns a candidate list sorted by `adj_value`, not a
-    recommendation. Full rationale in docs/rookie-draft-big-board.md's
-    "Trade targets & sells" section.
+    recommendation. Includes `player_id` (an internal join key for callers
+    like `find_trade_offers()` that need to act on a candidate, not just
+    display it - drop it before rendering a table). Full rationale in
+    docs/rookie-draft-big-board.md's "Trade targets & sells" section.
     """
     roster_positions = league["roster_positions"]
     strength = positional_strength_summary(roster, players, fc_by_sleeper_id, replacement_level, roster_positions)
@@ -1103,6 +1130,7 @@ def sellable_players(
             fc_entry = fc_by_sleeper_id.get(player_id)
             rows.append(
                 {
+                    "player_id": player_id,
                     "name": info.get("full_name"),
                     "pos": position,
                     "age": info.get("age"),
@@ -1670,6 +1698,197 @@ def evaluate_trade(
         "roster_size_after": len(roster_after),
         "capacity": capacity,
         "recommended_drops": recommended_drops,
+    }
+
+
+def find_trade_offers(
+    your_roster: dict,
+    partner_roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    replacement_level: dict[str, float],
+    pick_value_table: pd.DataFrame,
+    target_player_id: str | None = None,
+    target_pick_name: str | None = None,
+    top_n: int = 3,
+) -> dict[str, Any]:
+    """Given one asset on partner_roster, decide whether to pursue it and search for a mutually-beneficial offer.
+
+    Exactly one of target_player_id/target_pick_name must be given - "an
+    asset on the trade block" (RT-12) is singular by design; an
+    already-multi-asset offer on the table is exactly what the trade
+    evaluator's own two-sided evaluate_trade() call already handles
+    directly, so the target itself doesn't need generalizing to a bundle.
+    Evaluating and improving an offer someone has already made *to* us is a
+    related but distinct question, deliberately out of scope here (see
+    PROJECT_PLAN.md).
+
+    Two reads, both built on evaluate_trade() - no new valuation model
+    (see .claude/conventions/valuation_principles.md):
+
+    - `target_read` - evaluate_trade(your_roster, [], [target], ...) with
+      zero outgoing: the marginal season-average lineup value of acquiring
+      the target for free, plus its own asset_value_delta (with nothing
+      given up, exactly the target's resolved market value) for context -
+      both from the one call, not a second lookup path.
+    - `offers` - every combination (size 1..TRADE_OFFER_MAX_COMBO_SIZE) of
+      your own sellable_players()/pick_value_table pool (capped to the top
+      TRADE_OFFER_POOL_CAP by value after first dropping any candidate
+      whose value alone already exceeds TRADE_OFFER_PREFILTER_HIGH of the
+      target's value - no combo containing such a candidate could ever
+      land in-band, since adding more assets only raises combo_value
+      further, so pruning it before the cap keeps the capped pool from
+      being crowded out by pieces that could never actually be used, which
+      otherwise silently starves a below-median-value target of its own
+      genuinely matching low-value candidates), pre-filtered to a wide
+      band around the target's value purely to bound how many pay for a
+      real evaluate_trade() call, then verified two-sided exactly like the
+      trade evaluator does manually. A combo survives only if the
+      partner's own asset_value_delta doesn't come out too lopsided
+      against them (TRADE_OFFER_PARTNER_TOLERANCE_PCT of the target's
+      value) - the one hard "would they plausibly accept this" gate,
+      itself just evaluate_trade's existing market-value read, not an
+      invented acceptance model. Combos touching one of the partner's
+      currently-flagged need_positions (checked against their roster as
+      it stands today, not the hypothetical post-trade roster - a known,
+      narrower gap than the Roster tab's own need-flagging, acceptable
+      here since this is only ever a ranking tiebreaker, never the
+      accept/reject gate) rank ahead of equally-plausible alternatives
+      that don't. Ranked best-for-you first (least market value given
+      up), then need-match, then fewest assets. Returns up to `top_n` -
+      empty if nothing clears the partner's bar, never a forced marginal
+      suggestion.
+
+    `target_value_resolved` is False when the target has no real market
+    value to search against - a player FantasyCalc doesn't rank, or a pick
+    name that doesn't match FantasyCalc's own naming convention (the same
+    gap `pick_trade_values()` documents). Resolved with an explicit
+    `pd.notna()` check, not a bare `value or 0.0` - a present-but-unresolved
+    pick carries a real `NaN`, which is truthy in Python and would
+    otherwise slide past an `or` fallback unchanged and then silently
+    defeat every downstream comparison built from it (see
+    .claude/conventions/valuation_principles.md). When unresolved, the
+    offer search doesn't run at all - there is no real value to plausibly
+    match an offer against - and `offers`/`combos_considered`/
+    `combos_evaluated` come back empty rather than searching against a
+    fabricated `0.0` baseline, which would otherwise make every combo in
+    the pool look "plausible" (including a token, worthless throw-in) and
+    surface one as a confidently-ranked top suggestion. `target_read` is
+    still computed either way - the lineup-value half of the read doesn't
+    depend on market value - but its own `asset_value_delta` is `0.0` for
+    the same reason it always has been when a market value can't be found,
+    same as the manual evaluator's existing `unresolved_picks` handling.
+
+    `combos_considered`/`combos_evaluated` are the raw combo count and the
+    count surviving the value pre-filter, so a "nothing found" result can
+    say something concrete instead of a bare empty list.
+    """
+    if bool(target_player_id) == bool(target_pick_name):
+        raise ValueError("Exactly one of target_player_id or target_pick_name must be given.")
+
+    pick_value_by_name = dict(zip(pick_value_table["pick"], pick_value_table["value"]))
+
+    if target_player_id:
+        target_entry = fc_by_sleeper_id.get(target_player_id)
+        raw_target_value = target_entry.get("adj_value") if target_entry else None
+        target_read = evaluate_trade(your_roster, [], [target_player_id], players, fc_by_sleeper_id, byes, league)
+    else:
+        raw_target_value = pick_value_by_name.get(target_pick_name)
+        target_read = evaluate_trade(
+            your_roster, [], [], players, fc_by_sleeper_id, byes, league,
+            incoming_pick_value=raw_target_value if pd.notna(raw_target_value) else 0.0,
+        )
+
+    target_value_resolved = bool(pd.notna(raw_target_value))
+    target_value = float(raw_target_value) if target_value_resolved else 0.0
+
+    if not target_value_resolved:
+        return {
+            "target_value": target_value,
+            "target_value_resolved": False,
+            "target_read": target_read,
+            "offers": [],
+            "combos_considered": 0,
+            "combos_evaluated": 0,
+        }
+
+    your_sellable = sellable_players(your_roster, players, fc_by_sleeper_id, replacement_level, league, byes)
+    pool = [
+        {"kind": "player", "id": row["player_id"], "label": row["name"], "value": row["adj_value"] or 0.0}
+        for _, row in your_sellable.iterrows()
+    ]
+    your_picks = pick_value_table[pick_value_table["owner_roster_id"] == your_roster["roster_id"]]
+    pool += [
+        {"kind": "pick", "id": row["pick"], "label": row["pick"], "value": row["value"]}
+        for _, row in your_picks.iterrows()
+        if pd.notna(row["value"])
+    ]
+    if target_value > 0:
+        pool = [c for c in pool if c["value"] <= TRADE_OFFER_PREFILTER_HIGH * target_value]
+    pool.sort(key=lambda c: c["value"], reverse=True)
+    pool = pool[:TRADE_OFFER_POOL_CAP]
+
+    partner_needs = need_positions(roster_needs_summary(partner_roster, players))
+
+    combos_considered = 0
+    prefiltered = []
+    for size in range(1, TRADE_OFFER_MAX_COMBO_SIZE + 1):
+        for combo in itertools.combinations(pool, size):
+            combos_considered += 1
+            combo_value = sum(c["value"] for c in combo)
+            if target_value > 0 and not (
+                TRADE_OFFER_PREFILTER_LOW * target_value <= combo_value <= TRADE_OFFER_PREFILTER_HIGH * target_value
+            ):
+                continue
+            prefiltered.append(combo)
+
+    tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * target_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)
+    offers = []
+    for combo in prefiltered:
+        combo_player_ids = [c["id"] for c in combo if c["kind"] == "player"]
+        combo_pick_value = sum(c["value"] for c in combo if c["kind"] == "pick")
+
+        if target_player_id:
+            your_incoming, your_incoming_pick_value = [target_player_id], 0.0
+            partner_outgoing, partner_outgoing_pick_value = [target_player_id], 0.0
+        else:
+            your_incoming, your_incoming_pick_value = [], target_value
+            partner_outgoing, partner_outgoing_pick_value = [], target_value
+
+        your_side = evaluate_trade(
+            your_roster, combo_player_ids, your_incoming, players, fc_by_sleeper_id, byes, league,
+            outgoing_pick_value=combo_pick_value, incoming_pick_value=your_incoming_pick_value,
+        )
+        partner_side = evaluate_trade(
+            partner_roster, partner_outgoing, combo_player_ids, players, fc_by_sleeper_id, byes, league,
+            outgoing_pick_value=partner_outgoing_pick_value, incoming_pick_value=combo_pick_value,
+        )
+        if partner_side["asset_value_delta"] < -tolerance:
+            continue
+
+        partner_need_match = any(
+            c["kind"] == "player" and players.get(c["id"], {}).get("position") in partner_needs for c in combo
+        )
+        offers.append(
+            {
+                "combo": list(combo),
+                "your_side": your_side,
+                "partner_side": partner_side,
+                "partner_need_match": partner_need_match,
+            }
+        )
+
+    offers.sort(key=lambda o: (-o["your_side"]["asset_value_delta"], not o["partner_need_match"], len(o["combo"])))
+
+    return {
+        "target_value": target_value,
+        "target_value_resolved": True,
+        "target_read": target_read,
+        "offers": offers[:top_n],
+        "combos_considered": combos_considered,
+        "combos_evaluated": len(prefiltered),
     }
 
 

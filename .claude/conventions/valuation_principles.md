@@ -119,6 +119,39 @@ or equivalent) and append to `data_warnings` at the point the degradation
 is detected — the same pattern already established for every other
 data-dependent enrichment step in `gather_state`, not a new one to invent.
 
+**A bare `value or default` doesn't catch `NaN`, and `NaN` doesn't just
+sit there quietly — it defeats every comparison downstream of it.**
+`find_trade_offers()` (RT-12, 2026-08-02 review) resolves a target's
+market value with `pick_value_by_name.get(target_pick_name) or 0.0` —
+written to normalize a missing/`None` lookup to `0.0`, the same pattern
+used safely elsewhere in this file for real falsy values. But
+`float('nan')` is truthy in Python (`bool(nan) is True`), so when the
+target *is* present in the table but its value is unresolved (a real,
+already-documented case — the same FantasyCalc pick-naming-mismatch gap
+`pick_trade_values()` itself flags), `nan or 0.0` evaluates to `nan`, not
+`0.0`. Unlike a `None` or `0.0` that a caller might at least reason about,
+that `NaN` then poisons everything built from it silently and in a way
+that's easy to miss in review: `max(nan, some_floor)` can itself return
+`nan` depending on argument order, and every `<`/`>` comparison against a
+`NaN` is unconditionally `False` — so a safety gate built as "reject if
+metric worse than threshold" doesn't just miscalculate, it stops
+rejecting *anything*, silently turning a hard acceptance bar into a
+no-op. The fix pattern already existed 20 lines away in the same
+function (`if pd.notna(row["value"])`, filtering the caller's own pick
+pool) — it just wasn't applied to the target-value lookup.
+
+**The rule**: never normalize a possibly-missing numeric value with a bare
+`value or default` if the value's source can also produce `NaN` (any
+`pandas`/`numpy` numeric column with unresolved joins is exactly this
+shape) — `NaN` will slide past the `or` unchanged and then silently
+short-circuit every comparison it touches. Use an explicit `pd.isna(value)`
+or `value is None` check instead. This is a specific, sharper-edged case
+of the general silent-degradation rule above — the difference is that a
+plain missing/`None` value at least fails loud-ish (a visibly wrong `0.0`
+you might notice), while an unnoticed `NaN` can make a gate or filter
+silently stop functioning altogether rather than just computing a wrong
+number.
+
 ## Prefer real scoring rules pulled live over hardcoding — document what you can't
 
 When a computed value depends on this league's scoring format, prefer
