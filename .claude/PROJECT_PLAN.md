@@ -36,6 +36,76 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
+**`feature/trade-target-optimizer` (PR #25, reviewed 2026-08-02):**
+
+- [ ] **An unresolved pick value crashes the optimizer's own safety gate via
+  silent `NaN` propagation, not the intended $25 floor.**
+  `find_trade_offers()`'s docstring and `docs/rookie-draft-big-board.md`
+  both describe unresolved target values as falling back to
+  `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25.0), but
+  `target_value = pick_value_by_name.get(target_pick_name) or 0.0` only
+  catches a *missing* key — a pick that IS in `pick_value_table` but has an
+  unmatched FantasyCalc name (the exact, already-documented pick-naming-
+  mismatch gap `pick_trade_values()` itself flags) carries a real `NaN`,
+  and `NaN or 0.0` evaluates to `NaN` (NaN is truthy in Python), not `0.0`.
+  That NaN then poisons
+  `tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * target_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)`
+  (`max(nan, 25.0) == nan`), and every `< -tolerance` comparison against
+  NaN is `False` — so the one hard acceptance gate never rejects anything,
+  every combo in the pool "passes," and the UI renders literal `+nan`
+  asset-value numbers. The pool-building code 20 lines above this
+  (`if pd.notna(row["value"])`, filtering the caller's own picks) already
+  shows the fix pattern was known — it just wasn't applied to the target-
+  resolution path. Fix: resolve `target_value` with an explicit
+  `pd.isna()`/`is None` check, not a bare `or 0.0`.
+- [ ] **An unresolved/unranked target (FantasyCalc has no `adj_value` for
+  it) silently reads as worth $0, which defeats the acceptance gate
+  entirely and surfaces "give away your cheapest asset" as the #1
+  suggested offer with no warning.** When `target_player_id` isn't in
+  `fc_by_sleeper_id` (an unranked deep bench/practice-squad player, not
+  necessarily worthless — just outside FantasyCalc's coverage),
+  `target_value` becomes `0.0`. From there: the prefilter is skipped
+  outright (`if target_value > 0 and ...`), and the gate
+  `partner_side["asset_value_delta"] < -tolerance` can essentially never
+  trigger, since `partner_side["asset_value_delta"] = combo_value - 0.0 >= 0 > -25`
+  for any nonempty combo. Every combination of the caller's sellable
+  players/picks "clears the bar," and since offers are ranked by least
+  value given up first, the tool's confidently-presented "Best offer"
+  becomes the single cheapest throwaway asset in the pool — a concrete,
+  wrong, actionable recommendation. The manual trade evaluator already has
+  the right pattern for this exact situation (`unresolved_picks` caption:
+  "No resolvable value for: X — contributing 0 to that side's asset
+  value") and `find_trade_offers()` doesn't reuse or mirror it. This is a
+  fresh instance of `valuation_principles.md`'s "Silent data-degradation
+  must surface as a warning, not just a comment" rule. Fix: detect an
+  unresolved target (no `fc_by_sleeper_id` entry, or missing/NaN pick
+  value) and surface it plainly in the returned result (and the UI) before
+  any offers are shown, rather than letting it silently degrade every
+  downstream comparison.
+- [ ] **The sellable/pick pool is capped to the 12 *highest-value*
+  candidates before any target-value filtering runs, which can silently
+  exclude the only assets that would actually match a below-median-value
+  target.** `pool.sort(key=value, reverse=True); pool = pool[:TRADE_OFFER_POOL_CAP]`
+  keeps the top 12 by raw value and discards the rest — reasonable when
+  the pool is small (the sizing comment assumes "5-15 candidates"), but
+  this league's own documented rebuild strategy (`CLAUDE.md`: "accumulate
+  young talent," multiple future picks stacking up alongside bench depth)
+  is exactly the profile that pushes a real roster's
+  sellable-players-plus-owned-picks pool past that assumption. When it
+  does, and the target's value sits well below the caller's top-12 floor,
+  none of the actually well-matched cheap assets are ever considered — the
+  combinatorial search runs entirely over a pool of pieces that are all
+  too valuable, producing either a false "no viable offer" or a needless
+  overpay using only high-value pieces. The one existing test for this
+  bound (`test_pool_and_combo_size_bounds_cap_the_search_regardless_of_pool_size`)
+  only asserts the search *size* stays capped, using picks valued 100-129
+  clustered right around its target's value of 100 — it can't and doesn't
+  catch the case where the truncated-away low end of the pool was the
+  correct match. Fix direction: select the pool by proximity to a value
+  band around the target rather than pure descending value, or otherwise
+  guarantee the bounded pool spans both ends of the caller's value range,
+  not just the top.
+
 **`feature/trade-block-monitoring` (PR #23, reviewed 2026-08-02):**
 
 - [x] **`evaluate_trade()`'s `over_capacity` misfired for any roster
@@ -186,6 +256,27 @@ roster rather than today's.
   rather than inventing a second one — worth checking during scoping
   whether the two can share a common search helper instead of duplicating
   the combo-generation/plausibility-gate logic twice.
+- [ ] **RT-16: Need-match tiebreaker in `find_trade_offers()` reuses
+  `roster_needs_summary`'s rebuild-timeline "need" flag on the *partner's*
+  roster, which may not mean what it implies for a partner not running the
+  same rebuild strategy** (assistant valuation review, 2026-08-02) —
+  `need` is specifically "fewer than `YOUNG_CORE_NEED_THRESHOLD` young
+  players at this position" (`docs/rookie-draft-big-board.md`'s "two
+  different signals" section), a rebuild-*timeline* question, not a
+  general "does this team want more here" signal. Every other place this
+  project uses `need_positions()` applies it to the *caller's own* roster
+  to bias the caller's own draft/trade choices toward their own rebuild
+  plan (`RT-4` is the open item tracking that this flag should evolve with
+  rebuild phase at all). `find_trade_offers()` is the first place it's
+  applied to someone *else's* roster to guess what they'd want — a
+  win-now partner might not care about "young core" at this position at
+  all, or might specifically want to trade youth away for a proven
+  veteran, the opposite of what the flag implies. Low severity since it's
+  explicitly a ranking tiebreaker only (already noted in the function's
+  own docstring, never the accept/reject gate), but worth either a doc
+  caveat that this tiebreaker assumes every partner is need-reading the
+  same way a rebuilding team would, or reconsidering what "need" should
+  mean when read on someone else's roster.
 - [ ] **RT-15: Scan a partner's whole roster for viable trade opportunities,
   not one target at a time** (user-flagged 2026-08-02, filed while
   reviewing `RT-12`) — the trade-target optimizer only ever evaluates one
@@ -476,6 +567,11 @@ assumption changes.
   via `team_roster_analysis` and again via `team_power_timeline_scores`
   each refresh. Trivial cost at this scale (`gather_state` still
   completes in ~4s); not worth restructuring.
+- [ ] **DL-6: `team_name_by_roster_id` can show a duplicated name**
+  (assistant valuation review, 2026-08-02) — if an owner's custom Sleeper
+  `team_name` happens to equal their `display_name` (username), the
+  combined label reads "Bob (Bob)" instead of collapsing to just "Bob".
+  Cosmetic edge case, not worth guarding.
 - [ ] **DL-5: Review "How this works" expanders for content to extract into the
   Glossary** (user-flagged 2026-08-01) — the Glossary dialog
   (`streamlit_app.py`'s `GLOSSARY`) currently only covers VOR, power
