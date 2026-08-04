@@ -1,0 +1,329 @@
+"""Roster tab: per-team needs, value, trade-candidate, and capacity views."""
+
+from __future__ import annotations
+
+import streamlit as st
+
+import dynasty_core
+
+from .components import cols, show_df, show_status_table, team_selectbox
+
+
+def _render_team_timeline(state: dict, selected_roster_id: int) -> None:
+    st.subheader("Team timeline")
+    with st.expander("How this works"):
+        st.caption(
+            "Where this team sits on a rebuild-vs-contend spectrum, recomputed fresh "
+            "every refresh from current roster/standings state (not a fixed label - it "
+            "reacts to injuries, trades, and results automatically).\n"
+            "- **Score** — a continuous, league-wide z-scored average of three signals: "
+            "roster strength (aggregate VOR across positions - see the Glossary above), "
+            "timeline direction (value-weighted average age - older *established value* "
+            "skews win-now), and actual win percentage. 0 = league average; positive = "
+            "more win-now, negative = more rebuild-oriented. The **rank** below it (e.g. "
+            "\"3 of 12\") is the same score, just easier to read at a glance than the raw "
+            "number.\n"
+            "- **Phase** — a display label bucketed from the score (rebuilding / "
+            "treading water / contending); the score itself is the real signal.\n"
+            "- **Win % before games are played** — defaults to a neutral 50%, so it "
+            "contributes nothing to the score pre-season instead of distorting it with "
+            "a meaningless small sample. Shown as \"no games played yet\" instead of a "
+            "misleading 50% once the season actually starts, this will show a real record."
+        )
+    power = state["team_power_timeline"].loc[selected_roster_id]
+    league_size = len(state["team_power_timeline"])
+    phase_labels = {"rebuilding": "🌱 Rebuilding", "treading_water": "⚖️ Treading water", "contending": "🏆 Contending"}
+    st.metric(
+        phase_labels.get(power["phase"], power["phase"]),
+        f"{int(power['rank'])} of {league_size}",
+        help=(
+            "Rank by power score (1 = strongest roster + timeline + record in the "
+            f"league). Raw score: {power['power_score']:+.2f} (0 = league average; "
+            "positive = more contending, negative = more rebuilding)."
+        ),
+    )
+    win_pct_text = "no games played yet" if power["games_played"] == 0 else f"{power['win_pct']:.0%}"
+    st.caption(
+        f"Roster strength (VOR): {power['aggregate_vor']:+.1f} · "
+        f"Value-weighted age: {power['weighted_age']:.1f} · "
+        f"Win %: {win_pct_text}"
+    )
+
+
+def _render_capacity(analysis: dict) -> None:
+    st.subheader("Roster capacity")
+    cap = analysis["roster_capacity"]
+    cap_col1, cap_col2, cap_col3 = st.columns(3)
+    cap_col1.metric("Active roster", f"{cap['active_filled']}/{cap['active_total']}", f"{cap['active_open']} open")
+    cap_col2.metric("Taxi squad", f"{cap['taxi_filled']}/{cap['taxi_total']}", f"{cap['taxi_open']} open")
+    cap_col3.metric("IR / Reserve", f"{cap['reserve_filled']}/{cap['reserve_total']}", f"{cap['reserve_open']} open")
+    if cap["active_open"] <= 0 and cap["taxi_open"] <= 0:
+        st.warning("No open roster or taxi slots — drafting a rookie means dropping someone first.")
+
+
+def _render_needs(analysis: dict) -> None:
+    st.subheader("Roster needs")
+    with st.expander("How this works"):
+        st.caption(
+            "Two different questions about each position, side by side:\n"
+            "- **Need** — rebuild-timeline framing: fewer than 2 players at this position have "
+            "2 years of NFL experience or less. Answers \"are we still accumulating enough young "
+            "talent here.\"\n"
+            "- **Weak** — trade-strategy framing: this position's actual starters (top players by "
+            "value, up to this league's dedicated slot count) are worth less than **VOR** "
+            "(value-over-replacement) — the value of the last startable-tier player still "
+            "rostered *anywhere* in the league at that position. A position can have plenty of "
+            "bodies (no Need flag) and still be Weak if none of them clear what's freely "
+            "available elsewhere — or vice versa, thin in bodies but strong if the few players "
+            "there are excellent.\n"
+            "- VOR compares against the whole league, not the rest of *your* roster — one elite "
+            "player elsewhere can't make another position look artificially weak by comparison."
+        )
+    show_df(
+        analysis["roster_needs"],
+        "(empty roster)",
+        hide_index=False,
+        column_config=cols(
+            analysis["roster_needs"],
+            ("_index", "Pos"),
+            ("count", "Count"),
+            ("avg_age", "Avg Age"),
+            ("young_core", "Young Core"),
+            ("need", "Need"),
+            ("vor", "VOR"),
+            ("weak", "Weak"),
+        ),
+    )
+    needs = analysis["need_positions"]
+    if needs:
+        st.info(f"Flagged needs: {', '.join(sorted(needs))} — the big board marks rookies at these positions.")
+    else:
+        st.info("No positions are flagged as a need right now — best available value is the main signal.")
+
+
+def _render_value_analysis(analysis: dict) -> None:
+    st.subheader("Roster value analysis")
+    with st.expander("How this works"):
+        st.caption(
+            "Sorted lowest Adj. Value first (same real-scoring-corrected value as the big "
+            "board).\n"
+            "- **Note** — weighs age against a position-aware aging cutoff (RBs decline earlier "
+            "than QBs/TEs): low value + young is still a rebuild asset worth holding; low value "
+            "+ aging is a real drop candidate.\n"
+            "- **Status** — 🆕 rookie, 🏥 injury, 🌱 taxi squad, 🩹 IR/reserve; a player can show "
+            "more than one at once. Hover an icon for the specific detail (e.g. the real injury "
+            "status)."
+        )
+    show_status_table(
+        analysis["roster_value"],
+        "(empty roster)",
+        column_labels={
+            "name": "Player",
+            "pos": "Position",
+            "age": "Age",
+            "years_exp": "Years Exp",
+            "status": "Status",
+            "bye": "Bye",
+            "value": "Value",
+            "adj_value": "Adj. Value",
+            "note": "Note",
+        },
+    )
+
+
+def _render_sellable(analysis: dict) -> None:
+    st.subheader("Sellable veterans")
+    with st.expander("How this works"):
+        st.caption(
+            "This team's own bench depth at positions with real surplus (VOR above zero - see "
+            "the Glossary above), not the starters generating that VOR - selling an actual "
+            "starter is a bigger call than \"there's more depth here than the roster can use,\" "
+            "left for a human to judge, not this list. Only shown if dropping the player "
+            "wouldn't open a weekly-depth hole. A candidate list to evaluate a specific trade "
+            "against, not a recommendation - rookies are excluded (long-term upside to hold, "
+            "not surplus to sell)."
+        )
+    sellable_display = analysis["sellable_players"].drop(columns="player_id", errors="ignore")
+    show_df(
+        sellable_display,
+        "(no sellable surplus at any position right now)",
+        column_config=cols(
+            sellable_display,
+            ("name", "Player"),
+            ("pos", "Position"),
+            ("age", "Age"),
+            ("value", "Value"),
+            ("adj_value", "Adj. Value"),
+            ("position_vor", "Position VOR"),
+        ),
+    )
+
+
+def _render_free_agents(state: dict, analysis: dict, selected_roster_id: int) -> None:
+    st.subheader("Free agents")
+    with st.expander("How this works"):
+        st.caption(
+            "Every non-rostered player, ranked by season-average marginal starting-lineup "
+            "value against this team - the same ranking method the Draft Plan uses, not a "
+            "different valuation model. Each row's own best drop is shown alongside it, the "
+            "same cheap heuristic the ranking itself uses (not a per-candidate optimal "
+            "search).\n"
+            "- **Taxi squad not modeled** — Sleeper's real accrued-experience taxi rule isn't "
+            "verified here, so an add is only ever suggested for an open active roster slot "
+            "or via a drop, never assumed to fit an open taxi slot the way a rookie safely "
+            "can.\n"
+            "- **No bid-sizing** — remaining FAAB is shown for context only; this doesn't "
+            "recommend how much to bid."
+        )
+    selected_roster_settings = state["rosters_by_id"][selected_roster_id].get("settings") or {}
+    faab_remaining = state["league"]["settings"].get("waiver_budget", 0) - selected_roster_settings.get(
+        "waiver_budget_used", 0
+    )
+    st.caption(f"Remaining FAAB: {faab_remaining}")
+    show_df(
+        analysis["free_agent_board"],
+        "(no free agents available)",
+        column_config=cols(
+            analysis["free_agent_board"],
+            ("name", "Player"),
+            ("pos", "Position"),
+            ("team", "NFL Team"),
+            ("marginal_value", "Marginal Value"),
+            ("drop_name", "Suggested Drop"),
+            ("drop_is_starter", "Drop Is Starter"),
+        ),
+    )
+
+
+def _render_bye_impact(state: dict, analysis: dict) -> None:
+    st.subheader("Bye week impact")
+    with st.expander("How this works"):
+        st.caption(
+            "One collapsible section per week with an active-roster player on bye.\n"
+            "- **Collapsed view** — only starters actually bumped out and who fills in, plus the "
+            "lineup-value delta vs. a full-strength week. A bye'd bench player who wasn't starting "
+            "anyway doesn't clutter this view (it's still shown, expanded, since it doesn't move "
+            "the delta).\n"
+            "- **✅** — a week that's already happened. This project has no live in-week stats "
+            "yet, so the delta shown is still this same projection, not a real result.\n"
+            "- **📅** — a week still ahead, projected from today's roster (it'll shift if the "
+            "roster changes before then).\n"
+            "- **Delta size** — a small delta means the bench covers it fine; a large one is "
+            "worth looking for bye-week coverage via trade."
+        )
+    bye_impact = analysis["roster_bye_conflicts"]
+    if bye_impact.empty:
+        st.write("(none)")
+        return
+
+    # league["settings"]["leg"] is Sleeper's current-week counter for the season - not
+    # otherwise used anywhere yet, but exactly what "already happened vs. still ahead" needs.
+    current_week = state["league"]["settings"].get("leg", 1)
+    for _, row in bye_impact.iterrows():
+        is_actual = row["week"] < current_week
+        cue = "✅" if is_actual else "📅"
+        label = f"{cue} Week {row['week']}: {row['starters_out']} → {row['fillers']} · {row['lineup_delta']:+.1f}"
+        with st.expander(label):
+            if is_actual:
+                st.write(
+                    "**Already happened** — no live in-week stats feed into this yet, so this "
+                    "is still the same roster-based projection, not a real result."
+                )
+            else:
+                st.write(
+                    "**Still ahead** — projected from today's roster; will shift if the "
+                    "roster changes before this week."
+                )
+            st.write(f"**Starters out:** {row['starters_out']}")
+            st.write(f"**Fillers:** {row['fillers']}")
+            st.write(f"**Lineup delta:** {row['lineup_delta']:+.1f} vs. a full-strength week (everyone available).")
+            st.write(f"**Also on bye (bench, no lineup impact):** {row['bench_out']}")
+
+
+def _render_weekly_gaps(analysis: dict) -> None:
+    st.subheader("Weekly gaps")
+    with st.expander("How this works"):
+        st.caption(
+            "- **What it shows** — available (non-bye) rostered players per position per week, "
+            "vs. what's needed to fill this league's dedicated starting slots (QB:1 RB:2 WR:2 "
+            "TE:1).\n"
+            "- **What it doesn't** — FLEX/SUPER_FLEX, which could pull from other positions; a "
+            "rough depth signal, not a full lineup-feasibility check."
+        )
+    weekly_gaps = analysis["roster_weekly_gaps"]
+    gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]
+    weekly_gap_cols = cols(
+        weekly_gaps, ("week", "Week"), ("QB", "QB"), ("RB", "RB"), ("WR", "WR"), ("TE", "TE"), ("gap", "Gap")
+    )
+    if not gap_weeks.empty:
+        st.warning("Weeks with a gap:")
+    show_df(gap_weeks, "No weeks have a dedicated-slot gap.", column_config=weekly_gap_cols)
+    with st.expander("Show all 18 weeks"):
+        st.dataframe(weekly_gaps, hide_index=True, width="stretch", column_config=weekly_gap_cols)
+
+
+def _render_handcuffs(analysis: dict) -> None:
+    st.subheader("Handcuff status")
+    st.caption("This team's rostered RBs who are NFL starters, and whether they also own their backup.")
+    show_df(
+        analysis["roster_handcuffs"],
+        "(none of this team's RBs are current NFL starters)",
+        column_config=cols(
+            analysis["roster_handcuffs"],
+            ("starter", "Starter"),
+            ("handcuff", "Handcuff"),
+            ("handcuff_rostered", "Handcuff Rostered"),
+        ),
+    )
+
+
+def _render_pick_values(state: dict) -> None:
+    st.subheader("Draft pick trade values")
+    st.caption(
+        "League-wide (not filtered to the team selected above) - every remaining pick this "
+        "season, exact-slot valued and matched to its real current owner, plus next season's "
+        "picks at a flat round value applied the same to every team (no real projected "
+        "standings this far out to justify guessing who picks early vs. late)."
+    )
+    pick_values_display = state["pick_trade_values"].drop(columns="owner_roster_id", errors="ignore")
+    show_df(
+        pick_values_display,
+        "(no picks to show)",
+        column_config=cols(pick_values_display, ("pick", "Pick"), ("owner", "Owner"), ("value", "Value")),
+    )
+
+
+def render_roster_tab(state: dict) -> None:
+    team_names_by_id = state["team_names"]
+    user_roster_id = state["user_roster_id"]
+    selected_roster_id = team_selectbox(
+        "Viewing team", team_names_by_id, user_roster_id, "roster_tab_team_select"
+    )
+    # Reuse the already-computed bundle for your own team (free); any other
+    # team's analysis is computed fresh here on selection - team_roster_analysis
+    # is the exact same per-roster logic gather_state already ran for you,
+    # just pointed at a different team's roster dict.
+    if selected_roster_id == user_roster_id:
+        analysis = state
+    else:
+        analysis = dynasty_core.team_roster_analysis(
+            state["rosters_by_id"][selected_roster_id],
+            state["players"],
+            state["fc_by_sleeper_id"],
+            state["byes"],
+            state["league"],
+            state["handcuffs"],
+            state["replacement_level"],
+            state["available_free_agents"],
+        )
+
+    _render_team_timeline(state, selected_roster_id)
+    _render_capacity(analysis)
+    _render_needs(analysis)
+    _render_value_analysis(analysis)
+    _render_sellable(analysis)
+    _render_free_agents(state, analysis, selected_roster_id)
+    _render_bye_impact(state, analysis)
+    _render_weekly_gaps(analysis)
+    _render_handcuffs(analysis)
+    _render_pick_values(state)
