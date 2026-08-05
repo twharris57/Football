@@ -43,7 +43,7 @@ below as a normal backlog item, same as any other deferred work.
 *Empty — `NB-1` (Synology NAS deploy + live-draft verification) is done:
 the user confirmed the NAS deployment and live-draft verification steps
 completed successfully. The dashboard is fully deployed; the CLI
-(`rookie_draft.py`, no Docker) remains the documented fallback regardless.*
+(`dynasty/rookie_draft.py`, no Docker) remains the documented fallback regardless.*
 
 ## Roster & trade tooling
 
@@ -75,7 +75,7 @@ Deliberately out of v1, not forgotten:
   not modeled.
 - **Draft-pick ownership beyond next season** — Sleeper's `traded_picks`
   has no fixed "how many years out" window, only entries for picks
-  actually traded (`FUTURE_PICK_YEARS_AHEAD = 1` in `dynasty_core.py`).
+  actually traded (`FUTURE_PICK_YEARS_AHEAD = 1` in `dynasty_core/picks.py`).
   Extending further is possible but was scoped out to avoid listing
   picks with zero real trade activity that far out.
 - **Young non-rookie depth isn't protected the way `LOW_VALUE_YOUNG_AGE`
@@ -371,7 +371,7 @@ methodology.
 
 ## Code quality, tests & UX polish
 
-- [ ] **CQ-1: Broader test coverage.** `tests/test_dynasty_core.py` and
+- [ ] **CQ-1: Broader test coverage.** `tests/dynasty_core/` and
   `tests/test_player_scoring.py` cover the core ranking/lineup/valuation
   logic, but `sleeper_api.py`/`fantasycalc_api.py` (the retry/session logic
   and cache-TTL behavior itself) and the CLI's error-handling loop still

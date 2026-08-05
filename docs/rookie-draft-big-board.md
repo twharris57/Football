@@ -1,10 +1,11 @@
 # Rookie Draft Big Board — Logic & Methodology
 
-What `dynasty_core.py` computes: a full analysis of the user's Sleeper dynasty
+What `dynasty/dynasty_core/` computes: a full analysis of the user's Sleeper dynasty
 league (id `1324888291937386496`, "Dynasty Degenerates") ahead of and during
 the rookie draft — who to pick, who to drop, and what that does to the roster
-across a season. Consumed by both `rookie_draft.py` (CLI) and `streamlit_app.py`
-(web dashboard); see `docs/dynasty-draft-web-app.md` for the presentation layer.
+across a season. Consumed by both `dynasty/rookie_draft.py` (CLI) and
+`dynasty/streamlit_app.py` (web dashboard); see `docs/dynasty-draft-web-app.md`
+for the presentation layer.
 
 ## Data sources
 
@@ -163,7 +164,7 @@ bench piece. Taxi/IR players are excluded from ever winning that
 low-value taxi stash can and should still lose out to a high-value new
 candidate. A drop is only forced at all when the roster is at total
 capacity (`roster_total_capacity()`: active roster slots + taxi slots +
-reserve/IR slots). Covered by `tests/test_dynasty_core.py`
+reserve/IR slots). Covered by `tests/dynasty_core/test_marginal_value.py`
 (`TestCapacityAwareDrop`). Rookies are assumed taxi-eligible for this check
 (true for every candidate in this draft); a general accrued-experience
 eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
@@ -274,7 +275,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   re-deriving the same z-scores. `power_score`/`phase` stay as the
   at-a-glance UI read.
 
-  A **Glossary** (`GLOSSARY` dict + an `st.dialog` in `streamlit_app.py`,
+  A **Glossary** (`GLOSSARY` dict + an `st.dialog` in `tabs/components.py`,
   behind a "❓ Glossary" button next to the page title) defines VOR, power
   score, and adj. value in one reachable place.
 - **Roster value analysis** — full roster sorted lowest-`adj_value` first.
@@ -541,12 +542,12 @@ is a deliberate decision, not a silent bug:
 |---|---|---|---|
 | Draft type is `"linear"` (same slot order every round) | `compute_pick_ownership` | Guarded — raises `ValueError` instead of silently computing wrong pick ownership (a snake draft reverses slot order on even rounds; not implemented) | Add snake-order support if the league ever switches |
 | Roster only uses QB/RB/WR/TE/FLEX/SUPER_FLEX slot types | `assign_starters`, `roster_weekly_gaps` | Any other Sleeper slot type (`WRRB_FLEX`, `REC_FLEX`, K, DEF, IDP) would be silently ignored — not assigned, not counted, no error | Extend `FLEX_ELIGIBLE_POSITIONS`/`SUPERFLEX_ELIGIBLE_POSITIONS` and the slot-processing loop for the new type |
-| `POSITION_VALUE_MULTIPLIER` (`QB: 1.175`, `TE: 1.202`) | `dynasty_core.py` | Last-resort fallback only — stale numbers only matter if the whole `player_scoring.py` enrichment fails for a refresh | Re-run `scripts/derive_position_multipliers.py`; not urgent since it's a fallback, not the primary path |
+| `POSITION_VALUE_MULTIPLIER` (`QB: 1.175`, `TE: 1.202`) | `dynasty_core/player_pools.py` | Last-resort fallback only — stale numbers only matter if the whole `player_scoring.py` enrichment fails for a refresh | Re-run `scripts/derive_position_multipliers.py`; not urgent since it's a fallback, not the primary path |
 | `player_scoring.BASELINE_SCORING` (FantasyCalc's assumed scoring model) | `player_scoring.py` | The entire per-player correction ratio is only as good as this guess — FantasyCalc doesn't publish its real formula, so it can't be verified directly | No way to verify against FantasyCalc directly; revisit only if FantasyCalc publishes methodology notes, or the correction looks systematically off |
 | `BASELINE_SCORING["rec"] = 1.0`, hardcoded independent of the real `ppr` sent to FantasyCalc | `player_scoring.py` | Harmless while the league stays full PPR; if PPR ever changes, the correction ratio would silently conflate the intended scoring delta with an unpriced PPR delta (`.claude/PROJECT_PLAN.md`, Valuation & data accuracy) | Thread the real `ppr` value into `BASELINE_SCORING["rec"]` instead of the literal `1.0` |
 | `player_scoring.QUALIFYING_VOLUME` (QB ≥200 att / RB ≥100 carries / WR ≥50 targets / TE ≥30 targets) | `player_scoring.py` | Not derived from any league rule — a manual judgment call for "enough volume to trust a personalized ratio" | Revisit only if personalized ratios look noisy for borderline players |
-| `YOUNG_CORE_MAX_YOE` / `YOUNG_CORE_NEED_THRESHOLD` / `LOW_VALUE_YOUNG_AGE` / `LOW_VALUE_AGING_AGE` | `dynasty_core.py` | Subjective heuristics behind the rebuild-strategy "need"/"low value" flags, not derived from any league setting | Adjust by feel as the roster ages into (or out of) the rebuild window |
-| `WIN_PCT_SHRINKAGE_K = 4` (games worth of shrinkage weight toward `0.5`) | `dynasty_core.py` | A judgment call for how fast `win_pct_shrunk` (the power/timeline read's z-scoring input, not the displayed `win_pct`) should trust a real record over the neutral prior — not derived from any league setting or statistical fit | Adjust by feel if early-season `power_score` still looks too swingy or too damped |
+| `YOUNG_CORE_MAX_YOE` / `YOUNG_CORE_NEED_THRESHOLD` / `LOW_VALUE_YOUNG_AGE` / `LOW_VALUE_AGING_AGE` | `dynasty_core/roster_needs.py`, `constants.py`, `roster_value.py` | Subjective heuristics behind the rebuild-strategy "need"/"low value" flags, not derived from any league setting | Adjust by feel as the roster ages into (or out of) the rebuild window |
+| `WIN_PCT_SHRINKAGE_K = 4` (games worth of shrinkage weight toward `0.5`) | `dynasty_core/power_timeline.py` | A judgment call for how fast `win_pct_shrunk` (the power/timeline read's z-scoring input, not the displayed `win_pct`) should trust a real record over the neutral prior — not derived from any league setting or statistical fit | Adjust by feel if early-season `power_score` still looks too swingy or too damped |
 | `max_keepers: 1` in the league's Sleeper settings | Not modeled anywhere | Appears vestigial for a dynasty-type league (Sleeper `type: 2`) — the whole roster carries over every year, not a limited keeper count, so this setting doesn't seem to apply | Revisit only if Sleeper's dynasty/keeper interaction is ever observed to actually matter |
-| `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`) | The only place in this codebase that treats `roster_id` as a range rather than an opaque key (needed to synthesize future pick ownership with no real draft object). Confirmed true today; a non-contiguous ID (e.g. a departed team) would silently synthesize a phantom pick | Iterate the real `rosters` list instead of a synthesized range |
-| `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers` (`dynasty_core.py`) | Judgment calls bounding the trade-target optimizer's combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |
+| `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`, `dynasty_core/picks.py`) | The only place in this codebase that treats `roster_id` as a range rather than an opaque key (needed to synthesize future pick ownership with no real draft object). Confirmed true today; a non-contiguous ID (e.g. a departed team) would silently synthesize a phantom pick | Iterate the real `rosters` list instead of a synthesized range |
+| `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers` (`dynasty_core/trade.py`) | Judgment calls bounding the trade-target optimizer's combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |

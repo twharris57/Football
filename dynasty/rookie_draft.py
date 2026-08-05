@@ -15,10 +15,9 @@ import logging
 import sys
 from typing import Any
 
+import dynasty_core
 import pandas as pd
 import requests
-
-import dynasty_core
 
 # Status flags (see dynasty_core.player_status_flags) and draft-plan status
 # icons print emoji - Windows consoles default to cp1252, which can't

@@ -1,7 +1,7 @@
 # Valuation Principles
 
 Durable rules for how player/pick/roster value is computed in the dynasty
-tools (`dynasty_core.py`, `player_scoring.py`, `fantasycalc_api.py`). This
+tools (`dynasty/dynasty_core/`, `dynasty/player_scoring.py`, `dynasty/fantasycalc_api.py`). This
 file is the *rules to follow* when extending or changing that logic — see
 `docs/rookie-draft-big-board.md` for the current methodology itself, and
 `.claude/PROJECT_PLAN.md` for what's still open. Grew out of a 2026-07-31

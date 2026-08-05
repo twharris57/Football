@@ -5,11 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import pandas as pd
-import requests
-
 import fantasycalc_api as fantasycalc
+import pandas as pd
 import player_scoring
+import requests
 import sleeper_api as sleeper
 
 from .byes import bye_week_by_team
@@ -168,7 +167,9 @@ def gather_state(
     pre_draft_rostered = rostered_player_ids(rosters) - picked_player_ids
     board_pool = {pid: info for pid, info in rookies.items() if pid not in pre_draft_rostered}
     draft_attribution = {
-        p["player_id"]: (p["round"], team_names.get(p["roster_id"])) for p in draft_picks if p.get("player_id")
+        p["player_id"]: (p["round"], team_names.get(p["roster_id"], "Unknown"))
+        for p in draft_picks
+        if p.get("player_id")
     }
 
     real_picks_by_overall = {

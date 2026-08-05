@@ -7,7 +7,6 @@ import time
 
 import nfl_data_py as nfl
 import pandas as pd
-
 import player_scoring
 
 from .constants import CACHE_DIR

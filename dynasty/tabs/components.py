@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -59,7 +60,7 @@ def show_df(
     empty_message: str,
     *,
     hide_index: bool = True,
-    column_config: dict[str, object] | None = None,
+    column_config: dict[str, Any] | None = None,
 ) -> bool:
     """Render df, or empty_message if it's empty - the repeated shape across every tab.
 
@@ -76,7 +77,7 @@ def show_df(
     return True
 
 
-def cols(df: pd.DataFrame, *specs: tuple[str, str] | tuple[str, str, str]) -> dict[str, object]:
+def cols(df: pd.DataFrame, *specs: tuple[str, str] | tuple[str, str, str]) -> dict[str, Any]:
     """Build a column_config dict from (key, label) or (key, label, help_text) tuples.
 
     Human-readable table headers without renaming the underlying DataFrame
@@ -90,7 +91,7 @@ def cols(df: pd.DataFrame, *specs: tuple[str, str] | tuple[str, str, str]) -> di
     itself - the DataFrame's actual values, and everything else that reads
     them, are untouched.
     """
-    config: dict[str, object] = {}
+    config: dict[str, Any] = {}
     for spec in specs:
         key, label = spec[0], spec[1]
         help_text = spec[2] if len(spec) == 3 else None
@@ -115,7 +116,7 @@ def show_status_table(df: pd.DataFrame, empty_message: str, column_labels: dict[
     display_cols = [c for c in df.columns if c != "status_details"]
     header_html = "".join(
         f"<th style='text-align:left; padding:4px 8px; "
-        f"border-bottom:1px solid rgba(128,128,128,0.4);'>{html.escape(column_labels.get(c, c))}</th>"
+        f"border-bottom:1px solid rgba(128,128,128,0.4);'>{html.escape(str(column_labels.get(c, c)))}</th>"
         for c in display_cols
     )
 
@@ -128,7 +129,7 @@ def show_status_table(df: pd.DataFrame, empty_message: str, column_labels: dict[
                 cell = " ".join(f'<span title="{html.escape(desc)}">{icon}</span>' for icon, desc in details)
             else:
                 value = row[c]
-                if pd.isna(value):
+                if bool(pd.isna(value)):
                     cell = ""
                 elif isinstance(value, float):
                     # numpy.float64 (what a pandas row actually holds) is a

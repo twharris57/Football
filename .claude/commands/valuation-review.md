@@ -1,8 +1,9 @@
 # /valuation-review
 
 Deep fantasy-football/stats-methodology review of this project's dynasty valuation and
-roster-analysis logic (`dynasty_core.py`, `player_scoring.py`, `fantasycalc_api.py`, and
-anything that consumes their output) — plus the docs and conventions that describe it.
+roster-analysis logic (`dynasty/dynasty_core/`, `dynasty/player_scoring.py`,
+`dynasty/fantasycalc_api.py`, and anything that consumes their output) — plus the docs
+and conventions that describe it.
 Written so the review always ends in the same durable artifacts, not just a chat
 message: fix-before-merge items in `.claude/PROJECT_PLAN.md`, deferred items filed in
 the right thematic section, and any newly-discovered failure mode captured as a rule in
@@ -38,9 +39,9 @@ to standard-league math, an unshrunk small-sample signal), not just a generic st
   claims; check whether a finding you're about to raise was actually exercised by that
   verification or would have slipped past it.
 - **Full-pipeline mode** (`full`, or no PR/branch exists yet): review the current state
-  of `dynasty_core.py`, `player_scoring.py`, `fantasycalc_api.py`, and their docs
-  (`docs/rookie-draft-big-board.md`, `docs/dynasty-draft-web-app.md`) end to end, same
-  depth as a PR review, with no diff to anchor against.
+  of `dynasty/dynasty_core/`, `dynasty/player_scoring.py`, `dynasty/fantasycalc_api.py`,
+  and their docs (`docs/rookie-draft-big-board.md`, `docs/dynasty-draft-web-app.md`) end
+  to end, same depth as a PR review, with no diff to anchor against.
 - Read enough surrounding context to reason about each function, not just the patch — an
   isolated diff hunk hides whether a helper is reused elsewhere, or whether a
   simplification is already documented as deliberate.

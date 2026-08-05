@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import os
 
+import dynasty_core
 import requests
 import streamlit as st
-
-import dynasty_core
 from tabs.components import cols, show_df, show_glossary
 from tabs.draft_tab import render_draft_tab
 from tabs.plan_tab import render_plan_tab

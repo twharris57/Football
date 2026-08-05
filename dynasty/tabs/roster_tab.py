@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import streamlit as st
-
 import dynasty_core
+import streamlit as st
 
 from .components import cols, show_df, show_status_table, team_selectbox
 
@@ -33,8 +32,9 @@ def _render_team_timeline(state: dict, selected_roster_id: int) -> None:
     power = state["team_power_timeline"].loc[selected_roster_id]
     league_size = len(state["team_power_timeline"])
     phase_labels = {"rebuilding": "🌱 Rebuilding", "treading_water": "⚖️ Treading water", "contending": "🏆 Contending"}
+    phase = str(power["phase"])
     st.metric(
-        phase_labels.get(power["phase"], power["phase"]),
+        phase_labels.get(phase, phase),
         f"{int(power['rank'])} of {league_size}",
         help=(
             "Rank by power score (1 = strongest roster + timeline + record in the "

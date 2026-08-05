@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import dynasty_core
 import pandas as pd
 import streamlit as st
-
-import dynasty_core
 
 from .components import format_drop, team_selectbox
 
@@ -29,7 +28,7 @@ def _trade_pick_options(roster_id: int, pick_values: pd.DataFrame) -> list[str]:
 
 def _trade_pick_label(pick_name: str, pick_value_by_name: dict) -> str:
     value = pick_value_by_name.get(pick_name)
-    return f"{pick_name} (value: {value:.0f})" if pd.notna(value) else f"{pick_name} (value: unknown)"
+    return f"{pick_name} (value: {value:.0f})" if bool(pd.notna(value)) else f"{pick_name} (value: unknown)"
 
 
 def _show_trade_side(label: str, result: dict) -> None:
@@ -119,12 +118,12 @@ def _render_manual_evaluator(
         )
 
     outgoing_pick_value = sum(
-        pick_value_by_name.get(p) or 0 for p in outgoing_picks if pd.notna(pick_value_by_name.get(p))
+        pick_value_by_name.get(p) or 0 for p in outgoing_picks if bool(pd.notna(pick_value_by_name.get(p)))
     )
     incoming_pick_value = sum(
-        pick_value_by_name.get(p) or 0 for p in incoming_picks if pd.notna(pick_value_by_name.get(p))
+        pick_value_by_name.get(p) or 0 for p in incoming_picks if bool(pd.notna(pick_value_by_name.get(p)))
     )
-    unresolved_picks = [p for p in outgoing_picks + incoming_picks if pd.isna(pick_value_by_name.get(p))]
+    unresolved_picks = [p for p in outgoing_picks + incoming_picks if bool(pd.isna(pick_value_by_name.get(p)))]
     if unresolved_picks:
         st.caption(f"No resolvable value for: {', '.join(unresolved_picks)} — contributing 0 to that side's asset value.")
 

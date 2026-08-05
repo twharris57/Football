@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import dynasty_core
 import pandas as pd
 import streamlit as st
-
-import dynasty_core
 
 from .components import cols
 

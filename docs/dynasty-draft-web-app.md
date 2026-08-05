@@ -4,7 +4,7 @@ The web presentation layer for the logic in `docs/rookie-draft-big-board.md`.
 Built so the draft tool is usable from a phone during the live draft instead
 of requiring a terminal, and deployable to the user's Synology NAS.
 
-## Streamlit app (`streamlit_app.py`)
+## Streamlit app (`dynasty/streamlit_app.py` + `dynasty/tabs/`)
 
 Five tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
 
@@ -76,7 +76,7 @@ of a misleading flat 50%. The CLI mirrors this with a `--- Team timeline
 ---` line for the user's own team.
 
 A "❓ Glossary" button next to the page title opens an `st.dialog` (`GLOSSARY`
-in `streamlit_app.py`) defining VOR, power score, and adj. value.
+in `tabs/components.py`) defining VOR, power score, and adj. value.
 
 ### Sellable veterans / Free agents / Draft pick trade values
 
@@ -201,9 +201,9 @@ their own `try`/`except requests.RequestException`, re-raising with a
 `"Couldn't reach Sleeper: ..."` / `"Couldn't reach FantasyCalc: ..."`
 prefix — same exception type, so the CLI/Streamlit `except
 requests.RequestException` handlers didn't need to change. Covered by
-`tests/test_dynasty_core.py`'s `TestGatherStateConnectivityErrors`, which
+`tests/dynasty_core/test_state.py`'s `TestGatherStateConnectivityErrors`, which
 monkeypatches `sleeper_api`/`fantasycalc_api` directly — the one place in
-that test file `testing.md`'s "mock only external services you do not
+that test suite `testing.md`'s "mock only external services you do not
 control" applies, since everything else there is pure logic over synthetic
 data with no real boundary to mock.
 
@@ -236,7 +236,7 @@ Conventions applied consistently across every tab:
 - **Methodology text lives in a closed "How this works" expander**, not a
   bare caption — keeps data above the fold on mobile.
 
-## CLI (`rookie_draft.py`)
+## CLI (`dynasty/rookie_draft.py`)
 
 Thin wrapper: `print_report()` renders the same `gather_state()` output as
 plain text, `main()` adds the interactive Enter/`f`/`q` refresh loop. Kept
@@ -294,7 +294,7 @@ shouldn't be a hard failure. The CLI's interactive loop wraps
 `gather_state()` in a try/except: a failure prints an error and offers
 retry/quit instead of crashing the whole session.
 
-`.github/workflows/ci.yml` runs `tests/test_dynasty_core.py` and
+`.github/workflows/ci.yml` runs `tests/dynasty_core/` and
 `tests/test_player_scoring.py` on every PR to `main`. See
 `docs/rookie-draft-big-board.md` for what's actually covered.
 

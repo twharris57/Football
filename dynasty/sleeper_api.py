@@ -9,17 +9,16 @@ from __future__ import annotations
 import json
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 import requests
+from cache_dir import CACHE_DIR
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.sleeper.app/v1"
-CACHE_DIR = Path(__file__).parent / ".cache"
 PLAYERS_CACHE_PATH = CACHE_DIR / "players.json"
 PLAYERS_CACHE_TTL_SECONDS = 12 * 60 * 60
 

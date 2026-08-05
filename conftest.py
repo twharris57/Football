@@ -1,9 +1,21 @@
-"""Anchors pytest's rootdir so tests/ can import project modules (dynasty_core, etc.)
-regardless of how pytest is invoked (bare `pytest`, `python -m pytest`, different CWD).
+"""Puts dynasty/ on sys.path so tests/ can import dynasty_core, sleeper_api,
+etc. as flat sibling modules, regardless of how pytest is invoked (bare
+`pytest`, `python -m pytest`, different CWD).
 
-Without this, `pytest tests/` fails to import dynasty_core - pytest's default
-rootdir insertion adds tests/ itself (no __init__.py there) to sys.path, not
-the repo root, since there's nothing here anchoring it. `python -m pytest`
-worked locally by coincidence (the -m flag adds the CWD to sys.path), which
-is why this only surfaced in CI.
+This repo deliberately has no real Python package structure - modules
+resolve each other via whichever directory happens to be on sys.path at
+runtime, the same way `streamlit run dynasty/streamlit_app.py` or
+`python dynasty/rookie_draft.py` auto-add dynasty/ by virtue of it being
+the directory the entry-point script lives in. pytest has no equivalent
+"directory of the script being run" to anchor on, so this does it
+explicitly instead of relying on pytest's own conftest-directory
+sys.path insertion (which anchors to repo root, not dynasty/, and was a
+confusing enough implicit mechanism to warrant this explicit version).
 """
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent / "dynasty"))
