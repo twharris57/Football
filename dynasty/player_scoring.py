@@ -7,8 +7,8 @@ Players below the qualifying bar fall back to a position-average ratio.
 See docs/rookie-draft-big-board.md's "Valuation" section for the full
 methodology and rationale.
 
-Deliberately independent of dynasty_core.py (no import of it): that module
-imports this one to call get_multipliers(), so this module can't import it
+Deliberately independent of dynasty_core (no import of it): those modules
+import this one to call get_multipliers(), so this module can't import them
 back without a circular import.
 """
 
@@ -17,15 +17,14 @@ from __future__ import annotations
 import json
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 import nfl_data_py as nfl
 import pandas as pd
+from cache_dir import CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path(__file__).parent / ".cache"
 MULTIPLIERS_CACHE_PATH = CACHE_DIR / "scoring_multipliers.json"
 
 LOOKBACK_SEASONS = 3

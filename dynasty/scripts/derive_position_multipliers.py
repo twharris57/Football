@@ -15,9 +15,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import dynasty_core as dc
 import player_scoring
 import sleeper_api as sleeper
-import dynasty_core as dc
 
 
 def main() -> None:

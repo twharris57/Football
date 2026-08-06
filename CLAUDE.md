@@ -21,45 +21,61 @@ not a deployed service.
 
 ## Architecture
 
-- Plain Python scripts, no package structure, no persistence layer — everything
-  is pulled fresh from `nfl_data_py` into pandas DataFrames each run.
-- `football.py` is the original, simple version: hardcoded year/week/gamedays,
-  ranks games by `home_moneyline` magnitude, and prints an injury report for
-  toss-up games (`|home_moneyline| < 150`).
-- `football_enhanced.py` is a refactor toward a pluggable weight-function
-  architecture: each signal (currently only `compute_vegas_odds`) returns a
-  per-game confidence score, scores are combined via `weight_factors`, and
-  results are ranked and assigned points. Additional signals (injury impact,
-  weather/altitude, sentiment) are sketched as commented-out stubs for future work.
-- `team_metadata_batch.py` is an early, unfinished prototype for enriching teams
-  with environmental metadata (stadium altitude, temperature bias, play style)
-  via the OpenWeatherMap API. It is not wired into either picker and still has
-  a placeholder API key.
-- `football.ipynb` mirrors `football.py`'s logic as a notebook for interactive
-  exploration.
-- **Dynasty league tools** (Sleeper): `sleeper_api.py` is a thin client for
-  Sleeper's public read-only API, with local disk caching for the ~14MB
-  players reference dataset (`.cache/`, gitignored, 12h TTL). `fantasycalc_api.py`
-  wraps FantasyCalc's public dynasty trade-value rankings — the market-value
+Two independent subsystems, segregated into their own top-level folders —
+`confidence_pool/` (weekly NFL confidence-pool picker) and `dynasty/`
+(Sleeper dynasty league tools). They share no code and don't import each
+other. No real Python packaging (no `pyproject.toml`, not installable) —
+modules resolve each other as flat sibling files via whichever directory
+happens to be on `sys.path` at runtime (the script's own directory, added
+automatically by `python`/`streamlit run`; `conftest.py` does the same
+explicitly for `pytest`). `dynasty_core/` and `dynasty/tabs/` are genuine
+Python packages only because splitting one large module (`dynasty_core.py`,
+`streamlit_app.py`'s tabs) into cooperating files requires it — everything
+else stays flat, on purpose.
+
+- `confidence_pool/football.py` is the original, simple version: hardcoded
+  year/week/gamedays, ranks games by `home_moneyline` magnitude, and prints
+  an injury report for toss-up games (`|home_moneyline| < 150`).
+- `confidence_pool/football_enhanced.py` is a refactor toward a pluggable
+  weight-function architecture: each signal (currently only
+  `compute_vegas_odds`) returns a per-game confidence score, scores are
+  combined via `weight_factors`, and results are ranked and assigned points.
+  Additional signals (injury impact, weather/altitude, sentiment) are
+  sketched as commented-out stubs for future work.
+- `confidence_pool/team_metadata_batch.py` is an early, unfinished prototype
+  for enriching teams with environmental metadata (stadium altitude,
+  temperature bias, play style) via the OpenWeatherMap API. It is not wired
+  into either picker and still has a placeholder API key.
+- `confidence_pool/football.ipynb` mirrors `football.py`'s logic as a
+  notebook for interactive exploration.
+- **Dynasty league tools** (Sleeper), all under `dynasty/`: `sleeper_api.py`
+  is a thin client for Sleeper's public read-only API, with local disk
+  caching for the ~14MB players reference dataset (`.cache/` at the repo
+  root regardless of where the code that touches it lives — see
+  `cache_dir.py` — gitignored, 12h TTL). `fantasycalc_api.py` wraps
+  FantasyCalc's public dynasty trade-value rankings — the market-value
   baseline, corrected for this league's non-standard scoring (see below) and
   used as an input to a marginal-lineup-value ranking, not the final answer.
-  `dynasty_core.py` holds all the shared logic — pick ownership, the rookie
+  `dynasty_core/` holds all the shared logic — pick ownership, the rookie
   big board, roster analysis (needs/value/capacity/byes/weekly gaps/handcuffs),
-  optimal-lineup assignment, and the round-by-round draft plan — behind one
+  optimal-lineup assignment, and the round-by-round draft plan — split into
+  one submodule per concern (see its own `__init__.py`), behind one
   `gather_state()` call, used by both `rookie_draft.py` (CLI, interactive
-  refresh loop) and `streamlit_app.py` (web dashboard, 4 tabs). Full
-  methodology in `docs/rookie-draft-big-board.md`; web/Docker details in
+  refresh loop) and `streamlit_app.py` + `tabs/` (web dashboard, 5 tabs, one
+  module per non-trivial tab). Full methodology in
+  `docs/rookie-draft-big-board.md`; web/Docker details in
   `docs/dynasty-draft-web-app.md`.
-- **Web + Docker**: `web_guidelines.md` now applies to `streamlit_app.py`, and
-  `docker_guidelines.md` applies to the `Dockerfile`/compose setup below.
-  `python:3.12-slim` is used instead of the guideline's alpine default — a
-  deliberate exception, since `nfl_data_py`'s `fastparquet`/`cramjam`
-  dependency often lacks prebuilt musl wheels (same call made in the sibling
-  `Finance-Dashboards` project). GitHub Actions (`.github/workflows/docker-publish.yml`)
-  builds and pushes the image to GHCR (`ghcr.io/twharris57/football-dynasty-draft`)
-  on every push to `main`. `docker-compose.deploy.yml` is this repo's deployment
-  reference per `app_deployment_reference.md`; the deployment repo that reads and
-  adapts it is `../nas-configs` (`football/football-compose.yaml`). Local dev
+- **Web + Docker**: `web_guidelines.md` applies to `dynasty/streamlit_app.py`/
+  `dynasty/tabs/`, and `docker_guidelines.md` applies to the
+  `Dockerfile`/compose setup below. `python:3.12-slim` is used instead of the
+  guideline's alpine default — a deliberate exception, since `nfl_data_py`'s
+  `fastparquet`/`cramjam` dependency often lacks prebuilt musl wheels (same
+  call made in the sibling `Finance-Dashboards` project). GitHub Actions
+  (`.github/workflows/docker-publish.yml`) builds and pushes the image to
+  GHCR (`ghcr.io/twharris57/football-dynasty-draft`) on every push to `main`.
+  `docker-compose.deploy.yml` is this repo's deployment reference per
+  `app_deployment_reference.md`; the deployment repo that reads and adapts
+  it is `../nas-configs` (`football/football-compose.yaml`). Local dev
   (`docker-compose.yml`) still builds from source.
 
 ## Key Constraints
@@ -79,19 +95,28 @@ not a deployed service.
 ## Project Structure
 
 ```
-football.py              Simple standalone confidence-pool picker (moneyline ranking + injury report)
-football_enhanced.py     Weighted multi-signal picker framework (only Vegas odds active so far)
-team_metadata_batch.py   Prototype: team altitude/temperature/style enrichment via OpenWeatherMap (unintegrated)
-football.ipynb           Notebook version of football.py for interactive experimentation
-sleeper_api.py           Sleeper API client + local players-dataset cache
-fantasycalc_api.py       FantasyCalc dynasty trade-value client
-dynasty_core.py          Shared dynasty logic: big board, roster analysis, lineup, marginal-value draft plan
-player_scoring.py        Per-player real-scoring correction (league scoring_settings vs. FantasyCalc's assumed baseline)
-scripts/                 One-off/derivation scripts, e.g. derive_position_multipliers.py (rookie play-style bucket ratios)
-rookie_draft.py          Rookie draft big board CLI, with interactive refresh loop
-streamlit_app.py         Rookie draft big board web dashboard (same logic as the CLI)
-tests/                   pytest suite: test_dynasty_core.py, test_player_scoring.py
-Dockerfile               Image for streamlit_app.py (python:3.12-slim, non-root)
+confidence_pool/
+  football.py              Simple standalone confidence-pool picker (moneyline ranking + injury report)
+  football_enhanced.py     Weighted multi-signal picker framework (only Vegas odds active so far)
+  team_metadata_batch.py   Prototype: team altitude/temperature/style enrichment via OpenWeatherMap (unintegrated)
+  football.ipynb           Notebook version of football.py for interactive experimentation
+dynasty/
+  sleeper_api.py           Sleeper API client + local players-dataset cache
+  fantasycalc_api.py       FantasyCalc dynasty trade-value client
+  cache_dir.py             Shared CACHE_DIR, anchored to the repo root regardless of caller depth
+  dynasty_core/            Shared dynasty logic, one submodule per concern (pick ownership, player
+                            pools, roster needs, power/timeline, lineup, roster value, byes,
+                            handcuffs, marginal-value ranking, trade evaluation, draft plan,
+                            team analysis, orchestration) - see its __init__.py for the full map
+  player_scoring.py        Per-player real-scoring correction (league scoring_settings vs. FantasyCalc's assumed baseline)
+  scripts/                 One-off/derivation scripts, e.g. derive_position_multipliers.py (rookie play-style bucket ratios)
+  rookie_draft.py          Rookie draft big board CLI, with interactive refresh loop
+  streamlit_app.py         Rookie draft big board web dashboard entry point (thin orchestrator)
+  tabs/                    One module per Streamlit tab, plus components.py for shared display helpers
+tests/
+  dynasty_core/            pytest suite mirroring dynasty_core/'s submodules, plus helpers.py fixtures
+  test_player_scoring.py
+Dockerfile               Image for dynasty/streamlit_app.py (python:3.12-slim, non-root)
 docker-compose.yml       Local dev: builds the image from source
 docker-compose.deploy.yml  Deployment reference (pulls the prebuilt GHCR image; ../nas-configs deploys the adapted copy)
 .env.example             Deployment reference env vars for docker-compose.deploy.yml (secrets left blank + a comment on source)
@@ -108,26 +133,26 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 
-python football.py            # simple picker
-python football_enhanced.py   # weighted picker
+python confidence_pool/football.py            # simple picker
+python confidence_pool/football_enhanced.py   # weighted picker
 
-python rookie_draft.py         # dynasty rookie draft big board, interactive refresh loop
-python rookie_draft.py --once  # one snapshot, no prompt
+python dynasty/rookie_draft.py         # dynasty rookie draft big board, interactive refresh loop
+python dynasty/rookie_draft.py --once  # one snapshot, no prompt
 
-streamlit run streamlit_app.py # dynasty rookie draft big board, web dashboard
+streamlit run dynasty/streamlit_app.py # dynasty rookie draft big board, web dashboard
 
 docker compose up --build      # local: build and run the dashboard in Docker
 
 pytest tests/ -v                # ranking/lineup/valuation logic (runs in CI on every PR)
 ```
 
-Test coverage is intentionally narrow so far: `tests/test_dynasty_core.py` covers
+Test coverage is intentionally narrow so far: `tests/dynasty_core/` covers
 `assign_starters`, the capacity-aware drop logic, `season_average_starter_value`'s
-bye-week handling, and `roster_weekly_gaps`; `tests/test_player_scoring.py` covers
-the per-player real-scoring correction's `_sane_ratio` guard and multiplier
-fallback chain. Both run against synthetic data (no real API calls). The
-confidence-pool scripts and the Sleeper/FantasyCalc clients themselves still
-have none. See `testing.md` for general conventions.
+bye-week handling, and `roster_weekly_gaps`, one file per `dynasty_core/` submodule;
+`tests/test_player_scoring.py` covers the per-player real-scoring correction's
+`_sane_ratio` guard and multiplier fallback chain. Both run against synthetic data
+(no real API calls). The confidence-pool scripts and the Sleeper/FantasyCalc clients
+themselves still have none. See `testing.md` for general conventions.
 
 ## Available Skills
 
@@ -170,7 +195,7 @@ have none. See `testing.md` for general conventions.
 - **Rookie draft big board**: shows the whole incoming rookie class (drafted
   players stay listed, annotated with who took them), valued via FantasyCalc
   dynasty trade value corrected for this league's QB/TE scoring (see
-  `POSITION_VALUE_MULTIPLIER` in `dynasty_core.py`). Pick *recommendations*,
+  `POSITION_VALUE_MULTIPLIER` in `dynasty_core/player_pools.py`). Pick *recommendations*,
   however, don't rank by that value directly — see "Marginal lineup value"
   below.
 - **Marginal lineup value**: the draft plan ranks candidates by how much

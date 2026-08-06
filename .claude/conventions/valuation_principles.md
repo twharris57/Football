@@ -1,7 +1,7 @@
 # Valuation Principles
 
 Durable rules for how player/pick/roster value is computed in the dynasty
-tools (`dynasty_core.py`, `player_scoring.py`, `fantasycalc_api.py`). This
+tools (`dynasty/dynasty_core/`, `dynasty/player_scoring.py`, `dynasty/fantasycalc_api.py`). This
 file is the *rules to follow* when extending or changing that logic — see
 `docs/rookie-draft-big-board.md` for the current methodology itself, and
 `.claude/PROJECT_PLAN.md` for what's still open. Grew out of a 2026-07-31
@@ -102,55 +102,35 @@ table, the same as any other unverified constant.
 
 ## Silent data-degradation must surface as a warning, not just a comment
 
-`gather_state`'s `data_warnings` list exists specifically so a fallback —
-byes, handcuffs, and the scoring multipliers all use it — is visible to
-the user instead of being indistinguishable from "there's nothing to
-report." `pick_trade_values()` (2026-08-01 valuation review) has the same
-kind of silent-fallback risk (a FantasyCalc pick-naming convention change
-would leave every `value` blank, no exception raised) and its docstring
-even says so — but nothing actually populates `data_warnings` when it
-happens, unlike every other fallback path in this file.
+`gather_state`'s `data_warnings` list exists so a fallback (byes, handcuffs,
+scoring multipliers) is visible to the user rather than indistinguishable
+from "nothing to report." `pick_trade_values()` (2026-08-01 review) has the
+same silent-fallback risk (a FantasyCalc naming change would blank every
+`value`) and its docstring says so — but nothing populates `data_warnings`
+when it happens.
 
-**The rule**: a well-written comment describing a silent-degradation risk
-is not a substitute for wiring it into `data_warnings`. If a computation
-can quietly produce an empty/degraded result on a join, name-match, or
-external-format mismatch, add the cheap check (`if result.isna().all(): ...`
-or equivalent) and append to `data_warnings` at the point the degradation
-is detected — the same pattern already established for every other
-data-dependent enrichment step in `gather_state`, not a new one to invent.
+**The rule**: a comment describing a silent-degradation risk isn't a
+substitute for wiring it into `data_warnings`. If a computation can
+quietly produce an empty/degraded result on a join or format mismatch, add
+the cheap check and append to `data_warnings` at the point of degradation
+— the pattern every other fallback in `gather_state` already uses.
 
-**A bare `value or default` doesn't catch `NaN`, and `NaN` doesn't just
-sit there quietly — it defeats every comparison downstream of it.**
-`find_trade_offers()` (RT-12, 2026-08-02 review) resolves a target's
-market value with `pick_value_by_name.get(target_pick_name) or 0.0` —
-written to normalize a missing/`None` lookup to `0.0`, the same pattern
-used safely elsewhere in this file for real falsy values. But
-`float('nan')` is truthy in Python (`bool(nan) is True`), so when the
-target *is* present in the table but its value is unresolved (a real,
-already-documented case — the same FantasyCalc pick-naming-mismatch gap
-`pick_trade_values()` itself flags), `nan or 0.0` evaluates to `nan`, not
-`0.0`. Unlike a `None` or `0.0` that a caller might at least reason about,
-that `NaN` then poisons everything built from it silently and in a way
-that's easy to miss in review: `max(nan, some_floor)` can itself return
-`nan` depending on argument order, and every `<`/`>` comparison against a
-`NaN` is unconditionally `False` — so a safety gate built as "reject if
-metric worse than threshold" doesn't just miscalculate, it stops
-rejecting *anything*, silently turning a hard acceptance bar into a
-no-op. The fix pattern already existed 20 lines away in the same
-function (`if pd.notna(row["value"])`, filtering the caller's own pick
-pool) — it just wasn't applied to the target-value lookup.
+**A bare `value or default` doesn't catch `NaN`.** `find_trade_offers()`
+(RT-12, 2026-08-02 review) resolved a target's value with
+`pick_value_by_name.get(...) or 0.0`, meant to normalize a missing/`None`
+lookup — but `NaN` is truthy in Python, so an unresolved-but-present value
+(the same pick-naming gap above) passed through as `NaN`, not `0.0`, and
+then silently defeated every downstream comparison (`max(nan, x)` and any
+`<`/`>` against `NaN` behave unpredictably) — a hard acceptance gate quietly
+became a no-op instead of erroring.
 
 **The rule**: never normalize a possibly-missing numeric value with a bare
-`value or default` if the value's source can also produce `NaN` (any
-`pandas`/`numpy` numeric column with unresolved joins is exactly this
-shape) — `NaN` will slide past the `or` unchanged and then silently
-short-circuit every comparison it touches. Use an explicit `pd.isna(value)`
-or `value is None` check instead. This is a specific, sharper-edged case
-of the general silent-degradation rule above — the difference is that a
-plain missing/`None` value at least fails loud-ish (a visibly wrong `0.0`
-you might notice), while an unnoticed `NaN` can make a gate or filter
-silently stop functioning altogether rather than just computing a wrong
-number.
+`value or default` if the source can produce `NaN` (any `pandas`/`numpy`
+column with unresolved joins). Use `pd.isna(value)` explicitly instead —
+`NaN` slides past `or` unchanged and silently short-circuits every
+comparison it touches. Sharper-edged than the general rule above: a plain
+`None`/`0.0` at least fails loud-ish; an unnoticed `NaN` can make a gate
+stop functioning altogether.
 
 ## Prefer real scoring rules pulled live over hardcoding — document what you can't
 
@@ -283,23 +263,15 @@ entire slot category's *capacity* rather than just closing off further
 
 ## Exclusion filters change the outcome for everyone else, not just the excluded entity
 
-`recommend_drop()`'s `exclude_ids` parameter is meant to protect specific
-players from being *chosen* as the recommended cut (earlier-round draft
-picks in `multi_round_plan`'s `exclude_from_drop`; a trade's own incoming
-players in `evaluate_trade()`'s new `recommended_drops`, RT-13,
-2026-08-02 review). But it filters those players out of `rows` *before*
-`assign_starters()` runs — removing them from the competition used to
-decide who counts as a "starter" at all, not just from the pool of
-candidates eligible to be cut. Removing a competitor can only ever help
-the remaining candidates win a slot, never hurt them, so an existing
-droppable player can read as `is_starter: True` when, in the real roster
-(protected players correctly seated), they'd actually be bench. The
-reverse can't happen — a real starter never gets mislabeled bench by this
-mechanism — so the error only ever overstates a cut's severity. Live in
-`recommend_drop()` since before this review, but only a rare edge case
-until `evaluate_trade()` made `exclude_ids` non-empty on essentially every
-call and started surfacing `is_starter` as a direct user-facing warning
-tag rather than an internal comparison.
+`recommend_drop()`'s `exclude_ids` (RT-13, 2026-08-02 review) is meant to
+protect specific players from being *chosen* as the recommended cut, but
+filtered them out of `rows` *before* `assign_starters()` ran — removing
+them from the starter competition entirely, not just the cut-eligible
+pool. Since removing a competitor can only ever help the remaining
+candidates win a slot, an existing droppable player could read as
+`is_starter: True` when they'd actually be bench on the real roster — an
+error that only ever overstates a cut's severity, surfaced once
+`evaluate_trade()` made `exclude_ids` non-empty on nearly every call.
 
 **The rule**: "protect this entity from being selected" and "remove this
 entity from the field" are different operations. A filter meant only to

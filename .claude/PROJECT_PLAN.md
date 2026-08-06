@@ -36,90 +36,104 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-**`feature/trade-target-optimizer` (PR #25, reviewed 2026-08-02):**
+Findings from a `/code-review` pass over `feature/code-reorg` (the
+`confidence_pool/`/`dynasty/` split plus the `dynasty_core/`, `tabs/`, and
+`test_dynasty_core.py` package splits), verified against
+`main:dynasty_core.py` and the pre-split monolith. A separate check of the
+FantasyCalc cache-directory path (flagged mid-review) turned out to already
+be fixed at current HEAD (commit `f4ce06e`), and the previously-flagged
+missing `test_handcuffs.py` and four duplicated-logic spots turned out to
+pre-date this branch (present in the monolith too, just as inline
+one-liners) — neither is listed below.
 
-- [x] **An unresolved pick value crashes the optimizer's own safety gate via
-  silent `NaN` propagation, not the intended $25 floor.** Fixed
-  2026-08-02: `target_value` is now resolved with an explicit
-  `pd.notna()` check (covers both a missing key and a present-but-`NaN`
-  value in one check, unlike a bare `or 0.0`) into a new
-  `target_value_resolved` flag; when unresolved, the function returns
-  early with `offers: []` before `tolerance`/the acceptance gate are ever
-  computed, so a `NaN` can no longer reach either. New regression test:
-  `test_unresolved_pick_target_does_not_propagate_nan`.
-- [x] **An unresolved/unranked target (FantasyCalc has no `adj_value` for
-  it) silently reads as worth $0, which defeats the acceptance gate
-  entirely and surfaces "give away your cheapest asset" as the #1
-  suggested offer with no warning.** Fixed 2026-08-02: same
-  `target_value_resolved` fix as above covers this case too (a missing
-  `fc_by_sleeper_id` entry resolves to `None`, caught by the same
-  `pd.notna()` check) — the offer search no longer runs at all against an
-  unresolved target, so there's no fabricated `$0` baseline for any
-  throwaway asset to "clear." `streamlit_app.py`'s Trade Evaluator tab now
-  shows an explicit warning ("No resolvable market value for X...") when
-  `target_value_resolved` is `False`, mirroring the manual evaluator's
-  existing `unresolved_picks` caption. New regression test:
-  `test_unresolved_player_target_returns_no_offers_without_a_fabricated_zero_baseline`.
-- [x] **The sellable/pick pool is capped to the 12 *highest-value*
-  candidates before any target-value filtering runs, which can silently
-  exclude the only assets that would actually match a below-median-value
-  target.** Fixed 2026-08-02: before sorting/capping, the pool now drops
-  any candidate whose value alone already exceeds
-  `TRADE_OFFER_PREFILTER_HIGH` (2×) of the target's value — a
-  mathematically sound prune, not a heuristic reorder: no combo containing
-  such a candidate could ever land in-band, since adding more assets only
-  raises `combo_value` further. This keeps the capped pool from being
-  crowded out by pieces that could never actually be used, so a low-value
-  target's genuinely matching cheap candidates survive the cap even when
-  the roster also holds many pricier ones. New regression test:
-  `test_pool_prunes_out_of_band_candidates_before_capping_so_a_low_value_target_still_finds_a_match`
-  (15 expensive picks + 5 cheap matching ones — asserts every surfaced
-  offer draws only from the cheap set). Full suite (115 tests) passes.
-
-**`feature/trade-block-monitoring` (PR #23, reviewed 2026-08-02):**
-
-- [x] **`evaluate_trade()`'s `over_capacity` misfired for any roster
-  already carrying taxi-squad players — the norm for this league, not an
-  edge case.** Fixed 2026-08-02: `roster_total_capacity()` gained a
-  `taxi_filled` parameter, credited whenever `taxi_eligible=False`
-  instead of zeroing taxi capacity outright — mirrors how `reserve_filled`
-  already worked, so an existing taxi stash counts as room already spent
-  rather than reading as already over capacity before anything changes.
-  Threaded through `rank_by_marginal_value()`/`free_agent_board()`
-  (`RT-11`, identical root cause, fixed in the same change) and
-  `evaluate_trade()`. Also fixed the smaller, same-shaped nuance found in
-  the same review: `evaluate_trade`'s `reserve_filled`/`taxi_filled` are
-  now computed *post*-trade (excluding any outgoing player who was
-  currently on IR/taxi), since trading one of them away genuinely frees
-  that slot. Verified with new tests: an existing taxi occupant no longer
-  forces an unnecessary drop in `rank_by_marginal_value`/`free_agent_board`,
-  doesn't cause a false `over_capacity` in `evaluate_trade`, and trading
-  away an IR player correctly shrinks post-trade `capacity` by one. See
-  `.claude/conventions/valuation_principles.md`'s "A capacity ceiling that
-  restricts new entrants must not also erase credit for room already
-  spent" rule.
-- [x] **`recommend_drop()`'s `is_starter` tag could overstate a forced
-  cut's severity whenever `exclude_ids` was non-empty (`RT-13`).** Fixed
-  2026-08-02: `assign_starters()` now runs against the *full* candidate
-  list before `exclude_ids` is applied, so a protected player (a trade's
-  incoming side, or a draft plan's earlier picks) still legitimately
-  occupies a slot and can still push someone else to bench when deciding
-  who else counts as a starter — `exclude_ids` now only gates which
-  candidate can be *chosen* as the drop, applied after `starter_ids` is
-  computed. New regression test (`TestRecommendDropExcludedCompetition`)
-  constructs the exact failure mode: two higher-value excluded players
-  correctly win the roster's only starting slot, so the sole droppable
-  candidate reads `is_starter: False`, not the `True` the old
-  exclude-before-assign order would have produced. See
-  `.claude/conventions/valuation_principles.md`'s "Exclusion filters
-  change the outcome for everyone else" rule.
+- [x] `dynasty/dynasty_core/state.py:170` — `draft_attribution` now
+  defaults an unmatched `roster_id`'s team name to the literal string
+  `"Unknown"` instead of `None` (pre-split `dynasty_core.py` used
+  `team_names.get(p["roster_id"])` with no default). Introduced in the
+  "pure code motion" package-split commit `d750dc8`, not documented in
+  that commit's message, no test coverage. The same file's `recent_rows`
+  block (line ~205) still does the bare `.get()` with no default — the two
+  are now inconsistent within one function. Changes what renders in the
+  rookie big board's "Drafted By" column for an orphaned/traded pick.
+  **Fixed**: dropped the `"Unknown"` default, restoring the bare
+  `team_names.get(p["roster_id"])` and consistency with `recent_rows`.
+- [x] `dynasty/dynasty_core/roster_value.py:49` — `player_status_details`
+  adds `injury_status = str(injury_status)` before the
+  `INJURY_STATUS_DESCRIPTIONS` lookup, with no equivalent in the monolith.
+  Harmless today (Sleeper's `injury_status` is always a string or `None`),
+  but a genuine textual behavior diff introduced during a commit that
+  claims zero behavior change — worth a one-line note if not fixed
+  outright. **Fixed**: removed the redundant cast, restoring parity with
+  the monolith.
+- [x] `dynasty/dynasty_core/byes.py:107-111` and
+  `dynasty/dynasty_core/marginal_value.py:146-150` — both independently
+  reintroduce an identical `_bye_for_row`-style nested helper
+  (`team = players.get(...).get("team"); return byes.get(team) if team else None`)
+  where the monolith used one inline expression
+  (`byes.get(players.get(pid, {}).get("team"))`) in three separate places.
+  Behaviorally identical, but duplicated logic invented twice during the
+  split instead of pulled into one shared helper (e.g. in `player_pools.py`,
+  which both modules already import from). **Fixed**: pulled into
+  `bye_for_row()` in `dynasty_core/lineup.py` instead — the actual common
+  import both modules already share (`player_value_rows` lives there too),
+  a tighter fit than `player_pools.py`. Re-exported from `dynasty_core/__init__.py`
+  alongside `player_value_rows`.
+- [x] `dynasty/tabs/` has no `__init__.py` — relies entirely on Python's
+  implicit namespace-package mechanism (PEP 420) instead of an explicit
+  `__init__.py`, unlike `dynasty_core/`, which `CLAUDE.md` says exists
+  "only because splitting... requires it" — the same justification applies
+  here but wasn't followed. Works today (confirmed via cached
+  `tabs/__pycache__`), but a latent trap for any tool that assumes regular
+  packages (strict mypy/linter namespace-package handling, a future
+  `pyproject.toml`). **Fixed**: added `dynasty/tabs/__init__.py`, and
+  updated `CLAUDE.md`'s "only `dynasty_core/` is a package" claim to cover
+  both.
+- [x] `dynasty/dynasty_core/trade.py:~251-257` (`find_trade_offers`) — the
+  split added redundant defensive wrapping —
+  `float(raw_target_value) if raw_target_value is not None and bool(pd.notna(raw_target_value)) else 0.0`
+  and `bool(pd.notna(row["value"]))` — where the monolith used the simpler
+  `raw_target_value if pd.notna(raw_target_value) else 0.0` and bare
+  `pd.notna(row["value"])`. `pd.notna(None)` already returns `False`, so
+  the extra checks/casts are pure no-ops — a genuine rewrite (not pure
+  motion, contradicting the "no behavior change" commit claim) that adds
+  noise a reviewer has to double-check for a difference that doesn't
+  exist. Cleanup, not a bug. **Fixed**: simplified all three spots
+  (including the `target_value_resolved` line sharing the same pattern)
+  back to the monolith's simpler form.
 
 ## Now — blocking
 
-*Empty — `NB-1` (Synology NAS deploy + live-draft verification) is done:
-the user confirmed the NAS deployment and live-draft verification steps
-completed successfully. The dashboard is fully deployed; the CLI
-(`rookie_draft.py`, no Docker) remains the documented fallback regardless.*
+`NB-1` (Synology NAS deploy + live-draft verification) is done: the user
+confirmed the NAS deployment and live-draft verification steps completed
+successfully. The dashboard is fully deployed; the CLI
+(`dynasty/rookie_draft.py`, no Docker) remains the documented fallback
+regardless.
+
+- [ ] **NB-2: Refresh clarity — must do before this weekend** (user-flagged
+  2026-08-06, explicit deadline). Confirmed there is no auto-refresh
+  anywhere in this app (web or CLI) — investigated as part of `RT-20`. Two
+  concrete gaps to close:
+  1. **"How this works" doesn't say refresh is manual.** The Draft Plan
+     tab's expander has one indirect hint ("Refresh after any pick lands
+     for an updated plan") but never states plainly that *nothing* updates
+     on its own — no polling, no auto-refresh, in either the web app or
+     the CLI's loop. Add an explicit callout, specifically calling out
+     doing this right before your own pick (not just "after a pick
+     lands") — the moment stale data is most costly, since the plan
+     otherwise simulates as if no other team has picked in between.
+  2. **No way to see when data was last pulled, anywhere.** Neither the
+     sidebar nor the footer (`st.caption(f"Dynasty Rookie Draft · build
+     {APP_VERSION}")`) shows a timestamp — `load_state()`'s
+     `@st.cache_data` wrapping means the same fetched state silently
+     serves every rerun between refreshes (tab switches, expanders) with
+     nothing distinguishing "just fetched" from "fetched 20 minutes ago."
+     Add a real "last refreshed at HH:MM:SS" indicator, captured inside
+     `load_state()` (so it reflects when `gather_state()` actually ran,
+     frozen at cache-write time — not `datetime.now()` read fresh on every
+     rerun, which would lie). No "next auto-refresh" time to show, since
+     there isn't one and shouldn't imply otherwise — pair the timestamp
+     with the same "nothing refreshes automatically, hit Refresh above"
+     framing as item 1 so the two reinforce each other.
 
 ## Roster & trade tooling
 
@@ -139,9 +153,8 @@ shrinkage on that read's `win_pct` are done** — see
 `docs/rookie-draft-big-board.md`'s "Roster needs" and "Team timeline /
 power-timeline read" sections for the full methodology.
 
-**Trade targets & sells v1 (`sellable_players()`, `pick_trade_values()`) is
-done** — see `docs/rookie-draft-big-board.md`'s "Trade targets & sells"
-section for the full methodology.
+**Trade targets & sells v1 is done** — see `docs/rookie-draft-big-board.md`'s
+"Trade targets & sells" section.
 
 Deliberately out of v1, not forgotten:
 - **Selling starters, not just depth** — the "sellable vs. just
@@ -152,7 +165,7 @@ Deliberately out of v1, not forgotten:
   not modeled.
 - **Draft-pick ownership beyond next season** — Sleeper's `traded_picks`
   has no fixed "how many years out" window, only entries for picks
-  actually traded (`FUTURE_PICK_YEARS_AHEAD = 1` in `dynasty_core.py`).
+  actually traded (`FUTURE_PICK_YEARS_AHEAD = 1` in `dynasty_core/picks.py`).
   Extending further is possible but was scoped out to avoid listing
   picks with zero real trade activity that far out.
 - **Young non-rookie depth isn't protected the way `LOW_VALUE_YOUNG_AGE`
@@ -167,48 +180,17 @@ Deliberately out of v1, not forgotten:
   decision (extend the exclusion, or leave it and rely on the human)
   rather than an unexamined inconsistency between the two features.
 
-**Free agent / roster-moves evaluator v1 (`free_agent_board()`) is done** —
-see `docs/rookie-draft-big-board.md`'s "Free agents" section for the full
-methodology. Ranks every available (non-rostered) player by marginal value
-against a roster, reusing `rank_by_marginal_value` exactly like the draft
-plan does; active-roster-only capacity (`taxi_eligible=False` — Sleeper's
-real accrued-experience taxi rule isn't modeled, see `RT-8` below);
-remaining FAAB shown for context, no bid-sizing (see `RT-10` below); no
-in-season change monitoring, recomputed fresh every refresh instead (see
-`RT-9` below).
+**Free agent / roster-moves evaluator v1 is done** — see
+`docs/rookie-draft-big-board.md`'s "Free agents" section. Open follow-ups:
+`RT-8` (real taxi eligibility), `RT-9` (in-season change monitoring),
+`RT-10` (FAAB bid-sizing).
 
-**Trade evaluator (`evaluate_trade()`) is done** — see
-`docs/rookie-draft-big-board.md`'s "Trade evaluator" section for the full
-methodology. Reframed from the originally-scoped "watch the trade block"
-(user feedback, 2026-08-02): real trade offers are two-sided and often
-multi-asset (players and/or picks on either side), so this evaluates an
-arbitrary proposed trade between two selected teams — season-average
-marginal lineup value plus a market-value (`adj_value`/pick `value`) read,
-shown for both sides — reusing `season_average_starter_value` and
-`pick_trade_values` rather than a new valuation model. 3-way trades aren't
-supported (rare, disproportionate complexity). Manual/on-demand, no trade
-feed (Sleeper doesn't expose trade discussions) — see `RT-6` below for the
-contextual-research idea this could still feed into.
+**Trade evaluator is done** — see `docs/rookie-draft-big-board.md`'s
+"Trade evaluator" section. `RT-6` below is the contextual-research idea
+this could still feed into.
 
-**Trade-target optimizer (`find_trade_offers()`) is done** — see
-`docs/rookie-draft-big-board.md`'s "Trade-target optimizer" section for the
-full methodology. Given one asset on a partner's roster (a player or a
-pick, not a bundle — an already multi-asset offer on the table is exactly
-what the trade evaluator above already handles), answers both of `RT-12`'s
-questions by composing existing primitives, not a new valuation model:
-"worth pursuing" reuses `evaluate_trade()` with zero outgoing; "what to
-offer" searches combinations (size 1-3) of the caller's own
-`sellable_players()`/`pick_trade_values()` pool, verifies each two-sided
-through `evaluate_trade()`, and gates on the partner's own asset-value read
-staying within a plausible tolerance of the target's value — the one hard
-acceptance bar, not an invented model. Combos touching a partner
-`need_positions` flag rank ahead of otherwise-equal alternatives. Returns
-nothing rather than forcing a marginal suggestion when no combo clears the
-bar. Lives in the Trade Evaluator tab as a second section below the
-existing two-sided evaluator, reusing its team selection. Deliberately out
-of scope: multi-asset targets, 3-way trades (same as the evaluator above),
-and recomputing the partner's needs against the hypothetical post-trade
-roster rather than today's.
+**Trade-target optimizer is done** — see `docs/rookie-draft-big-board.md`'s
+"Trade-target optimizer" section. Follow-ups below: `RT-14`, `RT-15`.
 
 - [ ] **RT-14: Evaluate and improve an offer someone else has already made
   *to* us** (user-flagged 2026-08-02, filed while scoping `RT-12`) — a
@@ -247,6 +229,60 @@ roster rather than today's.
   caveat that this tiebreaker assumes every partner is need-reading the
   same way a rebuilding team would, or reconsidering what "need" should
   mean when read on someone else's roster.
+- [ ] **RT-20: Past-round "drop suggestion" is a live guess, not a real
+  record — but the real record may actually be derivable** — **next up,
+  needed for the live draft** (user-flagged 2026-08-06, priority
+  confirmed same day: "we need this to work for the draft"). Questioning
+  `multi_round_plan`'s own docstring/UI copy: "Sleeper has no record of
+  whether it was actually dropped" — investigated directly. True that
+  Sleeper has no API field tying a specific drop to a specific pick, but
+  the project already pulls the user's *live* roster fresh on every
+  refresh (`streamlit_app.py`: "Refresh button... re-pulls
+  league/rosters/draft/picks — cheap, always live," no TTL on that call,
+  unlike the players/values/scoring caches; confirmed both the CLI and web
+  app only refresh *manually* — an Enter-key prompt / a "Refresh" button,
+  never an automatic background poll). So a real drop made any time during
+  the draft *is* visible on the next refresh, just not automatically
+  attributable to a round, because nothing today persists a "roster as it
+  stood before" snapshot to diff against. The user's proposed fix is
+  sound: snapshot the roster's player list once at draft start (keyed by
+  `league["draft_id"]`, the same stable identifier `sleeper.get_draft()`/
+  `get_draft_picks()` already use, following the existing
+  `.cache/{thing}_{season}.json` naming convention), then on each refresh
+  diff the current roster against that snapshot to recover which players
+  actually left the roster since the draft began.
+  Two real limitations to design around before building this, not just a
+  straight snapshot-and-diff:
+  - **Per-round attribution, not just an aggregate list.** A single
+    draft-start snapshot tells you the *set* of real drops since the
+    draft began, not which round each one was "for" — if the user drops
+    three different bench players across five completed rounds, a
+    start-only diff can't cleanly say which drop paired with which pick,
+    only that three drops happened. Matching the current UI's per-round
+    `DROP {name}` display would need a snapshot reconciled at each
+    newly-completed round, not one fixed point-in-time snapshot — a
+    materially bigger design than "cache the roster once."
+  - **No per-pick time limit — this league's draft can span multiple
+    days.** Confirmed in the league rules; nothing here assumes real-time
+    pacing today. A day-plus-scale, write-once-then-diff cache is a
+    different shape than anything currently in `.cache/` (all of which is
+    either short-TTL-and-freely-refetchable or explicitly no-TTL-but-safely-
+    idempotent) — this would be the first "capture this exact historical
+    moment and never silently overwrite it" cache in the project. Needs
+    explicit handling for: the snapshot never being taken (tool not opened
+    until mid-draft), the cache file going missing (a fresh deploy without
+    volume persistence, a manually cleared `.cache/`), or the draft
+    outliving whatever this snapshot's own retention policy turns out to
+    be. In every one of those cases, this should fall back to today's
+    live-guess behavior, clearly labeled as an estimate rather than a
+    confirmed drop — the same "silent degradation must surface as a
+    warning" pattern `data_warnings` already establishes elsewhere
+    (`.claude/conventions/valuation_principles.md`), not a new failure
+    mode to invent.
+  Shares its core missing piece — a persistence layer that survives
+  between refreshes — with `RT-9`'s free-agent monitoring; worth scoping
+  both together rather than building two independent ad hoc stores if
+  `RT-9` is picked up around the same time.
 - [ ] **RT-15: Scan a partner's whole roster for viable trade opportunities,
   not one target at a time** (user-flagged 2026-08-02, filed while
   reviewing `RT-12`) — the trade-target optimizer only ever evaluates one
@@ -271,6 +307,124 @@ roster rather than today's.
   marginal value is clearly not worth pursuing at all) to keep a
   whole-roster scan responsive - not decided yet, scope during
   implementation.
+- [ ] **RT-17: `best_position_relevant_drop()`'s slot-type restriction is a
+  no-op in this league's actual superflex format** (user-flagged
+  2026-08-06, investigated) — its whole value over the cheap
+  `recommend_drop()` heuristic is restricting the drop search to "players
+  who share a slot type with the candidate" (own position, plus FLEX/
+  SUPER_FLEX-eligible positions if the league has those slots). But
+  `SUPERFLEX_ELIGIBLE_POSITIONS` is all four fantasy positions by
+  definition, so for *any* candidate in a league with a `SUPER_FLEX` slot
+  (this league, always), `eligible_positions` expands to {QB, RB, WR, TE}
+  — every fantasy-relevant player on the roster, not a restricted pool.
+  Confirmed via the existing test suite: `TestBestPositionRelevantDrop`'s
+  only "restricts to same slot type" test deliberately uses a league with
+  no FLEX/SUPER_FLEX ("No FLEX/SUPER_FLEX in this league" per its own
+  comment) — there is no coverage of this function's behavior in the
+  league format the whole project is actually built for.
+  Doesn't appear to produce a *wrong* answer: the function still runs the
+  real `season_average_starter_value()` simulation over the (unintentionally
+  unrestricted) pool and returns whichever candidate empirically maximizes
+  marginal value, so a nonsensical drop (cutting a strong bench WR to make
+  room for a mediocre backup QB) should simply lose to the sensible one on
+  real value — the same way `assign_starters()` already lets the
+  highest-*value* eligible player win a SUPER_FLEX slot regardless of
+  position, correctly reflecting "QBs are the practical SUPER_FLEX
+  occupant" through market value rather than a hardcoded rule. The cost is
+  scope, not correctness: the docstring's "restricts the search" claim
+  doesn't hold here, and every on-demand lookup (Draft Plan tab's
+  player-projection dropdown) searches the *entire* bench instead of a
+  realistically narrowed one.
+  Worth a deliberate decision, not an immediate fix: either (a) document
+  that the restriction is intentionally a no-op in a superflex league and
+  correctness rests entirely on the simulation, or (b) add a real
+  SUPER_FLEX-aware narrowing (e.g., only fold in RB/WR/TE once the
+  candidate's own position genuinely runs out of meaningful bench
+  competitors) if the search-space cost ever matters at scale. Add a
+  superflex-league test case either way — confirmed gap in the current
+  suite. Checked whether this same naive "SUPER_FLEX = any of 4 positions
+  equally" assumption shows up anywhere else with real consequence (not
+  just search-space cost) and didn't find one: `_position_starter_demand()`
+  already models SUPER_FLEX as QB-specific demand for replacement-level/VOR
+  purposes (`.claude/conventions/valuation_principles.md`'s "superflex
+  inflates QB value" rule), and `assign_starters()`'s greedy value-based
+  fill already lets real market value decide who wins the slot — this
+  function is the one place the "equally eligible" framing leaked into
+  code without a value-simulation backstop.
+- [ ] **RT-18: Trade evaluator/optimizer should call out non-obvious value,
+  not just lineup/asset deltas** (user-flagged 2026-08-06) —
+  `evaluate_trade()`'s two numbers (season-average lineup value, market
+  asset value) are the right foundation but miss real trade value that
+  doesn't show up in either: closing a bye-week gap, a future pick's value
+  in context, or a handcuff to a player already on the roster. All three
+  are already computable from existing primitives, not a new data pull or
+  model:
+  - **Bye-week gap closing/opening** — `gap_delta(before_roster,
+    after_roster, players, byes, league)` already exists and is used
+    exactly this way elsewhere (`sellable_players`'s "would dropping this
+    open a gap" check, the Draft Plan's `alternate_gap_note`/
+    `weekly_gap_alerts`). Running it on the trade's before/after rosters
+    would directly answer "does this trade fix or create a weekly starter
+    gap," a callout `evaluate_trade()` doesn't currently surface at all.
+  - **Future pick value in context** — `pick_trade_values()` already
+    computes and ranks every pick leaguewide; a trade involving a pick
+    could note where it falls in that ranking (e.g., "currently the #2
+    remaining pick this class") instead of a bare number, using data the
+    trade tab already loads (`state["pick_trade_values"]`).
+  - **Handcuff to a current roster player** — `handcuff_map()`/
+    `roster_handcuff_status()` already back the Roster tab's handcuff
+    section and the big board's "Handcuff To" column; checking whether an
+    incoming player is a handcuff to one of the *receiving* roster's own
+    current RBs is the same lookup, just pointed at the trade's incoming
+    side instead of the whole roster.
+  - **Buried on one bench, would start on the other** (user-flagged
+    2026-08-07, expanding this item) — a player who can't crack the
+    sending team's lineup but would immediately start for the receiving
+    team is a real, mutually-legible reason a trade makes sense even when
+    raw asset value is close to even: the sender gives up a player they
+    weren't deploying anyway (low real cost to them), and the receiver
+    gets an immediate lineup upgrade. This is partially already implicit
+    in each side's own `lineup_delta` — a bench-to-starter jump shows up
+    as a bigger value swing for the receiver than the raw `adj_value` gap
+    alone would suggest — but it deserves to be its own named callout
+    rather than staying buried in an aggregate number, especially in a
+    multi-asset trade where it could be one of several offsetting moves.
+    Computable from primitives that already exist: whether a player is
+    currently a bench, not starting, player for the sender is exactly
+    what `lineup_breakdown()`'s starters/bench split already answers for
+    one roster; whether they'd start for the receiver is the same check
+    against that side's post-trade roster (`evaluate_trade()` already
+    computes a full `assign_starters()` pass for `roster_after` — the
+    piece that's missing is exposing *which* players landed in the
+    starting lineup, not just the aggregate value, so this would need a
+    small addition there, not a new simulation). The *ideal* shape this
+    points at — both sides trading away a player who's stuck behind
+    someone on their own roster but would start for the other side, a
+    genuine mutual unlock rather than one side just paying up — is worth
+    keeping in mind as a north star for `find_trade_offers()`'s ranking
+    eventually, not just something the manual evaluator narrates after
+    the fact, once the basic callout exists and this is picked up.
+  Composing these into `evaluate_trade()`'s/`find_trade_offers()`'s output
+  keeps this consistent with the "one valuation strategy" rule — no new
+  signal, just surfacing existing ones at the right moment. Worth deciding
+  during design whether these are free-text callouts (similar to
+  `multi_round_plan`'s `reason` field) or a structured per-signal list the
+  UI renders as tags/badges.
+- [ ] **RT-19: A "summary" tab surfacing what actually needs attention,
+  instead of reviewing every tab** (user-flagged 2026-08-06) — five tabs,
+  each thorough for its own question, but nothing today answers "what do I
+  actually need to look at right now" in one place. Distinct from `RT-5`'s
+  all-teams league view (that's about scanning *other* teams; this is
+  about the user's own situation across everything the app already
+  knows). A first cut could pull entirely from data `gather_state()`
+  already computes, no new signals: current flagged roster needs, any
+  weekly-gap alerts, sellable-veteran candidates worth shopping, any
+  free-agent board entries with strongly positive marginal value, upcoming
+  pick timing, and (once `RT-9` lands) anything that changed since last
+  checked. Scope during design: this is a "so what" digest, which means
+  picking a small number of genuinely actionable items rather than
+  restating every tab's full table — the opposite instinct from every
+  other tab in the app, worth being deliberate about.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all
@@ -293,6 +447,20 @@ roster rather than today's.
   Related to but distinct from the positional-value work above — that's
   about *which position* is weak; this is about *what kind of move* the
   team should even be looking for at this point in the rebuild.
+  **Refined 2026-08-06** (user-flagged, future consideration, not an
+  immediate concern): the trigger for a phase change is probably
+  performance-tier, not just elapsed time — `need`'s young-core framing
+  is well-suited to a bottom-of-standings rebuild, but if the team moves
+  into mid/upper-table performance, "need" should mean something
+  different (roster-hole-driven, not youth-accumulation-driven), and nothing
+  today would notice that shift happened. Worth checking before assuming
+  this needs a manually-set phase input at all: `team_power_timeline_scores()`
+  already computes a continuous rebuild-vs-contend read (`power_score`,
+  split into `quality_score`/`timeline_score`) for every team, every
+  refresh — a real candidate for *inferring* the phase transition directly
+  rather than asking the user to track and set it by hand. Doesn't change
+  the scope of the work itself, just a candidate input worth evaluating
+  when this is actually picked up.
 - [ ] **RT-5: League tab — all-teams summary view** (user-flagged 2026-07-29,
   longer term). A compact row per team (total roster value, biggest need,
   capacity) to scan the whole league at a glance before drilling into one
@@ -367,6 +535,10 @@ roster rather than today's.
   work, which assumed this would ship alongside the free-agent evaluator.
   `RT-2` (the trade evaluator, reframed as an on-demand two-sided/multi-asset
   check rather than a monitor) no longer depends on this.
+  Re-flagged 2026-08-06 ("we need a free agent pickup monitor") — same
+  scope, no new requirements, just renewed priority. `RT-20` (draft-plan
+  drop tracking) needs the same underlying persistence layer this does;
+  worth scoping both together if either is picked up.
 - [ ] **RT-10: FAAB bid-threshold modeling** (deferred from the free-agent
   evaluator v1 above, 2026-08-02) — `free_agent_board()` shows remaining
   FAAB (`league["settings"]["waiver_budget"] - roster["settings"].
@@ -479,7 +651,7 @@ methodology.
 
 ## Code quality, tests & UX polish
 
-- [ ] **CQ-1: Broader test coverage.** `tests/test_dynasty_core.py` and
+- [ ] **CQ-1: Broader test coverage.** `tests/dynasty_core/` and
   `tests/test_player_scoring.py` cover the core ranking/lineup/valuation
   logic, but `sleeper_api.py`/`fantasycalc_api.py` (the retry/session logic
   and cache-TTL behavior itself) and the CLI's error-handling loop still
@@ -511,7 +683,6 @@ methodology.
   `:latest`/`:<short-sha>` tags, and the footer showing the version number
   with the short SHA alongside it for the precise-commit case, not instead
   of it.
-
 ## Deferred / low priority
 
 Judged not worth the time right now; revisit only if the underlying
@@ -552,3 +723,19 @@ assumption changes.
   Worth a pass to find which of those definitions are genuinely
   reusable/cross-cutting (glossary-appropriate) vs. section-specific
   walkthroughs that belong where they are.
+- [ ] **DL-7: Table columns overflow the viewport, forcing horizontal
+  scroll** (user-flagged 2026-08-06, then downgraded same day after
+  testing live on a phone: "wasn't too bad even there — easy to pull to
+  the side and see what's hidden") — every table renders through one
+  shared `show_df()`/`cols()` path (`tabs/components.py`), so a fix
+  applies everywhere at once if it's ever worth doing. Currently a Draft
+  Board-only concern in practice — the rookie big board is the one table
+  wide enough to matter (11 columns: Rank, Player, Position, Fits Need,
+  Handcuff To, Drafted Round, Drafted By, Team, College, Age, Value, Adj.
+  Value), and `st.dataframe(..., width="stretch")` doesn't prevent that
+  from needing its own internal horizontal scroll. If it's ever worth
+  revisiting: a smaller default column set with the rest on demand (a
+  details expander/modal, a column-visibility toggle), or collapsing
+  related columns (Value + Adj. Value into one, raw number as a hover
+  detail — the pattern the Trade Evaluator's `lineup_delta`/
+  `lineup_delta_after_drops` already uses).

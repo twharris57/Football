@@ -11,20 +11,25 @@ board updates as picks come off the board:
 from __future__ import annotations
 
 import argparse
+import io
 import logging
 import sys
 from typing import Any
 
+import dynasty_core
 import pandas as pd
 import requests
-
-import dynasty_core
 
 # Status flags (see dynasty_core.player_status_flags) and draft-plan status
 # icons print emoji - Windows consoles default to cp1252, which can't
 # encode them and crashes the whole report with a UnicodeEncodeError.
 # Force UTF-8 stdout regardless of the platform's default codepage.
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+# `sys.stdout` is statically typed as the abstract TextIO protocol, which
+# has no `reconfigure()` - only the concrete TextIOWrapper does - so this
+# isinstance check is a real narrowing, not just a lint suppression: it
+# also guards against sys.stdout ever being something else (redirected,
+# wrapped by a test runner) that doesn't support reconfigure() at all.
+if isinstance(sys.stdout, io.TextIOWrapper) and sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
