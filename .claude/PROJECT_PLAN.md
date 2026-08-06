@@ -26,6 +26,35 @@ item above it is added or removed. The ephemeral "Current branch — fix
 before merge" section is exempt from ID tagging (cleared on every merge, so
 nothing outlives it to cross-reference) but still uses plain bullets.
 
+## Short list — actively prioritized right now
+
+A small, hand-curated pointer into the backlog below — not a duplicate of
+any item's content, just which `<SECTION>-<n>` tags are getting real
+attention right now and why, so that's visible without reading the whole
+file. Keep each tier to a handful of items; if either grows past ~5-6,
+it's stopped being a "short" list — thin it back out to what's actually
+active. Remove an item once it's done (its own full entry gets removed
+too, per the convention above), don't let this become a history log.
+
+**Must clear (this weekend / live draft):**
+- [ ] `RT-20` — draft-plan past-round drop tracking, needed for the live
+  draft. Next up (`NB-2` done — see "Now — blocking").
+
+**Nice to have (no deadline, worth doing when there's room):**
+- [ ] `RT-18` — trade evaluator/optimizer callouts for non-obvious value
+  (bye-gap closing, pick value in context, handcuffs, buried-bench-to-
+  starter swaps).
+- [ ] `RT-19` — a summary/digest tab surfacing what needs attention
+  instead of reviewing every tab.
+- [ ] `RT-9` — free-agent pickup monitor (needs the same persistence
+  layer as `RT-20` — worth scoping together if either is picked up).
+- [ ] `RT-17` — confirmed test-coverage/scope gap in
+  `best_position_relevant_drop()`'s superflex handling.
+- [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
+  power/timeline read instead of a manually-set phase.
+- [ ] `DL-7` — table column overflow on the rookie big board (downgraded
+  after live phone testing showed it's manageable today).
+
 ## Current branch — fix before merge
 
 Findings from reviewing the *active* branch's own not-yet-merged work —
@@ -109,31 +138,12 @@ successfully. The dashboard is fully deployed; the CLI
 (`dynasty/rookie_draft.py`, no Docker) remains the documented fallback
 regardless.
 
-- [ ] **NB-2: Refresh clarity — must do before this weekend** (user-flagged
-  2026-08-06, explicit deadline). Confirmed there is no auto-refresh
-  anywhere in this app (web or CLI) — investigated as part of `RT-20`. Two
-  concrete gaps to close:
-  1. **"How this works" doesn't say refresh is manual.** The Draft Plan
-     tab's expander has one indirect hint ("Refresh after any pick lands
-     for an updated plan") but never states plainly that *nothing* updates
-     on its own — no polling, no auto-refresh, in either the web app or
-     the CLI's loop. Add an explicit callout, specifically calling out
-     doing this right before your own pick (not just "after a pick
-     lands") — the moment stale data is most costly, since the plan
-     otherwise simulates as if no other team has picked in between.
-  2. **No way to see when data was last pulled, anywhere.** Neither the
-     sidebar nor the footer (`st.caption(f"Dynasty Rookie Draft · build
-     {APP_VERSION}")`) shows a timestamp — `load_state()`'s
-     `@st.cache_data` wrapping means the same fetched state silently
-     serves every rerun between refreshes (tab switches, expanders) with
-     nothing distinguishing "just fetched" from "fetched 20 minutes ago."
-     Add a real "last refreshed at HH:MM:SS" indicator, captured inside
-     `load_state()` (so it reflects when `gather_state()` actually ran,
-     frozen at cache-write time — not `datetime.now()` read fresh on every
-     rerun, which would lie). No "next auto-refresh" time to show, since
-     there isn't one and shouldn't imply otherwise — pair the timestamp
-     with the same "nothing refreshes automatically, hit Refresh above"
-     framing as item 1 so the two reinforce each other.
+`NB-2` (refresh clarity) is done — see `docs/dynasty-draft-web-app.md`'s
+"Refresh model" section. The Draft Plan tab's "How this works" now states
+plainly that nothing refreshes automatically and calls out doing so right
+before your own pick; a sidebar caption ("Last refreshed: HH:MM:SS")
+stamped inside `load_state()` (frozen at cache-write time, not read fresh
+on every rerun) makes staleness visible for the first time.
 
 ## Roster & trade tooling
 

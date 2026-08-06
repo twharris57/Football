@@ -13,6 +13,7 @@ reachable from a phone if the user needs to prewarm it away from a terminal.
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 
 import dynasty_core
@@ -71,7 +72,14 @@ if refresh or apply_advanced:
 def load_state(
     league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool, _token: int
 ) -> dict:
-    return dynasty_core.gather_state(league_id, username, force_full_refresh, force_scoring_refresh)
+    state = dynasty_core.gather_state(league_id, username, force_full_refresh, force_scoring_refresh)
+    # Captured here, inside the cached function, so it's frozen at the
+    # moment this data was actually fetched and reused verbatim on every
+    # cache hit - reading dt.datetime.now() anywhere outside this function
+    # would just report "now" on every rerun (tab switches, expanders),
+    # not when the underlying data was last pulled.
+    state["loaded_at"] = dt.datetime.now()
+    return state
 
 
 title_col, glossary_col = st.columns([5, 1])
@@ -98,6 +106,11 @@ except requests.RequestException as exc:
 except ValueError as exc:
     st.error(str(exc))
     st.stop()
+
+st.sidebar.caption(
+    f"Last refreshed: {state['loaded_at'].strftime('%I:%M:%S %p')} — nothing updates "
+    "automatically, hit Refresh above for the latest picks."
+)
 
 league = state["league"]
 st.session_state.league_name = league["name"]

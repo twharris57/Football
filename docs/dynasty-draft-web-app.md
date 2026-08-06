@@ -167,6 +167,18 @@ get a different key, silently missing cache and re-fetching for no reason.
 `st.session_state.force_refresh_pending`/`force_scoring_pending` hold the
 durable versions instead, set once per click and stable across reruns.
 
+Refresh is always manual — there is no polling or background auto-refresh
+anywhere in this app or the CLI. A sidebar caption ("Last refreshed:
+HH:MM:SS") makes that visible: `load_state()` stamps `state["loaded_at"]`
+with `dt.datetime.now()` *inside* the `@st.cache_data`-wrapped function, so
+it's frozen at the moment `gather_state()` actually ran and reused verbatim
+on every cache hit (tab switches, expanders) — reading the clock anywhere
+outside that function would just report "now" on every rerun instead of
+when the data was actually pulled. The Draft Plan tab's "How this works"
+repeats the same point with the specific timing that matters: refresh right
+before your own pick, not just after one lands elsewhere, since the plan
+otherwise simulates as if no other team has picked in between.
+
 Refresh re-pulls league/rosters/draft/picks (cheap, always live) plus
 whatever's expired on `fantasycalc_api`/`bye_week_by_team`/`handcuff_map`'s
 own TTL caches (12-24h, not tied to any button at all). The sidebar's
