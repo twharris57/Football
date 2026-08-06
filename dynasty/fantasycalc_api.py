@@ -11,10 +11,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 import requests
+from cache_dir import CACHE_DIR
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 FANTASYCALC_URL = "https://api.fantasycalc.com/values/current"
 
-CACHE_DIR = Path(__file__).parent / ".cache"
 VALUES_CACHE_TTL_SECONDS = 12 * 60 * 60
 
 
