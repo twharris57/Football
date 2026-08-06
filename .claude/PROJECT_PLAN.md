@@ -36,7 +36,70 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-*Empty — nothing under active review right now.*
+Findings from a `/code-review` pass over `feature/code-reorg` (the
+`confidence_pool/`/`dynasty/` split plus the `dynasty_core/`, `tabs/`, and
+`test_dynasty_core.py` package splits), verified against
+`main:dynasty_core.py` and the pre-split monolith. A separate check of the
+FantasyCalc cache-directory path (flagged mid-review) turned out to already
+be fixed at current HEAD (commit `f4ce06e`), and the previously-flagged
+missing `test_handcuffs.py` and four duplicated-logic spots turned out to
+pre-date this branch (present in the monolith too, just as inline
+one-liners) — neither is listed below.
+
+- [x] `dynasty/dynasty_core/state.py:170` — `draft_attribution` now
+  defaults an unmatched `roster_id`'s team name to the literal string
+  `"Unknown"` instead of `None` (pre-split `dynasty_core.py` used
+  `team_names.get(p["roster_id"])` with no default). Introduced in the
+  "pure code motion" package-split commit `d750dc8`, not documented in
+  that commit's message, no test coverage. The same file's `recent_rows`
+  block (line ~205) still does the bare `.get()` with no default — the two
+  are now inconsistent within one function. Changes what renders in the
+  rookie big board's "Drafted By" column for an orphaned/traded pick.
+  **Fixed**: dropped the `"Unknown"` default, restoring the bare
+  `team_names.get(p["roster_id"])` and consistency with `recent_rows`.
+- [x] `dynasty/dynasty_core/roster_value.py:49` — `player_status_details`
+  adds `injury_status = str(injury_status)` before the
+  `INJURY_STATUS_DESCRIPTIONS` lookup, with no equivalent in the monolith.
+  Harmless today (Sleeper's `injury_status` is always a string or `None`),
+  but a genuine textual behavior diff introduced during a commit that
+  claims zero behavior change — worth a one-line note if not fixed
+  outright. **Fixed**: removed the redundant cast, restoring parity with
+  the monolith.
+- [x] `dynasty/dynasty_core/byes.py:107-111` and
+  `dynasty/dynasty_core/marginal_value.py:146-150` — both independently
+  reintroduce an identical `_bye_for_row`-style nested helper
+  (`team = players.get(...).get("team"); return byes.get(team) if team else None`)
+  where the monolith used one inline expression
+  (`byes.get(players.get(pid, {}).get("team"))`) in three separate places.
+  Behaviorally identical, but duplicated logic invented twice during the
+  split instead of pulled into one shared helper (e.g. in `player_pools.py`,
+  which both modules already import from). **Fixed**: pulled into
+  `bye_for_row()` in `dynasty_core/lineup.py` instead — the actual common
+  import both modules already share (`player_value_rows` lives there too),
+  a tighter fit than `player_pools.py`. Re-exported from `dynasty_core/__init__.py`
+  alongside `player_value_rows`.
+- [x] `dynasty/tabs/` has no `__init__.py` — relies entirely on Python's
+  implicit namespace-package mechanism (PEP 420) instead of an explicit
+  `__init__.py`, unlike `dynasty_core/`, which `CLAUDE.md` says exists
+  "only because splitting... requires it" — the same justification applies
+  here but wasn't followed. Works today (confirmed via cached
+  `tabs/__pycache__`), but a latent trap for any tool that assumes regular
+  packages (strict mypy/linter namespace-package handling, a future
+  `pyproject.toml`). **Fixed**: added `dynasty/tabs/__init__.py`, and
+  updated `CLAUDE.md`'s "only `dynasty_core/` is a package" claim to cover
+  both.
+- [x] `dynasty/dynasty_core/trade.py:~251-257` (`find_trade_offers`) — the
+  split added redundant defensive wrapping —
+  `float(raw_target_value) if raw_target_value is not None and bool(pd.notna(raw_target_value)) else 0.0`
+  and `bool(pd.notna(row["value"]))` — where the monolith used the simpler
+  `raw_target_value if pd.notna(raw_target_value) else 0.0` and bare
+  `pd.notna(row["value"])`. `pd.notna(None)` already returns `False`, so
+  the extra checks/casts are pure no-ops — a genuine rewrite (not pure
+  motion, contradicting the "no behavior change" commit claim) that adds
+  noise a reviewer has to double-check for a difference that doesn't
+  exist. Cleanup, not a bug. **Fixed**: simplified all three spots
+  (including the `target_value_resolved` line sharing the same pattern)
+  back to the monolith's simpler form.
 
 ## Now — blocking
 

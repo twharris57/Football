@@ -11,7 +11,7 @@ import nfl_data_py as nfl
 import pandas as pd
 
 from .constants import CACHE_DIR, FANTASY_POSITIONS, NFL_WEEKS
-from .lineup import assign_starters, player_value_rows
+from .lineup import assign_starters, bye_for_row, player_value_rows
 from .player_pools import roster_fantasy_players
 
 logger = logging.getLogger(__name__)
@@ -104,11 +104,7 @@ def roster_bye_conflicts(
     rows = player_value_rows(active_ids, players, fc_by_sleeper_id)
     value_by_id = {r["player_id"]: r["adj_value"] or 0 for r in rows}
 
-    def _bye_for_row(row: dict) -> int | None:
-        team = players.get(row["player_id"], {}).get("team")
-        return byes.get(team) if team else None
-
-    bye_by_player = {r["player_id"]: _bye_for_row(r) for r in rows}
+    bye_by_player = {r["player_id"]: bye_for_row(r, players, byes) for r in rows}
 
     full_assignments = assign_starters(rows, league["roster_positions"])
     full_starter_ids = {pid for _, pid in full_assignments if pid}

@@ -47,6 +47,7 @@ from .draft_plan import (
 from .handcuffs import HANDCUFFS_CACHE_TTL_SECONDS, handcuff_map, roster_handcuff_status
 from .lineup import (
     assign_starters,
+    bye_for_row,
     lineup_breakdown,
     player_value_rows,
     roster_capacity,
@@ -157,6 +158,7 @@ __all__ = [
     "assign_starters",
     "best_position_relevant_drop",
     "build_big_board",
+    "bye_for_row",
     "bye_week_by_team",
     "compute_pick_ownership",
     "evaluate_trade",

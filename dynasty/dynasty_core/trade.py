@@ -248,13 +248,11 @@ def find_trade_offers(
         raw_target_value = pick_value_by_name.get(target_pick_name)
         target_read = evaluate_trade(
             your_roster, [], [], players, fc_by_sleeper_id, byes, league,
-            incoming_pick_value=(
-                float(raw_target_value) if raw_target_value is not None and bool(pd.notna(raw_target_value)) else 0.0
-            ),
+            incoming_pick_value=float(raw_target_value) if pd.notna(raw_target_value) else 0.0,
         )
 
-    target_value_resolved = bool(pd.notna(raw_target_value))
-    target_value = float(raw_target_value) if raw_target_value is not None and target_value_resolved else 0.0
+    target_value_resolved = pd.notna(raw_target_value)
+    target_value = float(raw_target_value) if target_value_resolved else 0.0
 
     if not target_value_resolved:
         return {
@@ -275,7 +273,7 @@ def find_trade_offers(
     pool += [
         {"kind": "pick", "id": row["pick"], "label": row["pick"], "value": row["value"]}
         for _, row in your_picks.iterrows()
-        if bool(pd.notna(row["value"]))
+        if pd.notna(row["value"])
     ]
     if target_value > 0:
         pool = [c for c in pool if c["value"] <= TRADE_OFFER_PREFILTER_HIGH * target_value]

@@ -28,9 +28,10 @@ other. No real Python packaging (no `pyproject.toml`, not installable) —
 modules resolve each other as flat sibling files via whichever directory
 happens to be on `sys.path` at runtime (the script's own directory, added
 automatically by `python`/`streamlit run`; `conftest.py` does the same
-explicitly for `pytest`). `dynasty_core/` is a genuine Python package only
-because splitting one large module into cooperating files requires it —
-everything else stays flat, on purpose.
+explicitly for `pytest`). `dynasty_core/` and `dynasty/tabs/` are genuine
+Python packages only because splitting one large module (`dynasty_core.py`,
+`streamlit_app.py`'s tabs) into cooperating files requires it — everything
+else stays flat, on purpose.
 
 - `confidence_pool/football.py` is the original, simple version: hardcoded
   year/week/gamedays, ranks games by `home_moneyline` magnitude, and prints

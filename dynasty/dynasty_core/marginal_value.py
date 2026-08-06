@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 
 from .constants import FLEX_ELIGIBLE_POSITIONS, NFL_WEEKS, SUPERFLEX_ELIGIBLE_POSITIONS
-from .lineup import assign_starters, player_value_rows, roster_total_capacity
+from .lineup import assign_starters, bye_for_row, player_value_rows, roster_total_capacity
 
 
 def recommend_drop(
@@ -143,11 +143,7 @@ def season_average_starter_value(
     rows = player_value_rows(player_ids, players, fc_by_sleeper_id)
     eligible_rows = [r for r in rows if r["player_id"] not in ineligible_ids]
 
-    def _bye_for_row(row: dict) -> int | None:
-        team = players.get(row["player_id"], {}).get("team")
-        return byes.get(team) if team else None
-
-    bye_by_player = {r["player_id"]: _bye_for_row(r) for r in eligible_rows}
+    bye_by_player = {r["player_id"]: bye_for_row(r, players, byes) for r in eligible_rows}
 
     total = 0.0
     for week in NFL_WEEKS:

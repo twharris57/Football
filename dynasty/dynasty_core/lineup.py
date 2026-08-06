@@ -24,6 +24,12 @@ def player_value_rows(player_ids: list[str], players: dict[str, dict], fc_by_sle
     return rows
 
 
+def bye_for_row(row: dict, players: dict[str, dict], byes: dict[str, int]) -> int | None:
+    """Resolve a `player_value_rows()` row's bye week via its player's current NFL team."""
+    team = players.get(row["player_id"], {}).get("team")
+    return byes.get(team) if team else None
+
+
 def assign_starters(player_rows: list[dict], roster_positions: list[str]) -> list[tuple[str, str | None]]:
     """Assign players to starting slots, most-restrictive slot first (QB/RB/WR/TE,
     then FLEX, then SUPER_FLEX).

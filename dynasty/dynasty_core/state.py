@@ -167,7 +167,7 @@ def gather_state(
     pre_draft_rostered = rostered_player_ids(rosters) - picked_player_ids
     board_pool = {pid: info for pid, info in rookies.items() if pid not in pre_draft_rostered}
     draft_attribution = {
-        p["player_id"]: (p["round"], team_names.get(p["roster_id"], "Unknown"))
+        p["player_id"]: (p["round"], team_names.get(p["roster_id"]))
         for p in draft_picks
         if p.get("player_id")
     }

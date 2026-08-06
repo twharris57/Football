@@ -46,7 +46,6 @@ def player_status_details(
         details.append(("🆕", "Rookie (no NFL experience yet)"))
     injury_status = info.get("injury_status")
     if injury_status:
-        injury_status = str(injury_status)
         details.append(("🏥", INJURY_STATUS_DESCRIPTIONS.get(injury_status, injury_status)))
     if player_id in taxi_ids:
         details.append(("🌱", "Taxi squad"))
