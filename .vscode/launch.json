@@ -8,7 +8,7 @@
             "name": "CLI: Rookie Draft (interactive)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/rookie_draft.py",
+            "program": "${workspaceFolder}/dynasty/rookie_draft.py",
             "cwd": "${workspaceFolder}",
             "justMyCode": false,
             "console": "integratedTerminal"
@@ -17,7 +17,7 @@
             "name": "CLI: Rookie Draft (--once)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/rookie_draft.py",
+            "program": "${workspaceFolder}/dynasty/rookie_draft.py",
             "args": ["--once"],
             "cwd": "${workspaceFolder}",
             "justMyCode": false,
@@ -28,7 +28,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "streamlit",
-            "args": ["run", "streamlit_app.py", "--server.headless=true"],
+            "args": ["run", "dynasty/streamlit_app.py", "--server.headless=true"],
             "cwd": "${workspaceFolder}",
             "justMyCode": false,
             "console": "integratedTerminal"
