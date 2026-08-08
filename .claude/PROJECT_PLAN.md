@@ -567,6 +567,27 @@ methodology.
   `:latest`/`:<short-sha>` tags, and the footer showing the version number
   with the short SHA alongside it for the precise-commit case, not instead
   of it.
+- [ ] **CQ-5: Represent draft-pick identity as structured fields at ingestion, not a
+  display string re-parsed downstream** (user-suggested, 2026-08-07, filed while
+  reviewing the RT-18 pick-callout season bug above) — `pick_trade_values()` already
+  builds a formatted `"pick"` label per row (`"2026 Pick 1.01"` this season, `"2027
+  1st"` next season) as effectively the only column that encodes season/round, so
+  every downstream consumer that needs the season or round has to re-parse that label
+  — `_pick_context_callouts()`'s now-fixed `" Pick "` split was one instance;
+  `trade_tab.py`'s pick-selection/labeling helpers likely re-derive similarly. The
+  general principle: parse an externally- or internally-generated composite string
+  once, at the point it's produced, into real fields with a well-defined "unknown"
+  case — not repeatedly downstream, where each call site can (and, once already did)
+  parse it differently or incompletely. Concretely: give `pick_trade_values()`'s output
+  real `season`/`round` (and `slot` where it exists) columns alongside the display
+  `"pick"` label, and move every downstream consumer that currently
+  slices/splits/matches the label for meaning (grouping by class, sorting by round)
+  over to those columns instead — the label stays purely a rendering concern. Distinct
+  from `pick_trade_values()`'s own name-string matching against FantasyCalc's data
+  (`valuation_principles.md`'s "opaque keys" rule) — that's an external join key and
+  has to stay a string match; this is about not re-deriving *this codebase's own*
+  already-known structure from a string it built. Cleanup scope, not urgent — no
+  known live bug beyond the one already fixed above.
 - [ ] **CQ-4: `gather_state()`'s inline handcuff-target computation for the user's own
   roster duplicates the new `handcuff_targets()` helper** (assistant valuation review,
   2026-08-07) — `dynasty_core/handcuffs.py`'s `handcuff_targets()` was extracted this

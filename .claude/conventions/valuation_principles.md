@@ -347,3 +347,11 @@ not just the one the new code's own test picked. Prefer parsing on a
 stable, format-independent anchor (a leading year, a delimiter guaranteed
 present in every format) over a substring that only some formats actually
 contain.
+
+The anchor-based parse above is the immediate fix; the sturdier version is
+not parsing at all downstream. If a value's structure (a pick's
+season/round) is already known at the point its display label is built,
+attach it as its own field there and have every consumer read the field —
+never re-derive it from the label later, where each call site can (and
+here, already did) get the derivation subtly wrong in its own way. Tracked
+as a deferred cleanup, `CQ-5` in `.claude/PROJECT_PLAN.md`.
