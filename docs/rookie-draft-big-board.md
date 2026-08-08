@@ -443,31 +443,80 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     `incoming_pick_names`/`pick_value_table` are optional parameters —
     omitting them just skips the callouts that need them, so every
     pre-existing caller/test keeps working unchanged.
-- **Trade-target optimizer** (`find_trade_offers()`) — one step earlier
-  than the evaluator above: given one asset (player or pick, not a bundle)
-  on a partner's roster, is it worth pursuing and what should be offered
-  for it. Composes existing primitives, no new valuation model
-  (`.claude/conventions/valuation_principles.md`). `target_read` reuses
-  `evaluate_trade()` with zero outgoing for the marginal lineup value plus
-  market value of acquiring it for free. The offer search only runs once
-  the target's value actually resolves (a `pd.notna()` check, not a bare
-  `or 0.0` — see `valuation_principles.md`'s NaN rule) — otherwise it
-  returns nothing rather than searching against a fabricated `$0`
-  baseline. It then searches combinations (size 1–3) of the caller's own
-  sellable players/picks, pruned to a plausible value band around the
-  target before capping the pool (`TRADE_OFFER_POOL_CAP`/`PREFILTER_*` in
-  `dynasty_core/trade.py`), and verifies each two-sided through
-  `evaluate_trade()` — the one hard gate is the partner's own
-  `asset_value_delta` staying within `TRADE_OFFER_PARTNER_TOLERANCE_PCT`
-  of zero. Combos touching one of the partner's current `need_positions`
-  rank ahead of otherwise-equal alternatives (a tiebreaker only, not a
-  second gate). Returns up to `top_n`, empty if nothing clears the bar.
-  `handcuffs` and `pick_value_table` (already required here for the offer
-  search itself) pass straight through to every `evaluate_trade()` call for
-  the same `callouts` the manual evaluator surfaces above. Lives in the
-  Trade Evaluator tab below the manual evaluator. Out of scope: multi-asset
-  targets, 3-way trades, and improving an offer someone else proposed *to*
-  us (tracked in `.claude/PROJECT_PLAN.md`).
+- **Suggested Trades** (`find_trade_offers()`, `leaguewide_trade_candidates()`,
+  `suggested_trades()` — `RT-15`) — one step earlier than the evaluator
+  above, and leaguewide by default rather than requiring a hand-picked
+  partner and target first. Fully decoupled from the manual evaluator's
+  `your_team_id`/`partner_team_id` selectors — always scans for
+  `state["user_roster_id"]`'s real roster.
+
+  `find_trade_offers()` is the single-target primitive everything else
+  composes: given one asset (player or pick, not a bundle) on a specific
+  partner's roster, is it worth pursuing and what should be offered for
+  it. No new valuation model (`.claude/conventions/valuation_principles.md`).
+  `target_read` reuses `evaluate_trade()` with zero outgoing for the
+  marginal lineup value plus market value of acquiring it for free. The
+  offer search only runs once the target's value actually resolves (a
+  `pd.notna()` check, not a bare `or 0.0` — see `valuation_principles.md`'s
+  NaN rule) — otherwise it returns nothing rather than searching against a
+  fabricated `$0` baseline. It then searches combinations (size 1–3) of the
+  caller's own sellable players/picks, pruned to a plausible value band
+  around the target before capping the pool
+  (`TRADE_OFFER_POOL_CAP`/`PREFILTER_*` in `dynasty_core/trade.py`), and
+  verifies each two-sided through `evaluate_trade()` — the one hard gate is
+  the partner's own `asset_value_delta` staying within
+  `TRADE_OFFER_PARTNER_TOLERANCE_PCT` of zero. Combos touching one of the
+  partner's current `need_positions` rank ahead of otherwise-equal
+  alternatives (a tiebreaker only, not a second gate). Returns up to
+  `top_n`, empty if nothing clears the bar. `handcuffs` and
+  `pick_value_table` (already required here for the offer search itself)
+  pass straight through to every `evaluate_trade()` call for the same
+  `callouts` the manual evaluator surfaces above.
+
+  Scanning every partner's whole roster the naive way (every candidate on
+  every other team × a full `find_trade_offers()` combo search each)
+  multiplies an already-expensive single-target search by roughly the
+  number of teams in the league — flagged during design as its own
+  architecture question, not a small extension. Resolved with a two-stage
+  split:
+  - **Stage 1**, `leaguewide_trade_candidates()` — every fantasy-relevant
+    player on every *other* roster, ranked by season-average marginal
+    lineup value against the user's own roster via `rank_by_marginal_value`
+    (the same primitive `free_agent_board` reuses, not a second valuation
+    model), pre-filtered to what the user's own sellable pool could
+    plausibly afford. That affordability pre-filter
+    (`_max_affordable_target_value()`) matters: an unfiltered marginal-value
+    ranking skews toward the league's biggest names at the user's weak
+    positions — exactly the players no realistic offer from real sellable
+    depth could match — which would otherwise waste Stage 2's whole search
+    budget on unreachable stars. The ceiling reuses `find_trade_offers()`'s
+    own `TRADE_OFFER_PREFILTER_HIGH` tolerance (the top
+    `TRADE_OFFER_MAX_COMBO_SIZE` sellable assets by value, scaled), not a
+    second tolerance rule. Cheap enough (one batch call, same order of
+    magnitude as `free_agent_board`'s own unconditional per-refresh cost)
+    to compute inside `gather_state()` every refresh, capped to
+    `SUGGESTED_TRADE_SCAN_TOP_K` candidates.
+  - **Stage 2**, `suggested_trades()` — the real, expensive search, but only
+    for Stage 1's already-short list: calls the unmodified
+    `find_trade_offers()` once per candidate, drops any with no viable
+    offer, and ranks survivors by their best offer's
+    `lineup_delta_after_drops`. Bounded to a constant K regardless of
+    league size — the actual answer to the scan-cost question, not just a
+    smaller version of the original per-partner scan. Triggered by an
+    explicit "Scan the league for offers" button (this part is still
+    expensive enough to keep off the reactive path), unlike Stage 1's
+    candidate list, which needs no button since it's already computed.
+
+  An optional target picker sits alongside the leaguewide view — choosing
+  one specific player from any other roster skips both stages and runs a
+  direct single-target `find_trade_offers()` search immediately (cheap,
+  reactive, same as before), resolving the owning partner automatically
+  rather than requiring it be picked first. Out of scope for v1: pick
+  targets (no comparable marginal-lineup signal to rank leaguewide
+  candidates by — still fully usable in the manual evaluator above),
+  multi-asset targets, 3-way trades, and improving an offer someone else
+  proposed *to* us (tracked in `.claude/PROJECT_PLAN.md`). Lives in the
+  Trade Evaluator tab below the manual evaluator.
 - **Bye-week impact** and **weekly gaps** — the former
   (`roster_bye_conflicts`) shows every week with an active-roster player on
   bye: who's out, who fills in, and the resulting delta to optimal
@@ -547,6 +596,14 @@ builds the FantasyCalc value lookup **once** per refresh and is threaded
 through every function that needs it, instead of each one rebuilding it from
 the raw ~475-entry list on every call. Full `gather_state()` completes in
 ~3.5-4s — acceptable for a manual Refresh click, not for anything tighter.
+`leaguewide_trade_candidates()` (Suggested Trades' Stage 1) adds one more
+`rank_by_marginal_value` batch call at the same order of magnitude as
+`free_agent_board`'s — verified live against this league's real roster data
+at a few seconds added to the refresh, not a step change. Stage 2
+(`suggested_trades()`, the real per-candidate offer search) stays outside
+`gather_state()` entirely, run on demand behind the "Scan the league for
+offers" button — verified live at ~5s for `SUGGESTED_TRADE_SCAN_TOP_K` (15)
+candidates.
 
 ## Known limitations (by design, not oversight)
 
@@ -568,8 +625,16 @@ the raw ~475-entry list on every call. Full `gather_state()` completes in
   `.claude/PROJECT_PLAN.md`'s `RT-8`/`RT-10`.
 - `find_trade_offers` targets one asset at a time (not a bundle), and its
   need-match ranking checks the partner's roster as it stands today, not
-  the hypothetical roster after the trade — see the "Trade-target
-  optimizer" bullet above.
+  the hypothetical roster after the trade — see the "Suggested Trades"
+  bullet above.
+- Suggested Trades' leaguewide candidate list (`leaguewide_trade_candidates()`)
+  is player-only — no comparable marginal-lineup signal exists to rank a
+  draft pick leaguewide alongside players, so pick targets stay reachable
+  only through the manual evaluator and the single-target picker's
+  existing pick-search path is not offered here. Its affordability
+  pre-filter is a rough top-3-assets estimate, not a guarantee any specific
+  combo clears the bar — Stage 2 (`suggested_trades()`) can still return
+  fewer than `top_n` results if nothing pans out.
 
 ## Static assumptions — revisit if the league's rules ever change
 
@@ -593,4 +658,5 @@ is a deliberate decision, not a silent bug:
 | `WIN_PCT_SHRINKAGE_K = 4` (games worth of shrinkage weight toward `0.5`) | `dynasty_core/power_timeline.py` | A judgment call for how fast `win_pct_shrunk` (the power/timeline read's z-scoring input, not the displayed `win_pct`) should trust a real record over the neutral prior — not derived from any league setting or statistical fit | Adjust by feel if early-season `power_score` still looks too swingy or too damped |
 | `max_keepers: 1` in the league's Sleeper settings | Not modeled anywhere | Appears vestigial for a dynasty-type league (Sleeper `type: 2`) — the whole roster carries over every year, not a limited keeper count, so this setting doesn't seem to apply | Revisit only if Sleeper's dynasty/keeper interaction is ever observed to actually matter |
 | `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`, `dynasty_core/picks.py`) | The only place in this codebase that treats `roster_id` as a range rather than an opaque key (needed to synthesize future pick ownership with no real draft object). Confirmed true today; a non-contiguous ID (e.g. a departed team) would silently synthesize a phantom pick | Iterate the real `rosters` list instead of a synthesized range |
-| `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers` (`dynasty_core/trade.py`) | Judgment calls bounding the trade-target optimizer's combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |
+| `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers` (`dynasty_core/trade.py`) | Judgment calls bounding a single-target offer search's combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |
+| `SUGGESTED_TRADE_SCAN_TOP_K = 15` | `leaguewide_trade_candidates`/`suggested_trades` (`dynasty_core/trade.py`) | How many of Stage 1's cheap, affordability-filtered leaguewide candidates get Stage 2's expensive real search — bounds Suggested Trades' scan cost to a constant regardless of league size, sized to the same order of magnitude as the original single-partner whole-roster scan concept | Raise if 15 candidates routinely produce fewer than 3 viable offers in practice; lower if a scan feels slow |

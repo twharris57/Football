@@ -38,6 +38,7 @@ from .power_timeline import team_power_timeline_scores
 from .roster_needs import position_replacement_levels
 from .summary import build_attention_digest
 from .team_analysis import team_roster_analysis
+from .trade import leaguewide_trade_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +261,27 @@ def gather_state(
     user_analysis = team_roster_analysis(
         user_roster, players, fc_by_sleeper_id, byes, league, handcuffs, replacement_level, available_free_agents
     )
+
+    # Leaguewide "worth pursuing" pre-rank for Suggested Trades (RT-15) -
+    # Stage 1 of the two-stage design (see trade.py's
+    # leaguewide_trade_candidates()/suggested_trades() docstrings for the
+    # full cost reasoning). Cheap enough (one batch rank_by_marginal_value()
+    # call, same order of magnitude as free_agent_board's existing
+    # unconditional per-refresh cost) to compute here every refresh, not
+    # gated behind a button - only Stage 2's actual offer search (run
+    # on-demand in the tab) is expensive. Reuses user_analysis's own
+    # sellable_players() output rather than recomputing it.
+    suggested_trade_candidates = leaguewide_trade_candidates(
+        rosters,
+        user_roster,
+        players,
+        fc_by_sleeper_id,
+        byes,
+        league,
+        user_analysis["sellable_players"],
+        pick_values,
+    )
+
     # Cheap for the whole league in one pass (no new API calls, just
     # positional_strength_summary reused per roster) - computed here once
     # rather than on demand per team, unlike team_roster_analysis, since
@@ -329,6 +351,11 @@ def gather_state(
         # team_power_timeline above, not per-team, since a pick's owner is
         # already a column rather than something a team selector filters.
         "pick_trade_values": pick_values,
+        # Stage 1 of Suggested Trades (RT-15) - see leaguewide_trade_candidates()'s
+        # docstring. The tab's "Scan the league for offers" button runs Stage 2
+        # (suggested_trades()) against this list on demand; this part is cheap
+        # enough to already be computed here every refresh.
+        "suggested_trade_candidates": suggested_trade_candidates,
         # Every team's roster dict, keyed by roster_id - exposed so a UI can
         # run team_roster_analysis() on demand for any team, not just the
         # user's own (see the Roster tab's team selector).

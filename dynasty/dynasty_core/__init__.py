@@ -115,15 +115,19 @@ from .state import gather_state
 from .summary import build_attention_digest
 from .team_analysis import team_roster_analysis
 from .trade import (
+    SUGGESTED_TRADE_SCAN_TOP_K,
     TRADE_OFFER_MAX_COMBO_SIZE,
     TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE,
     TRADE_OFFER_PARTNER_TOLERANCE_PCT,
     TRADE_OFFER_POOL_CAP,
     TRADE_OFFER_PREFILTER_HIGH,
     TRADE_OFFER_PREFILTER_LOW,
+    _max_affordable_target_value,
     evaluate_trade,
     find_trade_offers,
+    leaguewide_trade_candidates,
     sellable_players,
+    suggested_trades,
 )
 
 __all__ = [
@@ -145,6 +149,7 @@ __all__ = [
     "PHASE_THRESHOLDS",
     "POSITION_VALUE_MULTIPLIER",
     "ROUND_ORDINAL",
+    "SUGGESTED_TRADE_SCAN_TOP_K",
     "SUPERFLEX_ELIGIBLE_POSITIONS",
     "TRADE_OFFER_MAX_COMBO_SIZE",
     "TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE",
@@ -157,6 +162,7 @@ __all__ = [
     "YOUNG_CORE_NEED_THRESHOLD",
     "DraftPickSlot",
     "_future_pick_owners",
+    "_max_affordable_target_value",
     "_position_starter_demand",
     "_resolve_multiplier",
     "_shrunk_win_pct",
@@ -182,6 +188,7 @@ __all__ = [
     "handcuff_map",
     "handcuff_targets",
     "hypothetical_needs_and_handcuffs",
+    "leaguewide_trade_candidates",
     "lineup_breakdown",
     "multi_round_plan",
     "need_positions",
@@ -212,6 +219,7 @@ __all__ = [
     "season_average_starter_value",
     "sellable_players",
     "sleeper",
+    "suggested_trades",
     "team_name_by_roster_id",
     "team_power_timeline_scores",
     "team_roster_analysis",
