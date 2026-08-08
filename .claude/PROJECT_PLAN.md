@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-21`, `VA-5`, `CQ-5`, `DL-8`.
+below): `NB-2`, `RT-22`, `VA-5`, `CQ-5`, `DL-8`.
 
 ## Short list — actively prioritized right now
 
@@ -64,21 +64,37 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty — the one finding from reviewing `feature/summary-tab` (PR #30,
-2026-08-08) is fixed.
+Findings from reviewing `feature/free-agent-pickup-monitor` (PR #32,
+2026-08-08):
 
-`build_attention_digest()`'s weekly-gaps line listed gap weeks in raw
-chronological order with no current-week filtering, then capped to `top_n`
-— an already-passed gap week could crowd out a real upcoming one out of the
-capped slots, silently, in a tab whose entire purpose is "what needs
-attention right now." Fixed by threading a new required `current_week`
-parameter through `build_attention_digest()` and filtering
-`roster_weekly_gaps` to `week >= current_week` before computing/capping
-lines; `state.py` passes `league["settings"].get("leg", 1)`, the same
-field/fallback `roster_tab.py`'s `_render_bye_impact()` already uses for
-"already happened" vs. "still ahead." New tests cover a past gap week being
-excluded entirely and the cap applying only after that exclusion (not
-before, which would still let a stale week silently displace a real one).
+- **`RT-22` — a pickup alert's "just signed with {team}" label is asserted
+  for every player's first appearance in the tracked snapshot, not just
+  real NFL signings.** `pickup_snapshots._diff()` treats any player absent
+  from `previous_players` as a `kind: "team", old: None` event, and
+  `summary._pickup_alert_lines()` renders that unconditionally as
+  `"{name} ({pos}) just signed with {new}"`. But `pool` is
+  `free_agent_pool()`'s output, which excludes any player currently on a
+  fantasy roster — so the dominant way a veteran (not a first-ever-tracked
+  rookie or a genuinely new NFL signee) gets a `prior is None` entry is a
+  fantasy manager dropping them mid-season, while they've been on the same
+  real NFL team the whole time. The alert then tells the user "Player X
+  just signed with the Chiefs" when nothing about their NFL team changed at
+  all — a real, actionable-looking, but wrong causal claim, same shape as
+  the pick-label bug filed under `valuation_principles.md`'s "A composite
+  label needs a parser that handles every format its own source can
+  produce." `test_first_appearance_in_an_already_initialized_snapshot_is_a_flaggable_team_change`
+  and `test_pickup_alerts_formats_a_brand_new_pool_entrant` both bake this
+  reading in as the expected/correct behavior and never construct the
+  confounding case (a player who's been on the same NFL roster all along,
+  just newly dropped by a fantasy manager). Fix direction: track
+  team/depth-chart/status for every fantasy-relevant NFL-rostered player
+  regardless of fantasy-roster status (not just the free-agent subset), so
+  a `prior` lookup has a real baseline even for a player who was previously
+  excluded from `pool` only because someone else rostered them — keep
+  *alerting* scoped to players currently in the free-agent pool (only they
+  are actionable pickups), but stop treating "no tracked history because
+  they were never a free agent before" as equivalent to "no NFL team
+  history at all."
 
 ## Now — blocking
 
