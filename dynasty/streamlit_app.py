@@ -57,7 +57,17 @@ with st.sidebar.expander("Advanced refresh"):
     apply_advanced = st.button("Apply advanced refresh")
 
 if refresh or apply_advanced:
-    st.session_state.refresh_token += 1
+    # A real timestamp, not an incrementing counter - st.cache_data's cache
+    # is shared across the whole server process, not per-session, but
+    # st.session_state.refresh_token resets to 0 for every new/reconnected
+    # session (a page reload, a phone backgrounding the tab). A counter
+    # starting over at 0 can land on a small integer some *other* session
+    # already used earlier in the draft, silently hitting that session's
+    # stale cached snapshot instead of actually re-fetching - the exact bug
+    # this caused live (Refresh appeared to not pick up a just-made pick).
+    # A sub-second timestamp can't collide with a prior click's value the
+    # way a small per-session counter can.
+    st.session_state.refresh_token = dt.datetime.now().timestamp()
     # A widget button/checkbox's value is only current on the exact run it
     # was clicked - any later rerun (e.g. opening an expander) can see a
     # stale/default value again. load_state's cache key must not depend on
@@ -72,7 +82,7 @@ if refresh or apply_advanced:
 
 @st.cache_data(show_spinner="Loading draft state...")
 def load_state(
-    league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool, _token: int
+    league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool, _token: float
 ) -> dict:
     state = dynasty_core.gather_state(league_id, username, force_full_refresh, force_scoring_refresh)
     # Captured here, inside the cached function, so it's frozen at the
