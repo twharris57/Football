@@ -183,7 +183,6 @@ Deliberately out of v1, not forgotten:
   marginal value is clearly not worth pursuing at all) to keep a
   whole-roster scan responsive - not decided yet, scope during
   implementation.
-
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all
