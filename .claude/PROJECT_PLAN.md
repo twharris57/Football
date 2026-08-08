@@ -36,18 +36,15 @@ it's stopped being a "short" list — thin it back out to what's actually
 active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
-**Must clear (this weekend / live draft):**
-- [ ] `RT-20` — draft-plan past-round drop tracking, needed for the live
-  draft. Next up (`NB-2` done — see "Now — blocking").
-
 **Nice to have (no deadline, worth doing when there's room):**
 - [ ] `RT-18` — trade evaluator/optimizer callouts for non-obvious value
   (bye-gap closing, pick value in context, handcuffs, buried-bench-to-
   starter swaps).
 - [ ] `RT-19` — a summary/digest tab surfacing what needs attention
   instead of reviewing every tab.
-- [ ] `RT-9` — free-agent pickup monitor (needs the same persistence
-  layer as `RT-20` — worth scoping together if either is picked up).
+- [ ] `RT-9` — free-agent pickup monitor (`RT-20`'s
+  `dynasty_core/draft_snapshots.py` persistence layer is done and worth
+  reusing/extending rather than building a second one from scratch).
 - [ ] `RT-17` — confirmed test-coverage/scope gap in
   `best_position_relevant_drop()`'s superflex handling.
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
@@ -65,70 +62,38 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Findings from a `/code-review` pass over `feature/code-reorg` (the
-`confidence_pool/`/`dynasty/` split plus the `dynasty_core/`, `tabs/`, and
-`test_dynasty_core.py` package splits), verified against
-`main:dynasty_core.py` and the pre-split monolith. A separate check of the
-FantasyCalc cache-directory path (flagged mid-review) turned out to already
-be fixed at current HEAD (commit `f4ce06e`), and the previously-flagged
-missing `test_handcuffs.py` and four duplicated-logic spots turned out to
-pre-date this branch (present in the monolith too, just as inline
-one-liners) — neither is listed below.
+Findings from a `/valuation-review` pass over `feature/draft-drop-tracking`
+(PR #28, "RT-20: Recover real draft-plan drops instead of always
+guessing"), reviewed 2026-08-07. The prior section's `feature/code-reorg`
+findings are gone — that branch merged to `main` as `d4476c7` and this
+section wasn't cleared at the time; nothing in it survived as still-open.
 
-- [x] `dynasty/dynasty_core/state.py:170` — `draft_attribution` now
-  defaults an unmatched `roster_id`'s team name to the literal string
-  `"Unknown"` instead of `None` (pre-split `dynasty_core.py` used
-  `team_names.get(p["roster_id"])` with no default). Introduced in the
-  "pure code motion" package-split commit `d750dc8`, not documented in
-  that commit's message, no test coverage. The same file's `recent_rows`
-  block (line ~205) still does the bare `.get()` with no default — the two
-  are now inconsistent within one function. Changes what renders in the
-  rookie big board's "Drafted By" column for an orphaned/traded pick.
-  **Fixed**: dropped the `"Unknown"` default, restoring the bare
-  `team_names.get(p["roster_id"])` and consistency with `recent_rows`.
-- [x] `dynasty/dynasty_core/roster_value.py:49` — `player_status_details`
-  adds `injury_status = str(injury_status)` before the
-  `INJURY_STATUS_DESCRIPTIONS` lookup, with no equivalent in the monolith.
-  Harmless today (Sleeper's `injury_status` is always a string or `None`),
-  but a genuine textual behavior diff introduced during a commit that
-  claims zero behavior change — worth a one-line note if not fixed
-  outright. **Fixed**: removed the redundant cast, restoring parity with
-  the monolith.
-- [x] `dynasty/dynasty_core/byes.py:107-111` and
-  `dynasty/dynasty_core/marginal_value.py:146-150` — both independently
-  reintroduce an identical `_bye_for_row`-style nested helper
-  (`team = players.get(...).get("team"); return byes.get(team) if team else None`)
-  where the monolith used one inline expression
-  (`byes.get(players.get(pid, {}).get("team"))`) in three separate places.
-  Behaviorally identical, but duplicated logic invented twice during the
-  split instead of pulled into one shared helper (e.g. in `player_pools.py`,
-  which both modules already import from). **Fixed**: pulled into
-  `bye_for_row()` in `dynasty_core/lineup.py` instead — the actual common
-  import both modules already share (`player_value_rows` lives there too),
-  a tighter fit than `player_pools.py`. Re-exported from `dynasty_core/__init__.py`
-  alongside `player_value_rows`.
-- [x] `dynasty/tabs/` has no `__init__.py` — relies entirely on Python's
-  implicit namespace-package mechanism (PEP 420) instead of an explicit
-  `__init__.py`, unlike `dynasty_core/`, which `CLAUDE.md` says exists
-  "only because splitting... requires it" — the same justification applies
-  here but wasn't followed. Works today (confirmed via cached
-  `tabs/__pycache__`), but a latent trap for any tool that assumes regular
-  packages (strict mypy/linter namespace-package handling, a future
-  `pyproject.toml`). **Fixed**: added `dynasty/tabs/__init__.py`, and
-  updated `CLAUDE.md`'s "only `dynasty_core/` is a package" claim to cover
-  both.
-- [x] `dynasty/dynasty_core/trade.py:~251-257` (`find_trade_offers`) — the
-  split added redundant defensive wrapping —
-  `float(raw_target_value) if raw_target_value is not None and bool(pd.notna(raw_target_value)) else 0.0`
-  and `bool(pd.notna(row["value"]))` — where the monolith used the simpler
-  `raw_target_value if pd.notna(raw_target_value) else 0.0` and bare
-  `pd.notna(row["value"])`. `pd.notna(None)` already returns `False`, so
-  the extra checks/casts are pure no-ops — a genuine rewrite (not pure
-  motion, contradicting the "no behavior change" commit claim) that adds
-  noise a reviewer has to double-check for a difference that doesn't
-  exist. Cleanup, not a bug. **Fixed**: simplified all three spots
-  (including the `target_value_resolved` line sharing the same pattern)
-  back to the monolith's simpler form.
+- [x] `dynasty/dynasty_core/draft_plan.py:185-188` — the new `"confirmed"`
+  `drop_status` branch computed `is_starter` for a recovered real drop by
+  calling `assign_starters(pre_round_rows, league["roster_positions"])`
+  directly on `player_value_rows(hypothetical_ids, players, fc_by_sleeper_id)`,
+  with no `ineligible_ids` filter first. Every other `is_starter`
+  computation in this codebase (`recommend_drop`, `best_position_relevant_drop`,
+  both in `marginal_value.py`) explicitly filters taxi/IR players out of
+  the rows passed to `assign_starters` before computing `starter_ids` —
+  documented inline as "Sleeper doesn't allow it" (a taxi/IR player can
+  never actually occupy a starting slot). This new branch skipped that
+  filter, so a taxi-stashed player — this league's normal roster state
+  under its rebuild strategy (`CLAUDE.md`'s "Dynasty rebuild strategy") —
+  could win a starting slot in this one computation and bump a real
+  starter onto the "bench" side of `pre_round_starters`. Concretely: if
+  the confirmed recovered drop was actually a real starter, but a
+  higher-`adj_value` taxi player sat in `hypothetical_ids`, `is_starter`
+  came back `False` and the UI's ⚠️ "current starter" warning silently
+  didn't fire for exactly the round it's meant to matter most on. No test
+  in `test_draft_plan.py`'s new `TestRealDropReconciliation` used a
+  non-empty `taxi`/`reserve` roster, so this wasn't caught.
+  **Fixed**: filtered `pre_round_rows` by `ineligible_ids` before calling
+  `assign_starters`, matching `recommend_drop`'s existing pattern
+  (`pre_round_eligible_rows = [r for r in pre_round_rows if r["player_id"] not in ineligible_ids]`).
+  Added `TestRealDropReconciliation::test_confirmed_drop_is_starter_ignores_taxi_players_value`
+  (a taxi-stashed 500-value WR that must not displace a real 100-value WR
+  starter) — verified it fails against the pre-fix code and passes after.
 
 ## Now — blocking
 
@@ -202,6 +167,13 @@ this could still feed into.
 **Trade-target optimizer is done** — see `docs/rookie-draft-big-board.md`'s
 "Trade-target optimizer" section. Follow-ups below: `RT-14`, `RT-15`.
 
+**RT-20 (real draft-pick drop tracking) is done** — see
+`docs/rookie-draft-big-board.md`'s "Draft plan" section and
+`dynasty_core/draft_snapshots.py`. A completed round's drop is now recovered
+from the real roster (diffed across refreshes and persisted per draft)
+where possible, instead of always showing the live-guess heuristic; see
+`DL-8` for the deferred cleanup of orphaned snapshot files.
+
 - [ ] **RT-14: Evaluate and improve an offer someone else has already made
   *to* us** (user-flagged 2026-08-02, filed while scoping `RT-12`) — a
   third, distinct question alongside the trade evaluator (`RT-2`: score a
@@ -239,60 +211,6 @@ this could still feed into.
   caveat that this tiebreaker assumes every partner is need-reading the
   same way a rebuilding team would, or reconsidering what "need" should
   mean when read on someone else's roster.
-- [ ] **RT-20: Past-round "drop suggestion" is a live guess, not a real
-  record — but the real record may actually be derivable** — **next up,
-  needed for the live draft** (user-flagged 2026-08-06, priority
-  confirmed same day: "we need this to work for the draft"). Questioning
-  `multi_round_plan`'s own docstring/UI copy: "Sleeper has no record of
-  whether it was actually dropped" — investigated directly. True that
-  Sleeper has no API field tying a specific drop to a specific pick, but
-  the project already pulls the user's *live* roster fresh on every
-  refresh (`streamlit_app.py`: "Refresh button... re-pulls
-  league/rosters/draft/picks — cheap, always live," no TTL on that call,
-  unlike the players/values/scoring caches; confirmed both the CLI and web
-  app only refresh *manually* — an Enter-key prompt / a "Refresh" button,
-  never an automatic background poll). So a real drop made any time during
-  the draft *is* visible on the next refresh, just not automatically
-  attributable to a round, because nothing today persists a "roster as it
-  stood before" snapshot to diff against. The user's proposed fix is
-  sound: snapshot the roster's player list once at draft start (keyed by
-  `league["draft_id"]`, the same stable identifier `sleeper.get_draft()`/
-  `get_draft_picks()` already use, following the existing
-  `.cache/{thing}_{season}.json` naming convention), then on each refresh
-  diff the current roster against that snapshot to recover which players
-  actually left the roster since the draft began.
-  Two real limitations to design around before building this, not just a
-  straight snapshot-and-diff:
-  - **Per-round attribution, not just an aggregate list.** A single
-    draft-start snapshot tells you the *set* of real drops since the
-    draft began, not which round each one was "for" — if the user drops
-    three different bench players across five completed rounds, a
-    start-only diff can't cleanly say which drop paired with which pick,
-    only that three drops happened. Matching the current UI's per-round
-    `DROP {name}` display would need a snapshot reconciled at each
-    newly-completed round, not one fixed point-in-time snapshot — a
-    materially bigger design than "cache the roster once."
-  - **No per-pick time limit — this league's draft can span multiple
-    days.** Confirmed in the league rules; nothing here assumes real-time
-    pacing today. A day-plus-scale, write-once-then-diff cache is a
-    different shape than anything currently in `.cache/` (all of which is
-    either short-TTL-and-freely-refetchable or explicitly no-TTL-but-safely-
-    idempotent) — this would be the first "capture this exact historical
-    moment and never silently overwrite it" cache in the project. Needs
-    explicit handling for: the snapshot never being taken (tool not opened
-    until mid-draft), the cache file going missing (a fresh deploy without
-    volume persistence, a manually cleared `.cache/`), or the draft
-    outliving whatever this snapshot's own retention policy turns out to
-    be. In every one of those cases, this should fall back to today's
-    live-guess behavior, clearly labeled as an estimate rather than a
-    confirmed drop — the same "silent degradation must surface as a
-    warning" pattern `data_warnings` already establishes elsewhere
-    (`.claude/conventions/valuation_principles.md`), not a new failure
-    mode to invent.
-  Shares its core missing piece — a persistence layer that survives
-  between refreshes — with `RT-9`'s free-agent monitoring; worth scoping
-  both together rather than building two independent ad hoc stores if
-  `RT-9` is picked up around the same time.
 - [ ] **RT-15: Scan a partner's whole roster for viable trade opportunities,
   not one target at a time** (user-flagged 2026-08-02, filed while
   reviewing `RT-12`) — the trade-target optimizer only ever evaluates one
@@ -547,8 +465,47 @@ this could still feed into.
   check rather than a monitor) no longer depends on this.
   Re-flagged 2026-08-06 ("we need a free agent pickup monitor") — same
   scope, no new requirements, just renewed priority. `RT-20` (draft-plan
-  drop tracking) needs the same underlying persistence layer this does;
-  worth scoping both together if either is picked up.
+  drop tracking, done) already built a persistence layer for a related
+  problem (`dynasty_core/draft_snapshots.py`) — worth checking whether it
+  can be reused/extended here rather than building a second one from
+  scratch.
+- [ ] **RT-21: Sleeper's transaction log as a secondary data source —
+  revisit before next year's draft** (assistant-flagged 2026-08-07, filed
+  while scoping `RT-20`, user-flagged as worth keeping for later rather
+  than acting on now) — `RT-20` was built as a roster-snapshot-and-diff
+  design, but a live check against this league's real API during scoping
+  found Sleeper's `/league/{id}/transactions/{leg}` endpoint already
+  records every real roster move with a timestamp, including plain
+  "drop to make room" cuts (`type: "free_agent"`, `adds: null`, a real
+  `drops: {player_id: roster_id}`). Two distinct reasons this could be
+  worth building out, not investigated further this pass given draft-day
+  time pressure:
+  - **Closing `RT-20`'s own gap.** Its `"ambiguous"` state exists because
+    a roster-diff snapshot can't isolate which drop paired with which pick
+    when two or more of the user's own picks complete in the same refresh
+    gap. Sleeper's transaction log doesn't have this problem — it's
+    timestamped and complete regardless of when this app happens to
+    refresh — though it introduces a different gap instead: Sleeper
+    doesn't timestamp individual draft picks, so pairing a transaction to
+    a specific pick would still need a positional/count-based heuristic,
+    not a hard fact. Unverified going into this: whether draft-day cuts
+    always land as `type: "free_agent"` (vs. some other transaction type),
+    and `league["settings"]["leg"]`'s bucketing behavior beyond the
+    single `leg=1` value checked live (this league was still in
+    `"pre_draft"` status with zero picks made at check time, so no
+    real "cut immediately following a draft pick" example existed yet to
+    validate against).
+  - **Leaguewide visibility, not just the user's own roster** — the same
+    endpoint returns every team's transactions, not just the user's,
+    which `RT-20`'s snapshot design has no equivalent for (it only ever
+    diffs the user's own roster). Could show what other teams are doing
+    during the draft (real drops/adds leaguewide) as a genuinely new
+    signal, not just a more-reliable version of `RT-20`'s existing one —
+    worth scoping as its own feature rather than folding entirely into
+    `RT-20`'s drop-attribution problem.
+  Revisit ahead of next year's rookie draft, with time to verify the
+  unconfirmed assumptions above against a real draft in progress before
+  committing to a design — not urgent mid-draft the way `RT-20` was.
 - [ ] **RT-10: FAAB bid-threshold modeling** (deferred from the free-agent
   evaluator v1 above, 2026-08-02) — `free_agent_board()` shows remaining
   FAAB (`league["settings"]["waiver_budget"] - roster["settings"].
@@ -749,3 +706,10 @@ assumption changes.
   related columns (Value + Adj. Value into one, raw number as a hover
   detail — the pattern the Trade Evaluator's `lineup_delta`/
   `lineup_delta_after_drops` already uses).
+- [ ] **DL-8: Orphaned `draft_snapshots_{draft_id}.json` files are never
+  cleaned up** (deferred from `RT-20`, user-flagged as fine to defer,
+  2026-08-06) — once a season's rookie draft is fully over, its snapshot
+  file is simply never read again (next season gets a new `draft_id` from
+  Sleeper), so it's harmless to leave behind, just permanent clutter in
+  `.cache/`. No retention/cleanup logic was built in `RT-20`'s first pass.
+  Revisit only if `.cache/` growth ever actually matters.

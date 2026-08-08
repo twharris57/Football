@@ -7,8 +7,10 @@ from typing import Any
 import pandas as pd
 
 from .byes import gap_delta
+from .draft_snapshots import AMBIGUOUS
+from .lineup import assign_starters, player_value_rows
 from .marginal_value import rank_by_marginal_value
-from .picks import DraftPickSlot
+from .picks import DraftPickSlot, own_draft_picks
 from .roster_needs import need_positions, roster_needs_summary
 
 MAX_DISPLAYED_ALTERNATES = 2
@@ -65,6 +67,7 @@ def multi_round_plan(
     byes: dict[str, int],
     handcuffs: dict[str, str],
     real_picks_by_overall: dict[int, str],
+    draft_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     """Plan for every pick the user owns this draft — what to pick and drop, and why.
 
@@ -72,10 +75,18 @@ def multi_round_plan(
     (`rank_by_marginal_value`), not raw trade value. Rounds already played
     (`overall_pick < current_pick_no`) show the real player Sleeper
     recorded, scored the same way retroactively rather than a stale
-    recommendation; a drop is still suggested for those rounds too, since
-    Sleeper has no record of whether one was actually made. Upcoming
-    rounds are simulated assuming no other team's picks happen in between,
-    recomputed fresh every refresh.
+    recommendation. Each completed round's drop is labeled with one of four
+    `drop_status` values, from `draft_snapshot` (see draft_snapshots.py's
+    `_reconcile` for the mechanics): `"confirmed"` (a real drop, recovered
+    by diffing the roster across refreshes), `"confirmed_none"` (confirmed
+    no drop was needed - roster had room), `"ambiguous"` (two or more of the
+    user's own picks completed in the same refresh gap, so which drop paired
+    with which pick can't be isolated), or `"guessed"` (the frontier hasn't
+    reached this pick yet, or it's an upcoming round - the same cheap
+    heuristic guess as before). Once a pick's real post-drop roster is known
+    (`draft_snapshot["confirmed_through_pick"]`), later rounds simulate
+    forward from that real state instead of a chain of guesses, bounding
+    simulation drift to only the unconfirmed tail of the plan.
 
     Returns up to `MAX_DISPLAYED_ALTERNATES` backup alternates per upcoming
     round (`alternates_by_pick`, keyed by `overall_pick`), each noting
@@ -91,7 +102,7 @@ def multi_round_plan(
     flagging any week the full plan would newly break. Full rationale in
     docs/rookie-draft-big-board.md's "Draft plan" section.
     """
-    own_picks = sorted((p for p in ownership if p.owner_roster_id == user_roster_id), key=lambda p: p.overall_pick)
+    own_picks = own_draft_picks(ownership, user_roster_id)
 
     available_ids = set(available.keys())
     hypothetical_ids = list(user_roster.get("players") or [])
@@ -154,6 +165,39 @@ def multi_round_plan(
         drop = primary["drop"]
         picked_info = players.get(picked_id, {})
 
+        # Override the heuristic guess with real, recovered drop data when
+        # available (see draft_snapshots.py) - a completed round's key is
+        # only present once its gap has actually been reconciled.
+        confirmed_key = str(pick.overall_pick)
+        if is_completed and confirmed_key in draft_snapshot["confirmed_drops"]:
+            confirmed_entry = draft_snapshot["confirmed_drops"][confirmed_key]
+            if confirmed_entry == AMBIGUOUS:
+                drop_status = "ambiguous"
+                # keep the heuristic `drop` as the displayed (uncertain) guess
+            elif confirmed_entry is None:
+                drop_status, drop = "confirmed_none", None
+            else:
+                drop_status = "confirmed"
+                drop_info = players.get(confirmed_entry, {})
+                # is_starter: was this player a starter in the roster as it
+                # stood entering this round (hypothetical_ids, still
+                # accurate at this point in the loop)? Taxi/IR players are
+                # filtered out first - Sleeper doesn't allow them to occupy
+                # a starting slot, same as recommend_drop()'s eligible_rows.
+                pre_round_rows = player_value_rows(hypothetical_ids, players, fc_by_sleeper_id)
+                pre_round_eligible_rows = [r for r in pre_round_rows if r["player_id"] not in ineligible_ids]
+                pre_round_starters = {
+                    pid for _, pid in assign_starters(pre_round_eligible_rows, league["roster_positions"]) if pid
+                }
+                drop = {
+                    "player_id": confirmed_entry,
+                    "name": drop_info.get("full_name"),
+                    "pos": drop_info.get("position"),
+                    "is_starter": confirmed_entry in pre_round_starters,
+                }
+        else:
+            drop_status = "guessed"
+
         if is_completed and real_pick_id:
             reason = "already picked"
         else:
@@ -177,6 +221,7 @@ def multi_round_plan(
                 "drop_name": drop["name"] if drop else None,
                 "drop_pos": drop["pos"] if drop else None,
                 "drop_is_starter": drop["is_starter"] if drop else None,
+                "drop_status": drop_status,
             }
         )
 
@@ -224,9 +269,16 @@ def multi_round_plan(
             all_candidates_by_pick[pick.overall_pick] = pd.DataFrame(candidate_rows)
 
         available_ids.discard(picked_id)
-        if drop:
-            hypothetical_ids = [pid for pid in hypothetical_ids if pid != drop["player_id"]]
-        hypothetical_ids.append(picked_id)
+        if pick.overall_pick == draft_snapshot["confirmed_through_pick"]:
+            # The real post-drop roster is now known for every pick up
+            # through this one - jump straight to it instead of carrying
+            # forward a chain of guesses (including any "ambiguous" ones),
+            # so simulation drift never extends past the unconfirmed tail.
+            hypothetical_ids = list(draft_snapshot["confirmed_roster"])
+        else:
+            if drop:
+                hypothetical_ids = [pid for pid in hypothetical_ids if pid != drop["player_id"]]
+            hypothetical_ids.append(picked_id)
         just_picked.add(picked_id)
 
     hypothetical_roster = {"players": hypothetical_ids}

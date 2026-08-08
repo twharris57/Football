@@ -5,6 +5,10 @@ from __future__ import annotations
 import dynasty_core as dc
 from tests.dynasty_core.helpers import fc_entry, make_player
 
+# A never-reconciled snapshot - every completed round falls back to the
+# live-guess heuristic, matching this project's pre-RT-20 behavior.
+EMPTY_SNAPSHOT = {"confirmed_through_pick": 0, "confirmed_roster": None, "confirmed_drops": {}}
+
 
 class TestMultiRoundPlan:
     """End-to-end: multi_round_plan should fill a true positional need before a
@@ -43,6 +47,7 @@ class TestMultiRoundPlan:
             byes={},
             handcuffs={},
             real_picks_by_overall={},
+            draft_snapshot=EMPTY_SNAPSHOT,
         )
 
         rounds = plan["rounds"]
@@ -94,6 +99,7 @@ class TestMultiRoundPlan:
             byes={},
             handcuffs={},
             real_picks_by_overall={},
+            draft_snapshot=EMPTY_SNAPSHOT,
         )
 
         candidates = plan["all_candidates_by_pick"][1]
@@ -102,3 +108,168 @@ class TestMultiRoundPlan:
         # marginal value, not just the one actually recommended.
         assert candidates.iloc[0]["name"] == "Good QB"
         assert candidates.iloc[0]["marginal_value"] > candidates.iloc[1]["marginal_value"]
+
+
+class TestRealDropReconciliation:
+    """RT-20: a completed round's drop should reflect draft_snapshot's real,
+    recovered data when available, instead of always trusting the live-guess
+    heuristic - and later rounds should simulate forward from that real
+    state, not a chain of guesses."""
+
+    LEAGUE = {"roster_positions": ["QB", "WR", "BN"], "settings": {"taxi_slots": 0}}
+    PLAYERS = {
+        "old_wr": make_player("WR", full_name="Old WR"),
+        "filler": make_player("WR", full_name="Filler"),
+        "extra": make_player("WR", full_name="Extra"),
+        "good_qb": make_player("QB", full_name="Good QB"),
+        "taxi_stud": make_player("WR", full_name="Taxi Stud"),
+    }
+    FC_BY_ID = dc.fc_value_by_sleeper_id(
+        [
+            fc_entry("old_wr", 50, position="WR"),
+            fc_entry("filler", 100, position="WR"),
+            fc_entry("extra", 10, position="WR"),
+            fc_entry("good_qb", 300, position="QB"),
+            fc_entry("taxi_stud", 500, position="WR"),
+        ]
+    )
+    OWNERSHIP = [
+        dc.DraftPickSlot(round=1, overall_pick=1, original_roster_id=1, owner_roster_id=1),
+        dc.DraftPickSlot(round=2, overall_pick=2, original_roster_id=1, owner_roster_id=1),
+    ]
+    REAL_PICKS_BY_OVERALL = {1: "good_qb"}
+
+    def test_confirmed_real_drop_overrides_the_heuristic_guess(self):
+        # Roster is at capacity exactly (2 players + 1 pick = 3 slots), so
+        # the heuristic itself wouldn't force any drop here - the confirmed
+        # override should still win.
+        user_roster = {"players": ["old_wr", "filler"], "taxi": [], "reserve": []}
+        draft_snapshot = {
+            "confirmed_through_pick": 1,
+            "confirmed_roster": ["old_wr", "good_qb"],
+            "confirmed_drops": {"1": "filler"},
+        }
+
+        plan = dc.multi_round_plan(
+            ownership=self.OWNERSHIP,
+            user_roster_id=1,
+            current_pick_no=2,
+            available={},
+            players=self.PLAYERS,
+            fc_by_sleeper_id=self.FC_BY_ID,
+            user_roster=user_roster,
+            league=self.LEAGUE,
+            byes={},
+            handcuffs={},
+            real_picks_by_overall=self.REAL_PICKS_BY_OVERALL,
+            draft_snapshot=draft_snapshot,
+        )
+
+        round1 = plan["rounds"].iloc[0]
+        assert round1["drop_status"] == "confirmed"
+        assert round1["drop_name"] == "Filler"
+        # Filler (100) outvalues Old WR (50) for the one WR slot, so it was
+        # a real starter entering this round.
+        assert bool(round1["drop_is_starter"]) is True
+
+    def test_confirmed_roster_feeds_forward_instead_of_a_simulated_guess(self):
+        user_roster = {"players": ["old_wr", "filler"], "taxi": [], "reserve": []}
+        # Deliberately different from what the naive simulated update
+        # (drop filler, append good_qb) would have produced - proves the
+        # next round starts from the confirmed real roster, not a guess.
+        draft_snapshot = {
+            "confirmed_through_pick": 1,
+            "confirmed_roster": ["surprise"],
+            "confirmed_drops": {"1": "filler"},
+        }
+
+        plan = dc.multi_round_plan(
+            ownership=self.OWNERSHIP,
+            user_roster_id=1,
+            current_pick_no=2,
+            # hypothetical_ids_by_pick[2] is snapshotted before round 2's
+            # own candidate ranking runs, so no real round-2 candidates are
+            # needed to observe the feed-forward result.
+            available={},
+            players=self.PLAYERS,
+            fc_by_sleeper_id=self.FC_BY_ID,
+            user_roster=user_roster,
+            league=self.LEAGUE,
+            byes={},
+            handcuffs={},
+            real_picks_by_overall=self.REAL_PICKS_BY_OVERALL,
+            draft_snapshot=draft_snapshot,
+        )
+
+        assert plan["hypothetical_ids_by_pick"][2] == ["surprise"]
+
+    def test_ambiguous_round_keeps_the_heuristic_guess_but_still_feeds_forward(self):
+        # Over capacity (3 players + 1 pick = 4 > 3 slots), so the heuristic
+        # must recommend a real drop - the lowest-value bench player, Extra.
+        user_roster = {"players": ["old_wr", "filler", "extra"], "taxi": [], "reserve": []}
+        draft_snapshot = {
+            "confirmed_through_pick": 1,
+            "confirmed_roster": ["surprise"],
+            "confirmed_drops": {"1": dc.AMBIGUOUS},
+        }
+
+        plan = dc.multi_round_plan(
+            ownership=self.OWNERSHIP,
+            user_roster_id=1,
+            current_pick_no=2,
+            # hypothetical_ids_by_pick[2] is snapshotted before round 2's
+            # own candidate ranking runs, so no real round-2 candidates are
+            # needed to observe the feed-forward result.
+            available={},
+            players=self.PLAYERS,
+            fc_by_sleeper_id=self.FC_BY_ID,
+            user_roster=user_roster,
+            league=self.LEAGUE,
+            byes={},
+            handcuffs={},
+            real_picks_by_overall=self.REAL_PICKS_BY_OVERALL,
+            draft_snapshot=draft_snapshot,
+        )
+
+        round1 = plan["rounds"].iloc[0]
+        assert round1["drop_status"] == "ambiguous"
+        assert round1["drop_name"] == "Extra"
+        # The confirmed frontier still advances (and feeds forward) even
+        # though this specific round's drop couldn't be isolated.
+        assert plan["hypothetical_ids_by_pick"][2] == ["surprise"]
+
+    def test_confirmed_drop_is_starter_ignores_taxi_players_value(self):
+        # A taxi player can never actually occupy a starting slot, no matter
+        # how high its value - it must not be able to "steal" the WR slot
+        # from the real active-roster starter in this is_starter check and
+        # mask that the confirmed drop really was a starter (fix-before-merge
+        # finding from the 2026-08-07 valuation review).
+        user_roster = {"players": ["old_wr", "filler", "taxi_stud"], "taxi": ["taxi_stud"], "reserve": []}
+        draft_snapshot = {
+            "confirmed_through_pick": 1,
+            "confirmed_roster": ["old_wr", "good_qb", "taxi_stud"],
+            "confirmed_drops": {"1": "filler"},
+        }
+
+        plan = dc.multi_round_plan(
+            ownership=self.OWNERSHIP,
+            user_roster_id=1,
+            current_pick_no=2,
+            available={},
+            players=self.PLAYERS,
+            fc_by_sleeper_id=self.FC_BY_ID,
+            user_roster=user_roster,
+            league=self.LEAGUE,
+            byes={},
+            handcuffs={},
+            real_picks_by_overall=self.REAL_PICKS_BY_OVERALL,
+            draft_snapshot=draft_snapshot,
+        )
+
+        round1 = plan["rounds"].iloc[0]
+        assert round1["drop_status"] == "confirmed"
+        assert round1["drop_name"] == "Filler"
+        # Filler (100) outvalues Old WR (50) for the one real WR slot -
+        # Taxi Stud (500) is ineligible to start at all, so it must not
+        # displace Filler from pre_round_starters.
+        assert bool(round1["drop_is_starter"]) is True

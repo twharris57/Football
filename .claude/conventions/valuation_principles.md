@@ -285,3 +285,34 @@ candidate out of the shared computation upstream of it. Watch for this
 shape wherever a "protect X from Y" parameter is implemented as "delete X
 before computing Y," rather than "compute Y normally, then skip X when Y's
 result is applied."
+
+## Every `assign_starters()` call needs the same `ineligible_ids` filter, not just the established ones
+
+`recommend_drop()` and `best_position_relevant_drop()` (both in
+`marginal_value.py`) both filter taxi/IR players out of their rows before
+calling `assign_starters()` — documented inline as "Sleeper doesn't allow
+it," since a taxi/IR player can never actually occupy a starting slot.
+`draft_plan.py`'s new `"confirmed"` `drop_status` branch (`RT-20`,
+2026-08-07 review) added a third `is_starter` computation for a
+draft-plan round's recovered real drop — `assign_starters()` on
+`player_value_rows(hypothetical_ids, ...)` — and skipped the filter,
+because it was written as new inline logic rather than by reusing (or
+even glancing at) the two existing call sites. A taxi-stashed player —
+this league's normal roster state under its rebuild strategy — can then
+win a starting slot in that computation and bump a real starter onto the
+"bench" side of the result, so a genuinely-dropped starter can silently
+read as `is_starter: False`. Not caught by the new tests, since none of
+them constructed a roster with a non-empty `taxi`/`reserve` list.
+
+**The rule**: `assign_starters()` must never be called on a roster's raw
+`player_value_rows()` output directly — taxi/IR occupants are never
+eligible for a starting slot, and the established pattern is
+`[r for r in rows if r["player_id"] not in ineligible_ids]` before the
+call, every time. Before writing a new inline `is_starter`/starter-set
+computation anywhere in this codebase, check whether `recommend_drop()`
+or `best_position_relevant_drop()` already does what's needed — this is
+the same shape as this file's "one valuation strategy, used everywhere"
+rule, specifically for starter assignment: a parallel `assign_starters()`
+call site is a second implementation of "who's starting," not a new
+question, and it will silently drift from the established one the moment
+it forgets a filter the others already carry.
