@@ -62,38 +62,8 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Findings from a `/valuation-review` pass over `feature/draft-drop-tracking`
-(PR #28, "RT-20: Recover real draft-plan drops instead of always
-guessing"), reviewed 2026-08-07. The prior section's `feature/code-reorg`
-findings are gone — that branch merged to `main` as `d4476c7` and this
-section wasn't cleared at the time; nothing in it survived as still-open.
-
-- [x] `dynasty/dynasty_core/draft_plan.py:185-188` — the new `"confirmed"`
-  `drop_status` branch computed `is_starter` for a recovered real drop by
-  calling `assign_starters(pre_round_rows, league["roster_positions"])`
-  directly on `player_value_rows(hypothetical_ids, players, fc_by_sleeper_id)`,
-  with no `ineligible_ids` filter first. Every other `is_starter`
-  computation in this codebase (`recommend_drop`, `best_position_relevant_drop`,
-  both in `marginal_value.py`) explicitly filters taxi/IR players out of
-  the rows passed to `assign_starters` before computing `starter_ids` —
-  documented inline as "Sleeper doesn't allow it" (a taxi/IR player can
-  never actually occupy a starting slot). This new branch skipped that
-  filter, so a taxi-stashed player — this league's normal roster state
-  under its rebuild strategy (`CLAUDE.md`'s "Dynasty rebuild strategy") —
-  could win a starting slot in this one computation and bump a real
-  starter onto the "bench" side of `pre_round_starters`. Concretely: if
-  the confirmed recovered drop was actually a real starter, but a
-  higher-`adj_value` taxi player sat in `hypothetical_ids`, `is_starter`
-  came back `False` and the UI's ⚠️ "current starter" warning silently
-  didn't fire for exactly the round it's meant to matter most on. No test
-  in `test_draft_plan.py`'s new `TestRealDropReconciliation` used a
-  non-empty `taxi`/`reserve` roster, so this wasn't caught.
-  **Fixed**: filtered `pre_round_rows` by `ineligible_ids` before calling
-  `assign_starters`, matching `recommend_drop`'s existing pattern
-  (`pre_round_eligible_rows = [r for r in pre_round_rows if r["player_id"] not in ineligible_ids]`).
-  Added `TestRealDropReconciliation::test_confirmed_drop_is_starter_ignores_taxi_players_value`
-  (a taxi-stashed 500-value WR that must not displace a real 100-value WR
-  starter) — verified it fails against the pre-fix code and passes after.
+Empty — `feature/draft-drop-tracking` (PR #28) merged 2026-08-08 with its
+one finding fixed; nothing outstanding for the next branch yet.
 
 ## Now — blocking
 
