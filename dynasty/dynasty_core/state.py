@@ -226,6 +226,10 @@ def gather_state(
         user_analysis["roster_weekly_gaps"],
         user_analysis["sellable_players"],
         user_analysis["free_agent_board"],
+        # Same field/fallback roster_tab.py's _render_bye_impact() already
+        # uses for "already happened" vs. "still ahead" - not otherwise
+        # threaded through gather_state() yet.
+        league["settings"].get("leg", 1),
     )
 
     return {

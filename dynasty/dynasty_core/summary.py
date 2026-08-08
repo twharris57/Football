@@ -11,6 +11,7 @@ def build_attention_digest(
     roster_weekly_gaps: pd.DataFrame,
     sellable_players: pd.DataFrame,
     free_agent_board: pd.DataFrame,
+    current_week: int,
     *,
     top_n: int = 3,
 ) -> dict[str, list[str]]:
@@ -23,18 +24,31 @@ def build_attention_digest(
     list shouldn't silently understate how much is flagged. Draft-pick timing
     and data_warnings are deliberately not covered here; both are already
     surfaced globally above every tab (see streamlit_app.py).
+
+    `current_week` (Sleeper's `league["settings"]["leg"]`, same field
+    `roster_tab.py`'s `_render_bye_impact()` already uses for "already
+    happened" vs. "still ahead") excludes already-passed weeks from
+    `weekly_gaps` before capping - a week that's already happened has
+    nothing left to act on, and letting it occupy one of the capped slots
+    would silently crowd out a real upcoming gap in a tab whose entire
+    purpose is "what needs attention right now." `sellable`/`free_agents`
+    don't need this: both are already ordered by their own value/impact
+    before capping, not by an unrelated fixed order a stale entry could
+    dominate.
     """
     digest: dict[str, list[str]] = {
         "needs": [f"Flagged needs: {', '.join(sorted(need_positions))}"] if need_positions else [],
-        "weekly_gaps": _capped(_weekly_gap_lines(roster_weekly_gaps), top_n),
+        "weekly_gaps": _capped(_weekly_gap_lines(roster_weekly_gaps, current_week), top_n),
         "sellable": _capped(_sellable_lines(sellable_players), top_n),
         "free_agents": _capped(_free_agent_lines(free_agent_board), top_n),
     }
     return digest
 
 
-def _weekly_gap_lines(roster_weekly_gaps: pd.DataFrame) -> list[str]:
-    gap_rows = roster_weekly_gaps[roster_weekly_gaps["gap"] != ""]
+def _weekly_gap_lines(roster_weekly_gaps: pd.DataFrame, current_week: int) -> list[str]:
+    gap_rows = roster_weekly_gaps[
+        (roster_weekly_gaps["gap"] != "") & (roster_weekly_gaps["week"] >= current_week)
+    ]
     return [f"Week {row['week']}: gap at {row['gap']}" for _, row in gap_rows.iterrows()]
 
 

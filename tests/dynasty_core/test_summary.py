@@ -12,6 +12,11 @@ EMPTY_WEEKLY_GAPS = pd.DataFrame(
 EMPTY_SELLABLE = pd.DataFrame(columns=["player_id", "name", "pos", "age", "value", "adj_value", "position_vor"])
 EMPTY_FREE_AGENTS = pd.DataFrame(columns=["name", "pos", "team", "marginal_value", "drop_name", "drop_is_starter"])
 
+# Week 1 as "current" in most tests below means every fixture week (1..18)
+# passes the current-week filter unchanged, so it doesn't interfere with
+# tests targeting a different behavior.
+WEEK_1 = 1
+
 
 def _gap_row(week: int, gap: str) -> dict:
     return {"week": week, "QB": 1, "RB": 2, "WR": 2, "TE": 1, "gap": gap}
@@ -42,7 +47,7 @@ def _fa_row(name: str, pos: str, marginal_value: float, drop_name: str | None = 
 
 class TestBuildAttentionDigest:
     def test_empty_inputs_produce_all_empty_lists(self):
-        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS)
+        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, WEEK_1)
 
         assert digest == {"needs": [], "weekly_gaps": [], "sellable": [], "free_agents": []}
 
@@ -51,13 +56,13 @@ class TestBuildAttentionDigest:
         # zero rows of the real columns) when its ranked pool is empty -
         # filtering by column name on that would raise KeyError rather than
         # just finding nothing.
-        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, pd.DataFrame([]))
+        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, pd.DataFrame([]), WEEK_1)
 
         assert digest["free_agents"] == []
 
     def test_needs_combines_positions_into_one_alphabetically_sorted_line(self):
         digest = dc.build_attention_digest(
-            frozenset({"WR", "QB"}), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS
+            frozenset({"WR", "QB"}), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, WEEK_1
         )
 
         assert digest["needs"] == ["Flagged needs: QB, WR"]
@@ -65,14 +70,25 @@ class TestBuildAttentionDigest:
     def test_weekly_gaps_lists_only_weeks_with_a_real_gap(self):
         gaps = pd.DataFrame([_gap_row(1, ""), _gap_row(2, "RB"), _gap_row(3, "")])
 
-        digest = dc.build_attention_digest(frozenset(), gaps, EMPTY_SELLABLE, EMPTY_FREE_AGENTS)
+        digest = dc.build_attention_digest(frozenset(), gaps, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, WEEK_1)
 
         assert digest["weekly_gaps"] == ["Week 2: gap at RB"]
+
+    def test_weekly_gaps_excludes_weeks_already_in_the_past(self):
+        # RT-19 fix-before-merge finding: gap weeks that have already
+        # happened have nothing left to act on and must not occupy a capped
+        # slot ahead of a real upcoming gap - mirrors roster_tab.py's
+        # _render_bye_impact() "already happened" vs. "still ahead" split.
+        gaps = pd.DataFrame([_gap_row(2, "RB"), _gap_row(4, "RB"), _gap_row(6, "RB"), _gap_row(14, "WR")])
+
+        digest = dc.build_attention_digest(frozenset(), gaps, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, current_week=10)
+
+        assert digest["weekly_gaps"] == ["Week 14: gap at WR"]
 
     def test_weekly_gaps_caps_at_top_n_with_a_more_note(self):
         gaps = pd.DataFrame([_gap_row(w, "RB") for w in range(1, 6)])  # 5 gap weeks
 
-        digest = dc.build_attention_digest(frozenset(), gaps, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, top_n=3)
+        digest = dc.build_attention_digest(frozenset(), gaps, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, WEEK_1, top_n=3)
 
         assert digest["weekly_gaps"] == [
             "Week 1: gap at RB",
@@ -81,24 +97,41 @@ class TestBuildAttentionDigest:
             "(+2 more)",
         ]
 
+    def test_weekly_gaps_caps_after_excluding_past_weeks_not_before(self):
+        # A past-week gap must not count against top_n at all - capping
+        # before filtering would still let a stale week silently displace a
+        # real upcoming one.
+        gaps = pd.DataFrame(
+            [_gap_row(2, "RB"), _gap_row(11, "RB"), _gap_row(12, "RB"), _gap_row(13, "RB"), _gap_row(14, "WR")]
+        )
+
+        digest = dc.build_attention_digest(frozenset(), gaps, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, current_week=10, top_n=3)
+
+        assert digest["weekly_gaps"] == [
+            "Week 11: gap at RB",
+            "Week 12: gap at RB",
+            "Week 13: gap at RB",
+            "(+1 more)",
+        ]
+
     def test_sellable_uses_adj_value_not_the_raw_value_column(self):
         sellable = pd.DataFrame([_sellable_row("Depth WR", "WR", value=999.0, adj_value=42.0)])
 
-        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, sellable, EMPTY_FREE_AGENTS)
+        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, sellable, EMPTY_FREE_AGENTS, WEEK_1)
 
         assert digest["sellable"] == ["Depth WR (WR, value: 42)"]
 
     def test_sellable_shows_unknown_when_adj_value_is_missing(self):
         sellable = pd.DataFrame([_sellable_row("Unmatched WR", "WR", value=100.0, adj_value=None)])
 
-        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, sellable, EMPTY_FREE_AGENTS)
+        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, sellable, EMPTY_FREE_AGENTS, WEEK_1)
 
         assert digest["sellable"] == ["Unmatched WR (WR, value: unknown)"]
 
     def test_sellable_caps_at_top_n_with_a_more_note(self):
         sellable = pd.DataFrame([_sellable_row(f"WR {i}", "WR", value=100.0, adj_value=100.0 - i) for i in range(5)])
 
-        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, sellable, EMPTY_FREE_AGENTS, top_n=3)
+        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, sellable, EMPTY_FREE_AGENTS, WEEK_1, top_n=3)
 
         assert digest["sellable"][-1] == "(+2 more)"
         assert len(digest["sellable"]) == 4
@@ -112,14 +145,14 @@ class TestBuildAttentionDigest:
             ]
         )
 
-        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, board)
+        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, board, WEEK_1)
 
         assert digest["free_agents"] == ["Good Add (RB) would add +15.5 to your lineup"]
 
     def test_free_agents_all_non_positive_returns_empty_list(self):
         board = pd.DataFrame([_fa_row("No Help", "WR", marginal_value=0.0), _fa_row("Bad", "TE", marginal_value=-3.0)])
 
-        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, board)
+        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, board, WEEK_1)
 
         assert digest["free_agents"] == []
 
@@ -132,7 +165,7 @@ class TestBuildAttentionDigest:
             ]
         )
 
-        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, board)
+        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, board, WEEK_1)
 
         assert digest["free_agents"] == [
             "Free Add (RB) would add +10.0 to your lineup",
@@ -143,7 +176,7 @@ class TestBuildAttentionDigest:
     def test_free_agents_caps_at_top_n_with_a_more_note(self):
         board = pd.DataFrame([_fa_row(f"Add {i}", "RB", marginal_value=10.0 - i) for i in range(5)])
 
-        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, board, top_n=3)
+        digest = dc.build_attention_digest(frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, board, WEEK_1, top_n=3)
 
         assert digest["free_agents"][-1] == "(+2 more)"
         assert len(digest["free_agents"]) == 4

@@ -55,29 +55,21 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Findings from reviewing `feature/summary-tab` (PR #30, 2026-08-08):
+Empty — the one finding from reviewing `feature/summary-tab` (PR #30,
+2026-08-08) is fixed.
 
-- `build_attention_digest()`'s weekly-gaps line (`dynasty_core/summary.py`,
-  `_weekly_gap_lines()`) lists gap weeks in raw chronological order (week
-  1..18) with no current-week filtering, then caps to `top_n` (default 3).
-  On a roster with more than `top_n` gap weeks spread across the season, a
-  week that's already happened crowds out a real upcoming week from the
-  capped list — e.g. in week 10, gaps flagged in weeks 2/4/6 (nothing left
-  to do about them) fill all 3 slots and a real week-14 gap never appears,
-  silently, in a tab whose entire purpose is "what needs attention right
-  now." `roster_tab.py`'s `_render_bye_impact()` already solves exactly
-  this ("already happened" vs. "still ahead") via
-  `league["settings"].get("leg", 1)` (Sleeper's current-week counter) —
-  reuse that here: filter `roster_weekly_gaps` to `week >= current_week`
-  before computing/capping lines, threading `current_week` into
-  `build_attention_digest()`'s signature the same way `state.py` already
-  has `league` available at the call site. `sellable`/`free_agents` don't
-  have this problem — both are already sorted by their own value/impact
-  before capping, not by an unrelated fixed order. No test constructs a
-  digest with more gap weeks than `top_n` spread across past and future, so
-  the gap wasn't caught by `test_weekly_gaps_caps_at_top_n_with_a_more_note`
-  (all 5 fixture weeks are equally "in the past or future" since the test
-  never passes a current week at all).
+`build_attention_digest()`'s weekly-gaps line listed gap weeks in raw
+chronological order with no current-week filtering, then capped to `top_n`
+— an already-passed gap week could crowd out a real upcoming one out of the
+capped slots, silently, in a tab whose entire purpose is "what needs
+attention right now." Fixed by threading a new required `current_week`
+parameter through `build_attention_digest()` and filtering
+`roster_weekly_gaps` to `week >= current_week` before computing/capping
+lines; `state.py` passes `league["settings"].get("leg", 1)`, the same
+field/fallback `roster_tab.py`'s `_render_bye_impact()` already uses for
+"already happened" vs. "still ahead." New tests cover a past gap week being
+excluded entirely and the cap applying only after that exclusion (not
+before, which would still let a stale week silently displace a real one).
 
 ## Now — blocking
 
