@@ -9,12 +9,14 @@ _CATEGORY_ICONS = {
     "weekly_gaps": "⚠️",
     "sellable": "💰",
     "free_agents": "💡",
+    "pickup_alerts": "🔔",
 }
 _CATEGORY_HEADERS = {
     "needs": "Roster needs",
     "weekly_gaps": "Weekly gap risk",
     "sellable": "Worth shopping",
     "free_agents": "Free-agent upgrades",
+    "pickup_alerts": "Pickup alerts",
 }
 
 
@@ -27,9 +29,11 @@ def render_summary_tab(state: dict) -> None:
             "- Draft-pick timing and any data warnings aren't repeated here — see the "
             "'On the clock' banner and any warning banners above, always visible "
             "regardless of tab.\n"
-            "- In-season 'what changed since you last checked' isn't built yet — "
-            "deferred pending a persistence layer (see `.claude/PROJECT_PLAN.md`'s "
-            "`RT-9`). This is a fresh snapshot every refresh, same as every other tab.\n"
+            "- **🔔 Pickup alerts** — a free agent whose NFL team, depth-chart order, or "
+            "active status improved since the last refresh, and who'd add real value to "
+            "your lineup right now. Tracked week-over-week (not a fresh snapshot like "
+            "every other category here) — the very first refresh after this shipped "
+            "always shows none, since there's nothing yet to compare against.\n"
             "- Deliberately capped and not ranked across categories — a category is "
             "simply left out if it has nothing to show."
         )

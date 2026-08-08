@@ -11,11 +11,12 @@ def build_attention_digest(
     roster_weekly_gaps: pd.DataFrame,
     sellable_players: pd.DataFrame,
     free_agent_board: pd.DataFrame,
+    pickup_alerts: list[dict],
     current_week: int,
     *,
     top_n: int = 3,
 ) -> dict[str, list[str]]:
-    """Compose four already-computed per-team signals into short digest lists.
+    """Compose five already-computed per-team signals into short digest lists.
 
     No new valuation model - see .claude/conventions/valuation_principles.md's
     "one valuation strategy" rule; every line here is built from a field
@@ -31,16 +32,23 @@ def build_attention_digest(
     `weekly_gaps` before capping - a week that's already happened has
     nothing left to act on, and letting it occupy one of the capped slots
     would silently crowd out a real upcoming gap in a tab whose entire
-    purpose is "what needs attention right now." `sellable`/`free_agents`
-    don't need this: both are already ordered by their own value/impact
-    before capping, not by an unrelated fixed order a stale entry could
-    dominate.
+    purpose is "what needs attention right now." `sellable`/`free_agents`/
+    `pickup_alerts` don't need this: all three already arrive ordered by
+    their own value/impact before capping, not by an unrelated fixed order
+    a stale entry could dominate.
+
+    `pickup_alerts` (see pickup_snapshots.py) must arrive already ranked
+    best-first (by marginal value) and already filtered to real positive
+    value to this roster - this function only formats and caps, matching
+    every other category's division of labor (the caller computes/ranks/
+    filters, this module formats/caps).
     """
     digest: dict[str, list[str]] = {
         "needs": [f"Flagged needs: {', '.join(sorted(need_positions))}"] if need_positions else [],
         "weekly_gaps": _capped(_weekly_gap_lines(roster_weekly_gaps, current_week), top_n),
         "sellable": _capped(_sellable_lines(sellable_players), top_n),
         "free_agents": _capped(_free_agent_lines(free_agent_board), top_n),
+        "pickup_alerts": _capped(_pickup_alert_lines(pickup_alerts), top_n),
     }
     return digest
 
@@ -76,6 +84,26 @@ def _free_agent_lines(free_agent_board: pd.DataFrame) -> list[str]:
             starter_note = " (a starter)" if row["drop_is_starter"] else ""
             line += f" — would require dropping {row['drop_name']}{starter_note}"
         lines.append(line)
+    return lines
+
+
+def _pickup_alert_lines(pickup_alerts: list[dict]) -> list[str]:
+    lines = []
+    for alert in pickup_alerts:
+        kind = alert["kind"]
+        if kind == "team" and alert["old"] is None:
+            lines.append(f"{alert['name']} ({alert['pos']}) just signed with {alert['new']}")
+        elif kind == "team":
+            lines.append(f"{alert['name']} ({alert['pos']}) changed teams: {alert['old']} → {alert['new']}")
+        elif kind == "depth_chart":
+            lines.append(
+                f"{alert['name']} ({alert['pos']}, {alert['team']}) depth chart order "
+                f"improved: {alert['old']} → {alert['new']}"
+            )
+        else:  # "status"
+            lines.append(
+                f"{alert['name']} ({alert['pos']}, {alert['team']}) status changed: {alert['old']} → {alert['new']}"
+            )
     return lines
 
 

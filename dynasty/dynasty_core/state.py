@@ -15,6 +15,7 @@ from .byes import bye_week_by_team
 from .draft_plan import multi_round_plan
 from .draft_snapshots import reconcile_snapshot
 from .handcuffs import handcuff_map, handcuff_targets
+from .marginal_value import rank_by_marginal_value
 from .picks import (
     compute_pick_ownership,
     format_your_picks,
@@ -24,6 +25,7 @@ from .picks import (
     resolve_user_roster_id,
     team_name_by_roster_id,
 )
+from .pickup_snapshots import reconcile_pickup_snapshot
 from .player_pools import (
     build_big_board,
     fc_value_by_sleeper_id,
@@ -127,6 +129,11 @@ def gather_state(
     user_roster = next(r for r in rosters if r["roster_id"] == user_roster_id)
 
     user_handcuff_targets = handcuff_targets(user_roster.get("players") or [], players, handcuffs)
+    # Taxi/IR players from the user's real roster - never eligible for a
+    # starting slot (Sleeper doesn't allow it). Hoisted here (not just
+    # computed inline in the return dict below) since the pickup-alert
+    # ranking below needs it too.
+    ineligible_ids = frozenset(user_roster.get("taxi") or []) | frozenset(user_roster.get("reserve") or [])
 
     ownership = compute_pick_ownership(draft, traded_picks, league["season"])
     picked_player_ids = {p["player_id"] for p in draft_picks if p.get("player_id")}
@@ -195,6 +202,48 @@ def gather_state(
     draft_eligible_rookie_ids = frozenset() if current_pick_no > total_draft_picks else frozenset(available.keys())
     available_free_agents = free_agent_pool(players, rosters, draft_eligible_rookie_ids)
 
+    # Team/depth-chart/status changes in the free-agent pool since the last
+    # refresh (see pickup_snapshots.py) - independent of force_full_refresh,
+    # same rationale as draft_snapshot above: accumulated cross-refresh
+    # state, not a freshness cache. Ranked via rank_by_marginal_value()
+    # directly on just the (typically small) changed set, uncapped
+    # (top_n=len(...)), rather than filtering through user_analysis's own
+    # top-25-capped free_agent_board below - a real positive-value change
+    # ranked outside that cap would otherwise be silently indistinguishable
+    # from "not worth it."
+    _, pickup_changes = reconcile_pickup_snapshot(league_id, league["season"], available_free_agents)
+    pickup_alerts = []
+    if pickup_changes:
+        changed_ids = [c["player_id"] for c in pickup_changes]
+        ranked = rank_by_marginal_value(
+            changed_ids,
+            user_roster.get("players") or [],
+            players,
+            fc_by_sleeper_id,
+            byes,
+            league,
+            top_n=len(changed_ids),
+            ineligible_ids=ineligible_ids,
+            reserve_filled=len(user_roster.get("reserve") or []),
+            taxi_eligible=False,
+            taxi_filled=len(user_roster.get("taxi") or []),
+        )
+        value_by_id = {r["player_id"]: r["marginal_value"] for r in ranked}
+        for change in pickup_changes:
+            value = value_by_id.get(change["player_id"])
+            if value is not None and value > 0:
+                info = players.get(change["player_id"], {})
+                pickup_alerts.append(
+                    {
+                        **change,
+                        "name": info.get("full_name"),
+                        "pos": info.get("position"),
+                        "team": info.get("team"),
+                        "marginal_value": value,
+                    }
+                )
+        pickup_alerts.sort(key=lambda a: a["marginal_value"], reverse=True)
+
     replacement_level = position_replacement_levels(rosters, players, fc_by_sleeper_id, league["roster_positions"])
     user_analysis = team_roster_analysis(
         user_roster, players, fc_by_sleeper_id, byes, league, handcuffs, replacement_level, available_free_agents
@@ -226,6 +275,7 @@ def gather_state(
         user_analysis["roster_weekly_gaps"],
         user_analysis["sellable_players"],
         user_analysis["free_agent_board"],
+        pickup_alerts,
         # Same field/fallback roster_tab.py's _render_bye_impact() already
         # uses for "already happened" vs. "still ahead" - not otherwise
         # threaded through gather_state() yet.
@@ -272,12 +322,10 @@ def gather_state(
         # user's own (see the Roster tab's team selector).
         "rosters_by_id": {r["roster_id"]: r for r in rosters},
         "user_roster_id": user_roster_id,
-        # Taxi/IR players from the user's real roster - never eligible for a
-        # starting slot (Sleeper doesn't allow it). Exposed at this level so
-        # a UI can call best_position_relevant_drop() on demand for a
-        # specific candidate, the same ineligible_ids multi_round_plan uses
-        # internally for its own per-round simulation.
-        "ineligible_ids": frozenset(user_roster.get("taxi") or []) | frozenset(user_roster.get("reserve") or []),
+        # Exposed at this level so a UI can call best_position_relevant_drop()
+        # on demand for a specific candidate, the same ineligible_ids
+        # multi_round_plan uses internally for its own per-round simulation.
+        "ineligible_ids": ineligible_ids,
         "ownership": ownership,
         "current_pick_no": current_pick_no,
         "picks_until_turn": picks_until_turn(ownership, user_roster_id, current_pick_no),

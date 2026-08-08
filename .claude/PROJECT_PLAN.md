@@ -49,9 +49,6 @@ active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `RT-9` — free-agent pickup monitor (`RT-20`'s
-  `dynasty_core/draft_snapshots.py` persistence layer is done and worth
-  reusing/extending rather than building a second one from scratch).
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
@@ -194,8 +191,9 @@ Deliberately out of v1, not forgotten:
   about accumulating rookies (this project's whole existing purpose);
   year 2 should shift toward smart trades, continuing to find promising
   talent opportunistically — not just rookies, but free agents with a
-  sudden uptick in opportunity/fortune (this is exactly RT-9's
-  in-season pickup monitoring, once that lands) — and dropping deadweight with limited
+  sudden uptick in opportunity/fortune (this is exactly what the in-season
+  pickup monitor now surfaces via the Summary tab's "Pickup alerts") — and
+  dropping deadweight with limited
   future payoff (already partly modeled by `roster_value_analysis`'s
   `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
   either). Would need an explicit "what phase of the rebuild are we in"
@@ -278,27 +276,6 @@ Deliberately out of v1, not forgotten:
   both functions; this is "verify the real rule and flip candidates that
   qualify to `taxi_eligible=True` on a per-candidate basis," not a
   rearchitecture.
-- [ ] **RT-9: In-season "something changed" pickup monitoring**
-  (deferred from the free-agent evaluator v1 above, 2026-08-02) —
-  `free_agent_board()` is a real-time snapshot, recomputed fresh every
-  refresh like every other feature here, not an alerting system. Actually
-  flagging when a free agent's situation changes materially (signs with a
-  new team, wins a starting job, a depth-chart move opens up volume)
-  needs some week-over-week delta signal this project has nowhere to
-  store — `CLAUDE.md`: "everything is pulled fresh... each run," no
-  persistence layer anywhere. A depth-chart delta would probably be
-  enough to start (no news/transactions feed needed on day one), but it's
-  a real architecture addition (state that survives between refreshes),
-  not a v1-scope change. Referenced by `RT-4`'s phase-aware rebuild-year
-  work, which assumed this would ship alongside the free-agent evaluator.
-  `RT-2` (the trade evaluator, reframed as an on-demand two-sided/multi-asset
-  check rather than a monitor) no longer depends on this.
-  Re-flagged 2026-08-06 ("we need a free agent pickup monitor") — same
-  scope, no new requirements, just renewed priority. `RT-20` (draft-plan
-  drop tracking, done) already built a persistence layer for a related
-  problem (`dynasty_core/draft_snapshots.py`) — worth checking whether it
-  can be reused/extended here rather than building a second one from
-  scratch.
 - [ ] **RT-21: Sleeper's transaction log as a secondary data source —
   revisit before next year's draft** (assistant-flagged 2026-08-07, filed
   while scoping `RT-20`, user-flagged as worth keeping for later rather

@@ -20,11 +20,11 @@ simply never read again (next season gets a new draft_id from Sleeper).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from .constants import CACHE_DIR
 from .picks import DraftPickSlot
+from .snapshot_io import load_or_seed, write_if_changed
 
 AMBIGUOUS = "AMBIGUOUS"
 
@@ -90,13 +90,7 @@ def reconcile_snapshot(
 ) -> dict[str, Any]:
     """Load, reconcile, persist-if-changed, return the updated snapshot."""
     path = _snapshot_path(draft_id)
-    existing = (
-        json.loads(path.read_text(encoding="utf-8"))
-        if path.exists()
-        else {"confirmed_through_pick": 0, "confirmed_roster": None, "confirmed_drops": {}}
-    )
+    existing = load_or_seed(path, {"confirmed_through_pick": 0, "confirmed_roster": None, "confirmed_drops": {}})
     updated = _reconcile(existing, own_picks, current_pick_no, current_roster_ids, real_picks_by_overall)
-    if updated != existing:
-        CACHE_DIR.mkdir(exist_ok=True)
-        path.write_text(json.dumps(updated), encoding="utf-8")
+    write_if_changed(path, existing, updated)
     return updated
