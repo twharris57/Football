@@ -51,6 +51,8 @@ def _show_trade_side(label: str, result: dict) -> None:
             f"Over roster capacity ({result['roster_size_after']}/{result['capacity']}) — "
             f"recommended cut{'s' if len(drops) != 1 else ''}: {drop_list or 'none available'}."
         )
+    for callout in result["callouts"]:
+        st.caption(f"💡 {callout}")
 
 
 def _render_manual_evaluator(
@@ -79,6 +81,12 @@ def _render_manual_evaluator(
             "lowest-value bench player(s) forced out, same heuristic the Draft Plan/Free "
             "agents board use elsewhere. Never recommends cutting a player from the same "
             "trade's incoming side.\n"
+            "- **💡 callouts** — non-obvious value the two numbers above can miss: a weekly "
+            "bye-week gap this trade opens or closes, an incoming player who handcuffs one of "
+            "this side's own current RBs, an outgoing player who wasn't even starting here (a "
+            "low real cost to give up) or an incoming one who'd start immediately, and where an "
+            "involved pick ranks within its own class. All composed from the same signals used "
+            "elsewhere in the app — no separate scoring model.\n"
             "- Shown for both sides — is this good for you, and is it something the partner "
             "would actually want.\n"
             "- 3-way trades aren't supported. Taxi-squad eligibility isn't modeled for "
@@ -141,6 +149,10 @@ def _render_manual_evaluator(
         state["league"],
         outgoing_pick_value=outgoing_pick_value,
         incoming_pick_value=incoming_pick_value,
+        handcuffs=state["handcuffs"],
+        outgoing_pick_names=outgoing_picks,
+        incoming_pick_names=incoming_picks,
+        pick_value_table=trade_pick_values,
     )
     partner_result = dynasty_core.evaluate_trade(
         partner_trade_roster,
@@ -152,6 +164,10 @@ def _render_manual_evaluator(
         state["league"],
         outgoing_pick_value=incoming_pick_value,
         incoming_pick_value=outgoing_pick_value,
+        handcuffs=state["handcuffs"],
+        outgoing_pick_names=incoming_picks,
+        incoming_pick_names=outgoing_picks,
+        pick_value_table=trade_pick_values,
     )
 
     your_side_col, partner_side_col = st.columns(2)
@@ -187,6 +203,8 @@ def _render_trade_optimizer(
             "real plausibility bar, not just 'cheap for you'); combos that also touch a "
             "flagged need on the partner's roster today are preferred among otherwise-similar "
             "options. Capped to your top 12 highest-value sellable assets so this stays fast.\n"
+            "- **💡 callouts** — same non-obvious-value signals as the evaluator above (bye-gap, "
+            "handcuffs, buried-bench/instant-starter, pick-in-class ranking), shown per side.\n"
             "- If nothing clears the partner's bar, this says so directly instead of forcing a "
             "marginal offer."
         )
@@ -229,6 +247,7 @@ def _render_trade_optimizer(
         state["league"],
         state["replacement_level"],
         trade_pick_values,
+        handcuffs=state["handcuffs"],
         target_player_id=target_player_id,
         target_pick_name=target_pick_name,
     )

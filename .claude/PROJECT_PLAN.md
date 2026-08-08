@@ -37,9 +37,6 @@ active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `RT-18` — trade evaluator/optimizer callouts for non-obvious value
-  (bye-gap closing, pick value in context, handcuffs, buried-bench-to-
-  starter swaps).
 - [ ] `RT-19` — a summary/digest tab surfacing what needs attention
   instead of reviewing every tab.
 - [ ] `RT-9` — free-agent pickup monitor (`RT-20`'s
@@ -249,65 +246,23 @@ where possible, instead of always showing the live-guess heuristic; see
   fill already lets real market value decide who wins the slot — this
   function is the one place the "equally eligible" framing leaked into
   code without a value-simulation backstop.
-- [ ] **RT-18: Trade evaluator/optimizer should call out non-obvious value,
-  not just lineup/asset deltas** (user-flagged 2026-08-06) —
-  `evaluate_trade()`'s two numbers (season-average lineup value, market
-  asset value) are the right foundation but miss real trade value that
-  doesn't show up in either: closing a bye-week gap, a future pick's value
-  in context, or a handcuff to a player already on the roster. All three
-  are already computable from existing primitives, not a new data pull or
-  model:
-  - **Bye-week gap closing/opening** — `gap_delta(before_roster,
-    after_roster, players, byes, league)` already exists and is used
-    exactly this way elsewhere (`sellable_players`'s "would dropping this
-    open a gap" check, the Draft Plan's `alternate_gap_note`/
-    `weekly_gap_alerts`). Running it on the trade's before/after rosters
-    would directly answer "does this trade fix or create a weekly starter
-    gap," a callout `evaluate_trade()` doesn't currently surface at all.
-  - **Future pick value in context** — `pick_trade_values()` already
-    computes and ranks every pick leaguewide; a trade involving a pick
-    could note where it falls in that ranking (e.g., "currently the #2
-    remaining pick this class") instead of a bare number, using data the
-    trade tab already loads (`state["pick_trade_values"]`).
-  - **Handcuff to a current roster player** — `handcuff_map()`/
-    `roster_handcuff_status()` already back the Roster tab's handcuff
-    section and the big board's "Handcuff To" column; checking whether an
-    incoming player is a handcuff to one of the *receiving* roster's own
-    current RBs is the same lookup, just pointed at the trade's incoming
-    side instead of the whole roster.
-  - **Buried on one bench, would start on the other** (user-flagged
-    2026-08-07, expanding this item) — a player who can't crack the
-    sending team's lineup but would immediately start for the receiving
-    team is a real, mutually-legible reason a trade makes sense even when
-    raw asset value is close to even: the sender gives up a player they
-    weren't deploying anyway (low real cost to them), and the receiver
-    gets an immediate lineup upgrade. This is partially already implicit
-    in each side's own `lineup_delta` — a bench-to-starter jump shows up
-    as a bigger value swing for the receiver than the raw `adj_value` gap
-    alone would suggest — but it deserves to be its own named callout
-    rather than staying buried in an aggregate number, especially in a
-    multi-asset trade where it could be one of several offsetting moves.
-    Computable from primitives that already exist: whether a player is
-    currently a bench, not starting, player for the sender is exactly
-    what `lineup_breakdown()`'s starters/bench split already answers for
-    one roster; whether they'd start for the receiver is the same check
-    against that side's post-trade roster (`evaluate_trade()` already
-    computes a full `assign_starters()` pass for `roster_after` — the
-    piece that's missing is exposing *which* players landed in the
-    starting lineup, not just the aggregate value, so this would need a
-    small addition there, not a new simulation). The *ideal* shape this
-    points at — both sides trading away a player who's stuck behind
-    someone on their own roster but would start for the other side, a
-    genuine mutual unlock rather than one side just paying up — is worth
-    keeping in mind as a north star for `find_trade_offers()`'s ranking
-    eventually, not just something the manual evaluator narrates after
-    the fact, once the basic callout exists and this is picked up.
-  Composing these into `evaluate_trade()`'s/`find_trade_offers()`'s output
-  keeps this consistent with the "one valuation strategy" rule — no new
-  signal, just surfacing existing ones at the right moment. Worth deciding
-  during design whether these are free-text callouts (similar to
-  `multi_round_plan`'s `reason` field) or a structured per-signal list the
-  UI renders as tags/badges.
+**RT-18 (trade evaluator/optimizer non-obvious-value callouts) is done** —
+see `docs/rookie-draft-big-board.md`'s "Trade evaluator"/"Trade-target
+optimizer" sections. `evaluate_trade()` now returns a `callouts` list
+(free-text, matching `multi_round_plan`'s `reason` field precedent) built
+from four composed primitives: `gap_delta()` in both directions for a bye
+gap opened/closed, the new `handcuff_targets()` (extracted from
+`draft_plan.py`'s `hypothetical_needs_and_handcuffs` into
+`dynasty_core/handcuffs.py` so both callers share it — no duplicated
+logic) for an incoming handcuff to a kept RB, `assign_starters()` +
+`ineligible_ids` filtering (`recommend_drop()`'s pattern) for a buried
+bench player given up or an instant starter received, and
+`pick_trade_values()`'s output ranked within each pick's own season for
+pick-in-context. All four new parameters (`handcuffs`/
+`outgoing_pick_names`/`incoming_pick_names`/`pick_value_table`) are
+optional, so every pre-existing call site/test keeps working unchanged.
+`find_trade_offers()` threads its own `handcuffs`/`pick_value_table`
+through to every `evaluate_trade()` call it makes.
 - [ ] **RT-19: A "summary" tab surfacing what actually needs attention,
   instead of reviewing every tab** (user-flagged 2026-08-06) — five tabs,
   each thorough for its own question, but nothing today answers "what do I
