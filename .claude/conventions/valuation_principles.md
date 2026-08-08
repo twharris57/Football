@@ -420,3 +420,48 @@ baseline exists regardless of subset membership (alerting can still stay
 scoped to the narrower, actionable subset), or weaken the claim to what
 the data actually supports ("newly available" rather than "just signed")
 when no real prior baseline exists.
+
+## A "worth surfacing" filter applied at an early ranking stage must be re-applied at whichever stage actually presents the recommendation
+
+`leaguewide_trade_candidates()` (Stage 1 of Suggested Trades, RT-15,
+2026-08-08 review) correctly filters its leaguewide player pool to
+`marginal_value > 0` before ranking — matching `free_agent_board`'s and
+`pickup_alerts`' existing "worth surfacing at all" convention (see this
+file's own reuse pattern). But `suggested_trades()` (Stage 2 — the
+function that actually runs the real offer search and hands the UI what
+gets shown as a "Suggested Trade") drops that standard: it only requires
+`find_trade_offers()` to return a non-empty `offers` list — some combo
+cleared the *partner's* plausibility bar — then sorts survivors by
+`your_side["lineup_delta_after_drops"]` and shows the top 3 with no floor
+at zero. A candidate whose only viable offer is net-neutral, or actually
+negative, for the user's own lineup can still be ranked and presented as
+a "Suggested Trade" — proven by the branch's own new test, which
+constructs exactly this (`target_a`'s only offer has
+`lineup_delta_after_drops == 0.0`) and asserts it survives into the
+result list rather than being dropped.
+
+This is a materially bigger problem for Stage 2 than it would have been
+for the manual, single-target trade-target optimizer this feature
+replaced: there, a human always saw one target's own `target_read`
+("worth pursuing," computed for free before any search ran) and decided
+for themselves whether to even run the offer search. Suggested Trades
+removes that human checkpoint by design — it auto-selects candidates and
+auto-presents ranked results as the feature's whole value proposition —
+which is exactly why the filter Stage 1 already enforces needs to survive
+into Stage 2's own output, not just gate which candidates get the
+expensive search.
+
+**The rule**: when a multi-stage ranking pipeline has an earlier stage
+that filters to "worth surfacing" (a positivity check, a floor, any
+"don't show this at all" gate), don't assume that filter's effect
+automatically carries through to a later stage that re-ranks or
+re-derives its own output metric — check explicitly. This is easiest to
+miss exactly when the later stage's ranking key differs from the earlier
+stage's filtered field (here: Stage 1 filters `marginal_value`, Stage 2
+ranks by the differently-computed `lineup_delta_after_drops`), since nothing
+about reusing the earlier stage's *candidates* guarantees the later
+stage's *own number* stays positive too. The risk is highest, and the bar
+for catching it should be highest, precisely where a pipeline stage
+removes a human review step earlier stages relied on — automating "pick
+and present" is what turns a merely-imprecise signal into a wrong action
+recommendation a user might actually act on.

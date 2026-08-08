@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-22`, `VA-5`, `CQ-5`, `DL-8`.
+below): `NB-2`, `RT-24`, `VA-5`, `CQ-5`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -64,39 +64,33 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Findings from reviewing `feature/free-agent-pickup-monitor` (PR #32,
-2026-08-08):
+**`feature/rt-15-suggested-trades` (PR #34), reviewed 2026-08-08:**
 
-- **`RT-22` — a pickup alert's "just signed with {team}" label was asserted
-  for every player's first appearance in the tracked snapshot, not just
-  real NFL signings — fixed.** `pickup_snapshots._diff()` treated any
-  player absent from `previous_players` as a `kind: "team", old: None`
-  event, rendered unconditionally as `"{name} ({pos}) just signed with
-  {new}"`. The snapshot was only ever given `free_agent_pool()`'s output,
-  which excludes any player currently on a fantasy roster — so the
-  dominant way a veteran got a `prior is None` entry was a fantasy manager
-  dropping them mid-season while they stayed on the same real NFL team the
-  whole time, misreported as a fresh signing. Fixed by tracking the
-  broader population instead: new `fantasy_relevant_teamed_players()`
-  (`player_pools.py`, factored out of `free_agent_pool`'s own filter) is
-  every fantasy-relevant player with a real NFL team *regardless* of
-  fantasy-roster status; `state.py` now passes that to
-  `reconcile_pickup_snapshot()` instead of the free-agent-only pool, so a
-  rostered player already has real team/depth-chart/status history on file
-  the moment they're dropped, and a `prior is None` entry now only means a
-  genuine first-time appearance in Sleeper's teamed-player data (a true
-  signing or rookie debut). Alerts still only fire for players in the
-  actual free-agent pool — `pickup_changes` is filtered down to
-  `available_free_agents` in `state.py` before ranking, since
-  `rank_by_marginal_value` assumes its candidates are addable, not still on
-  someone else's roster. New tests: `TestFantasyRelevantTeamedPlayers` in
-  `test_player_pools.py` covers the new function directly (includes
-  rostered players, unlike `free_agent_pool`), and
-  `test_a_player_only_newly_available_but_already_tracked_is_not_a_false_signing`
-  in `test_pickup_snapshots.py` reproduces the exact confounding case (a
-  dropped-but-not-re-signed veteran) and confirms it no longer fires.
-  Durable rule filed in `valuation_principles.md`'s "'First time seen in
-  this narrower pool' is not 'first time this ever happened'."
+- [x] `suggested_trades()` (`dynasty_core/trade.py`) never checked whether
+  the trade it was about to recommend was actually good for the user
+  before showing it. Stage 1 (`leaguewide_trade_candidates()`) correctly
+  filters to `marginal_value > 0` before a candidate is even considered —
+  matching `free_agent_board`/`pickup_alerts`' "worth surfacing at all"
+  convention — but Stage 2 didn't carry that standard forward: it only
+  required `find_trade_offers()`'s `offers` list to be non-empty (some
+  combo cleared the *partner's* plausibility bar), then sorted survivors
+  by `your_side["lineup_delta_after_drops"]` and showed the top 3 with no
+  floor at zero. A candidate whose only viable offer was net-neutral, or
+  actually negative, for the user's own lineup could still be ranked and
+  shown as a "Suggested Trade" — the branch's own new test proved this
+  directly (`target_a`'s `lineup_delta_after_drops == 0.0` offer survived
+  into the result list, ranked #2, instead of being dropped). A new risk
+  specific to this feature's automation: the manual trade-target optimizer
+  it replaces always showed a human the target's own `target_read` ("worth
+  pursuing," computed for free) before the human decided to run a search
+  at all; Suggested Trades removes that checkpoint by auto-selecting
+  candidates and auto-presenting the ranked results as the feature's whole
+  value proposition. **Fixed 2026-08-08** (`daf24f0`): `suggested_trades()`
+  now filters `results` to `your_side["lineup_delta_after_drops"] > 0`
+  before sorting/capping to `top_n`, mirroring Stage 1's own filter; the
+  test that encoded the old behavior now asserts the `0.0`-delta candidate
+  is dropped instead. Captured as a durable rule in
+  `valuation_principles.md`'s new "worth surfacing" filter section.
 
 ## Now — blocking
 
@@ -174,54 +168,32 @@ Deliberately out of v1, not forgotten:
   caveat that this tiebreaker assumes every partner is need-reading the
   same way a rebuilding team would, or reconsidering what "need" should
   mean when read on someone else's roster.
-- [ ] **RT-15: Scan a partner's whole roster for viable trade opportunities,
-  not one target at a time** (user-flagged 2026-08-02, filed while
-  reviewing `RT-12`) — the trade-target optimizer only ever evaluates one
-  hand-picked target; there's no way to see which of a partner's players
-  are worth pursuing at all without stepping through each one via the
-  dropdown. User's explicit spec: the full viable-offer scan (run
-  `find_trade_offers()` for every candidate on the partner's roster, not
-  just the cheap marginal-value read), triggered by a button rather than
-  reactively on every selection change (this is meaningfully more
-  expensive than anything else in the tab - up to `TRADE_OFFER_POOL_CAP`-bounded
-  combos × 2 `evaluate_trade()` calls, per candidate, times every player on
-  the roster), surfaced as a summary table of the top 3-5 best
-  opportunities. New section at the bottom of the Trade Evaluator tab,
-  below the trade-target optimizer. Needs a real design pass before
-  building: how to summarize an opportunity in one table row (target,
-  best combo, your lineup/asset delta, need-match flag - probably a
-  flattened version of what `_show_trade_side`/the offer expanders already
-  show per-target), whether "best" ranks across targets the same way
-  `find_trade_offers()` already ranks combos within one target, and
-  whether the per-candidate cost needs a cheaper first-pass filter (e.g.
-  skip the full combinatorial search for a candidate whose `target_read`
-  marginal value is clearly not worth pursuing at all) to keep a
-  whole-roster scan responsive - not decided yet, scope during
-  implementation.
-  **Refined 2026-08-08** (user-flagged): expand scope from one
-  hand-picked partner's roster to leaguewide - show the top 3 suggested
-  trades by default with no target pre-selected, scanning across every
-  potential partner, then an optional filter *within that same section*
-  to narrow to one target player if the user wants that. Also rename the
-  section (currently "Trade-target optimizer") to something clearer, e.g.
-  "Suggested Trades," since "optimizer" undersells what a target-free,
-  leaguewide-by-default view actually does. A real, deliberate side
-  effect worth keeping: this decouples the section's own partner scope
-  from `render_trade_tab()`'s single shared `partner_team_id` selector,
-  currently used by both the manual evaluator above it and this section -
-  "who do I want to manually evaluate one specific trade with" and "what
-  are my best opportunities across the whole league" are intuitively
-  unrelated questions, and coupling them through one selector doesn't
-  reflect that. Real cost implication to scope carefully during design:
-  RT-15's own per-partner whole-roster scan was already flagged as
-  expensive enough to need a button trigger rather than running
-  reactively; a leaguewide version multiplies that by roughly the number
-  of teams in the league (~11-12x here), so this needs its own explicit
-  design pass on how to keep a "scan everyone" action responsive (a
-  cheaper first-pass filter across partners before running the full
-  per-candidate combinatorial search, not just within one partner's
-  roster as RT-15 already considered) - not a small extension of RT-15's
-  existing scope, a real architecture question of its own.
+- [ ] **RT-23: Suggested Trades - optional position-scope filter** (user-flagged
+  2026-08-08, noted future option, not v1 scope, while building `RT-15`) —
+  besides the single-target filter, also let the user scope leaguewide
+  suggestions by position (e.g. "show me RB opportunities only") - a
+  second, independent optional filter within the same section, not a
+  replacement for the target filter. Not needed for the first cut; revisit
+  now that leaguewide scanning itself is built and the section's filter UI
+  exists to extend (see `docs/rookie-draft-big-board.md`'s "Suggested
+  Trades" section).
+- [ ] **RT-24: Suggested Trades' cached scan results go stale across a
+  refresh, with no invalidation** (assistant valuation review, 2026-08-08)
+  — `trade_tab.py`'s "Scan the league for offers" button stores its result
+  in `st.session_state["suggested_trades_results"]` specifically so it
+  survives an unrelated rerun without re-scanning (per its own docstring:
+  "rather than needing a re-click on every unrelated page interaction").
+  But nothing clears or recomputes it when the user clicks the page's own
+  "Refresh" and pulls a fresh `gather_state()` snapshot — every other
+  field in `state` is rebuilt from scratch on refresh, but this one result
+  silently keeps showing whichever combo/target a *previous* refresh
+  computed, even after a real roster change elsewhere (another manager's
+  trade, a waiver claim) could have made it stale or outright impossible.
+  Low severity for a single-user personal tool — a stale suggestion just
+  fails obviously the moment it's acted on for real in Sleeper — but worth
+  clearing `suggested_trades_results` from session state whenever a fresh
+  refresh runs, so a scan can never outlive the snapshot it was computed
+  against.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all
@@ -581,3 +553,21 @@ assumption changes.
   Sleeper), so it's harmless to leave behind, just permanent clutter in
   `.cache/`. No retention/cleanup logic was built in `RT-20`'s first pass.
   Revisit only if `.cache/` growth ever actually matters.
+- [ ] **DL-9: Non-fantasy-position filtering happens per-consumer, not once
+  at ingest** (user-flagged 2026-08-08, verified during the RT-15 planning
+  pass) — `sleeper_api.get_players()` caches Sleeper's full ~14MB/~10k-player
+  dataset as-is (every NFL position, including defense/kicker/etc., which
+  this league's `roster_positions` has no slot for at all). Audited every
+  direct consumer of the raw `players` dict for a leak (`player_pools.py`'s
+  `rookie_pool`/`free_agent_pool`/`roster_fantasy_players`/
+  `fantasy_relevant_teamed_players`, `lineup.py`'s `player_value_rows`,
+  `roster_needs.py`'s `position_replacement_levels`, `trade.py`'s
+  candidate-building) — every one of them already checks
+  `position in FANTASY_POSITIONS` before a player reaches any real
+  computation, so no live bug was found. But the guarantee is enforced by
+  convention at each call site, not structurally at the source — a new
+  consumer that iterates the raw `players` dict and forgets the check
+  would silently let an irrelevant position through. Worth consolidating
+  to a single ingest-time (or single shared-helper) filter if a new
+  consumer of raw `players` is ever added; not urgent since nothing is
+  broken today.

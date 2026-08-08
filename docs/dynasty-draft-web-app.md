@@ -18,12 +18,11 @@ Five tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
    read, for any team in the league via a selector (defaults to the user's
    own).
 5. **Trade Evaluator** — an arbitrary multi-asset trade (players and/or
-   picks) between two selected teams, evaluated for both sides, plus a
-   trade-target optimizer (given one specific asset on the partner's
-   roster, is it worth pursuing and what should be offered for it). Its
-   own tab rather than another Roster section — it's inherently two-team,
-   not the "pick a team, see everything about them" shape every Roster
-   section shares.
+   picks) between two selected teams, evaluated for both sides, plus
+   Suggested Trades: leaguewide by default (no partner/target pre-selected),
+   or search one specific player directly. Its own tab rather than another
+   Roster section — it's inherently two-team, not the "pick a team, see
+   everything about them" shape every Roster section shares.
 
 There is exactly one ranking method for "what should I pick next," used
 everywhere in the app — the round-by-round Draft Plan. See
@@ -109,12 +108,22 @@ value" metric shows `lineup_delta_after_drops` (post-forced-cuts) rather
 than the raw `lineup_delta` when cuts are needed, raw number one hover
 away via `help=` — same pattern as the Team timeline metric's raw z-score.
 
-A second section, "Trade-target optimizer," sits below and reuses the same
-team selection. Pick Player vs. Pick, select the one target asset,
-`dynasty_core.find_trade_offers()` runs on selection and renders the
+A second section, "Suggested Trades," sits below and is deliberately
+*not* wired to the manual evaluator's team selectors — it always scans for
+`state["user_roster_id"]`'s real roster (`RT-15`). A `st.selectbox` across
+every player on every other roster is the optional single-target picker:
+choosing one runs `dynasty_core.find_trade_offers()` immediately (same
 "acquire for free" read plus each suggested offer's both sides in its own
-expander (best offer expanded by default) — an `st.info` explains directly
-when nothing clears the partner's bar.
+expander as before, an `st.info` explaining directly when nothing clears
+the partner's bar). Leaving it unset shows the default leaguewide view
+instead: `state["suggested_trade_candidates"]` (Stage 1, already computed
+every refresh inside `gather_state()`) as a plain candidate count, plus a
+"Scan the league for offers" button that runs `dynasty_core.suggested_trades()`
+(Stage 2, the expensive part — kept behind a button rather than reactive)
+and renders up to 3 results the same expander style, each one naming its
+owning team since there's no longer a single implied partner. Results
+persist across reruns via `st.session_state["suggested_trades_results"]`
+rather than needing a re-click on every unrelated page interaction.
 
 ### Player projection lookup
 

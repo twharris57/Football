@@ -12,7 +12,7 @@ from .byes import gap_delta
 from .constants import FANTASY_POSITIONS, FLEX_ELIGIBLE_POSITIONS
 from .handcuffs import handcuff_targets as handcuff_targets_for
 from .lineup import assign_starters, player_value_rows, roster_total_capacity
-from .marginal_value import recommend_drop, season_average_starter_value
+from .marginal_value import rank_by_marginal_value, recommend_drop, season_average_starter_value
 from .player_pools import roster_fantasy_players
 from .roster_needs import (
     _position_starter_demand,
@@ -33,6 +33,14 @@ TRADE_OFFER_PREFILTER_LOW = 0.5
 TRADE_OFFER_PREFILTER_HIGH = 2.0
 TRADE_OFFER_PARTNER_TOLERANCE_PCT = 0.15
 TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE = 25.0
+
+# Leaguewide Suggested Trades (RT-15) - how many of the cheap, leaguewide
+# marginal-value-ranked candidates get the expensive per-candidate
+# find_trade_offers() search. Bounds Stage 2's cost to a constant
+# regardless of league size (see leaguewide_trade_candidates()/
+# suggested_trades() below), the same order of magnitude as one partner's
+# whole-roster scan already was before this feature existed.
+SUGGESTED_TRADE_SCAN_TOP_K = 15
 
 
 def sellable_players(
@@ -535,3 +543,164 @@ def find_trade_offers(
         "combos_considered": combos_considered,
         "combos_evaluated": len(prefiltered),
     }
+
+
+def _max_affordable_target_value(sellable: pd.DataFrame, pick_value_table: pd.DataFrame, roster_id: int) -> float:
+    """Rough ceiling on a target's market value this roster's own sellable pool could plausibly match.
+
+    Mirrors `find_trade_offers()`'s own `TRADE_OFFER_PREFILTER_HIGH` band (a
+    combo priced beyond that multiple of the target's value could never
+    land in-band) - reuses that existing tolerance rule rather than adding
+    a second one. Used by `leaguewide_trade_candidates()` to keep a
+    leaguewide scan's limited search budget off targets no realistic offer
+    could ever reach, not to replace `find_trade_offers()`'s own combo
+    search - this is a cheap top-line estimate (top
+    `TRADE_OFFER_MAX_COMBO_SIZE` assets by value, no combinatorics), not a
+    guarantee any specific combo actually clears the bar. `sellable` can be
+    a columnless empty DataFrame (`sellable_players()`'s empty-pool shape,
+    same trap noted in `summary.py`'s `_sellable_lines`) when there's
+    nothing sellable at all - guarded explicitly rather than indexing
+    `"adj_value"` directly, which would raise `KeyError` on that shape.
+    """
+    values = sellable["adj_value"].dropna().tolist() if not sellable.empty else []
+    values += pick_value_table.loc[pick_value_table["owner_roster_id"] == roster_id, "value"].dropna().tolist()
+    top_combo = sorted(values, reverse=True)[:TRADE_OFFER_MAX_COMBO_SIZE]
+    return TRADE_OFFER_PREFILTER_HIGH * sum(top_combo)
+
+
+def leaguewide_trade_candidates(
+    rosters: list[dict],
+    user_roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    sellable: pd.DataFrame,
+    pick_value_table: pd.DataFrame,
+    top_n: int = SUGGESTED_TRADE_SCAN_TOP_K,
+) -> list[dict]:
+    """Cheap, leaguewide "worth pursuing" pre-rank - Stage 1 of Suggested Trades (RT-15).
+
+    Every fantasy-relevant player on every *other* roster is a candidate.
+    Reuses `rank_by_marginal_value()` exactly like `free_agent_board()`
+    does - not a second valuation model (see
+    `.claude/conventions/valuation_principles.md`) - just a different
+    candidate pool source (other rosters instead of the free-agent pool).
+
+    Pre-filtered by `_max_affordable_target_value()` before ranking:
+    without this, the top marginal-value candidates leaguewide skew toward
+    the biggest names at your weak positions - exactly the players no
+    realistic offer from your own sellable depth could match. Left
+    unfiltered, `suggested_trades()`'s downstream expensive search (capped
+    to this function's `top_n`) would waste its whole budget on
+    unreachable stars instead of genuinely gettable value, since a
+    marginal-value read alone has no notion of affordability.
+
+    Filtered to `marginal_value > 0` (matches `free_agent_board`/
+    `pickup_alerts`' existing "worth surfacing at all" convention). Returns
+    up to `top_n` rows (`player_id`, `marginal_value`, `drop`, `roster_id`)
+    sorted best first - `roster_id` (the one field `free_agent_board`'s row
+    shape doesn't need) is which partner owns the candidate, for
+    `suggested_trades()` to search against.
+    """
+    ineligible_ids = frozenset(user_roster.get("taxi") or []) | frozenset(user_roster.get("reserve") or [])
+    reserve_filled = len(user_roster.get("reserve") or [])
+    taxi_filled = len(user_roster.get("taxi") or [])
+
+    ceiling = _max_affordable_target_value(sellable, pick_value_table, user_roster["roster_id"])
+
+    owner_by_player_id: dict[str, int] = {}
+    for roster in rosters:
+        if roster["roster_id"] == user_roster["roster_id"]:
+            continue
+        for player_id, _info in roster_fantasy_players(roster, players):
+            owner_by_player_id[player_id] = roster["roster_id"]
+
+    def _affordable(player_id: str) -> bool:
+        entry = fc_by_sleeper_id.get(player_id)
+        value = entry.get("adj_value") if entry else None
+        return pd.isna(value) or value <= ceiling
+
+    candidate_ids = [pid for pid in owner_by_player_id if _affordable(pid)]
+
+    ranked = rank_by_marginal_value(
+        candidate_ids,
+        list(user_roster.get("players") or []),
+        players,
+        fc_by_sleeper_id,
+        byes,
+        league,
+        top_n=top_n,
+        ineligible_ids=ineligible_ids,
+        reserve_filled=reserve_filled,
+        taxi_eligible=False,
+        taxi_filled=taxi_filled,
+    )
+
+    return [
+        {**candidate, "roster_id": owner_by_player_id[candidate["player_id"]]}
+        for candidate in ranked
+        if candidate["marginal_value"] > 0
+    ]
+
+
+def suggested_trades(
+    your_roster: dict,
+    rosters_by_id: dict[int, dict],
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    replacement_level: dict[str, float],
+    pick_value_table: pd.DataFrame,
+    candidates: list[dict],
+    handcuffs: dict[str, str] | None = None,
+    top_n: int = 3,
+) -> list[dict]:
+    """Stage 2 of Suggested Trades (RT-15): the real offer search, only for Stage 1's short list.
+
+    `candidates` is typically `leaguewide_trade_candidates()`'s output -
+    already capped to a small K, which is what keeps this affordable at
+    leaguewide scale (see that function's and this module's own docstrings
+    for the cost reasoning). For each candidate, resolves which roster owns
+    them and runs the **existing, unmodified** `find_trade_offers()` -
+    zero new valuation logic, this function only orchestrates and ranks.
+
+    Candidates with no viable offer (`find_trade_offers()`'s `offers` comes
+    back empty - nothing clears the partner's plausibility bar) are dropped
+    entirely rather than shown empty. A viable offer still isn't necessarily
+    a good one for the user - `find_trade_offers()`'s only hard gate is the
+    *partner's* `asset_value_delta` staying in tolerance, nothing about the
+    user's own lineup impact - so survivors are further filtered to a
+    positive best-offer `your_side["lineup_delta_after_drops"]` (matches
+    `leaguewide_trade_candidates()`'s own `marginal_value > 0` "worth
+    surfacing at all" filter one stage earlier; see
+    `.claude/conventions/valuation_principles.md`'s "worth surfacing" filter
+    rule) before being ranked by that same number - the same number
+    `_show_trade_side()` already surfaces per offer today, not a new
+    metric - and capped to `top_n`. Each returned entry is a
+    `find_trade_offers()` result dict with `roster_id`/`target_player_id`
+    added, so a caller can label which partner owns the suggestion.
+    """
+    results = []
+    for candidate in candidates:
+        partner_roster = rosters_by_id[candidate["roster_id"]]
+        offer_result = find_trade_offers(
+            your_roster,
+            partner_roster,
+            players,
+            fc_by_sleeper_id,
+            byes,
+            league,
+            replacement_level,
+            pick_value_table,
+            handcuffs=handcuffs,
+            target_player_id=candidate["player_id"],
+        )
+        if offer_result["offers"] and offer_result["offers"][0]["your_side"]["lineup_delta_after_drops"] > 0:
+            results.append(
+                {**offer_result, "roster_id": candidate["roster_id"], "target_player_id": candidate["player_id"]}
+            )
+
+    results.sort(key=lambda r: r["offers"][0]["your_side"]["lineup_delta_after_drops"], reverse=True)
+    return results[:top_n]

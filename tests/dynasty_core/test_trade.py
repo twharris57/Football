@@ -865,3 +865,251 @@ class TestFindTradeOffers:
         )
 
         assert any("handcuffs your own Starter RB" in c for c in result["target_read"]["callouts"])
+
+
+def _sellable_of(*values: float) -> pd.DataFrame:
+    """A minimal sellable_players()-shaped DataFrame for affordability-ceiling tests -
+    only adj_value is read by _max_affordable_target_value/leaguewide_trade_candidates."""
+    return pd.DataFrame({"adj_value": list(values)})
+
+
+class TestMaxAffordableTargetValue:
+    """_max_affordable_target_value should estimate a rough ceiling from this roster's own
+    top TRADE_OFFER_MAX_COMBO_SIZE assets by value, scaled by TRADE_OFFER_PREFILTER_HIGH -
+    the same tolerance find_trade_offers() itself already enforces, not a new one."""
+
+    def test_ceiling_is_top_combo_size_assets_scaled_by_prefilter_high(self):
+        sellable = _sellable_of(100, 80, 60, 10)  # only the top 3 count
+
+        ceiling = dc._max_affordable_target_value(sellable, EMPTY_PICKS, roster_id=1)
+
+        assert ceiling == pytest.approx((100 + 80 + 60) * dc.TRADE_OFFER_PREFILTER_HIGH)
+
+    def test_picks_are_combined_with_players_for_the_top_combo(self):
+        sellable = _sellable_of(100)
+        picks = pd.DataFrame(
+            [
+                {"pick": "p1", "owner": "You", "owner_roster_id": 1, "value": 90},
+                {"pick": "p2", "owner": "You", "owner_roster_id": 1, "value": 5},
+            ]
+        )
+
+        ceiling = dc._max_affordable_target_value(sellable, picks, roster_id=1)
+
+        # Top 3 of {100, 90, 5}: 100 + 90 + 5 = 195.
+        assert ceiling == pytest.approx(195 * dc.TRADE_OFFER_PREFILTER_HIGH)
+
+    def test_picks_owned_by_a_different_roster_are_excluded(self):
+        sellable = _sellable_of(100)
+        picks = pd.DataFrame([{"pick": "p1", "owner": "Them", "owner_roster_id": 2, "value": 900}])
+
+        ceiling = dc._max_affordable_target_value(sellable, picks, roster_id=1)
+
+        assert ceiling == pytest.approx(100 * dc.TRADE_OFFER_PREFILTER_HIGH)
+
+    def test_columnless_empty_sellable_pool_does_not_crash(self):
+        # sellable_players() returns a columnless pd.DataFrame([]) (not zero
+        # rows of the real columns) when nothing is sellable at all -
+        # indexing "adj_value" directly would raise KeyError on that shape
+        # (same trap noted in summary.py's _sellable_lines).
+        ceiling = dc._max_affordable_target_value(pd.DataFrame([]), EMPTY_PICKS, roster_id=1)
+
+        assert ceiling == 0.0
+
+
+class TestLeaguewideTradeCandidates:
+    """leaguewide_trade_candidates should rank every OTHER roster's fantasy-relevant
+    players by marginal value to the user's own roster (reusing rank_by_marginal_value,
+    not a new valuation model), pre-filtered to what the user's own sellable pool could
+    plausibly afford."""
+
+    LEAGUE = {"roster_positions": ["WR", "BN", "BN"]}
+
+    def test_excludes_the_users_own_roster_players(self):
+        user_roster = {"roster_id": 1, "players": ["user_wr"], "taxi": [], "reserve": []}
+        rosters = [user_roster, {"roster_id": 2, "players": ["user_wr"]}]  # same id, hypothetically duplicated
+        players = {"user_wr": make_player("WR", full_name="User WR")}
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("user_wr", 100)])
+        sellable = _sellable_of(1000)  # affordability ceiling is not the point of this test
+
+        candidates = dc.leaguewide_trade_candidates(
+            rosters, user_roster, players, fc_by_id, {}, self.LEAGUE, sellable, EMPTY_PICKS
+        )
+
+        assert candidates == []
+
+    def test_excludes_candidates_priced_above_the_affordability_ceiling(self):
+        user_roster = {"roster_id": 1, "players": ["user_wr"], "taxi": [], "reserve": []}
+        rosters = [user_roster, {"roster_id": 2, "players": ["expensive_wr"]}]
+        players = {
+            "user_wr": make_player("WR", full_name="User WR"),
+            "expensive_wr": make_player("WR", full_name="Expensive WR"),
+        }
+        # expensive_wr (1000) is a huge marginal-value upgrade over user_wr (100),
+        # but the user's own sellable pool (top combo 100) caps affordability at
+        # 100 * TRADE_OFFER_PREFILTER_HIGH = 200 - nowhere near reachable.
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("user_wr", 100), fc_entry("expensive_wr", 1000)])
+        sellable = _sellable_of(100)
+
+        candidates = dc.leaguewide_trade_candidates(
+            rosters, user_roster, players, fc_by_id, {}, self.LEAGUE, sellable, EMPTY_PICKS
+        )
+
+        assert candidates == []
+
+    def test_filters_to_positive_marginal_value_only(self):
+        user_roster = {"roster_id": 1, "players": ["user_wr"], "taxi": [], "reserve": []}
+        rosters = [user_roster, {"roster_id": 2, "players": ["worse_wr"]}]
+        players = {
+            "user_wr": make_player("WR", full_name="User WR"),
+            "worse_wr": make_player("WR", full_name="Worse WR"),
+        }
+        # worse_wr (10) is affordable, but strictly worse than the user's own
+        # starter (100) - adding it can't raise the starting lineup's value.
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("user_wr", 100), fc_entry("worse_wr", 10)])
+        sellable = _sellable_of(1000)
+
+        candidates = dc.leaguewide_trade_candidates(
+            rosters, user_roster, players, fc_by_id, {}, self.LEAGUE, sellable, EMPTY_PICKS
+        )
+
+        assert candidates == []
+
+    def test_affordable_positive_value_candidate_is_returned_with_its_owning_roster_id(self):
+        user_roster = {"roster_id": 1, "players": ["user_wr"], "taxi": [], "reserve": []}
+        rosters = [user_roster, {"roster_id": 2, "players": ["good_wr"]}]
+        players = {
+            "user_wr": make_player("WR", full_name="User WR"),
+            "good_wr": make_player("WR", full_name="Good WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("user_wr", 100), fc_entry("good_wr", 300)])
+        sellable = _sellable_of(1000)
+
+        candidates = dc.leaguewide_trade_candidates(
+            rosters, user_roster, players, fc_by_id, {}, self.LEAGUE, sellable, EMPTY_PICKS
+        )
+
+        assert len(candidates) == 1
+        assert candidates[0]["player_id"] == "good_wr"
+        assert candidates[0]["roster_id"] == 2
+        assert candidates[0]["marginal_value"] > 0
+
+    def test_respects_top_n(self):
+        user_roster = {"roster_id": 1, "players": ["user_wr"], "taxi": [], "reserve": []}
+        other_rosters = [
+            {"roster_id": i, "players": [f"good_wr_{i}"]} for i in range(2, 6)  # 4 affordable, positive candidates
+        ]
+        rosters = [user_roster] + other_rosters
+        players = {"user_wr": make_player("WR", full_name="User WR")}
+        fc_entries = [fc_entry("user_wr", 100)]
+        for i in range(2, 6):
+            pid = f"good_wr_{i}"
+            players[pid] = make_player("WR", full_name=pid)
+            fc_entries.append(fc_entry(pid, 200 + i))
+        fc_by_id = dc.fc_value_by_sleeper_id(fc_entries)
+        sellable = _sellable_of(1000)
+
+        candidates = dc.leaguewide_trade_candidates(
+            rosters, user_roster, players, fc_by_id, {}, self.LEAGUE, sellable, EMPTY_PICKS, top_n=2
+        )
+
+        assert len(candidates) == 2
+
+
+class TestSuggestedTrades:
+    """suggested_trades should search only the given (already-capped) candidates via the
+    existing find_trade_offers() - no new valuation logic - drop any with no viable offer
+    or a non-positive best-offer lineup gain (find_trade_offers()'s only hard gate is the
+    partner's own tolerance, nothing about whether the trade actually helps the user), and
+    rank survivors by their best offer's lineup-value gain."""
+
+    LEAGUE = {"roster_positions": ["WR", "BN", "BN", "BN"]}
+
+    def _base_roster_and_players(self) -> tuple[dict, dict, dict]:
+        your_roster = {"roster_id": 1, "players": ["starter_wr", "depth_wr", "depth_wr2"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "depth_wr": make_player("WR", full_name="Depth WR"),
+            "depth_wr2": make_player("WR", full_name="Depth WR 2"),
+        }
+        players["starter_wr"]["years_exp"] = 5
+        players["depth_wr"]["years_exp"] = 3
+        players["depth_wr2"]["years_exp"] = 3
+        return your_roster, players, {"QB": 0.0, "RB": 0.0, "WR": 10.0, "TE": 0.0}
+
+    def test_drops_candidates_with_no_viable_offer_or_non_positive_lineup_gain(self):
+        your_roster, players, replacement_level = self._base_roster_and_players()
+        # target_a (100): matches depth_wr (100) almost exactly and stays
+        # below starter_wr (150) - a viable, but no-op-for-your-lineup offer
+        # (lineup_delta_after_drops == 0, since it never beats the starter) -
+        # dropped despite being viable, since it wouldn't actually help.
+        # target_c (220): only depth_wr+depth_wr2 combined (100+110=210) is
+        # close enough to clear target_c's tolerance band - and 220 beats
+        # starter_wr (150), a real +70 lineup gain - the only real survivor.
+        # target_huge (100000): no combo of the user's 2-asset sellable pool
+        # could ever be within its tolerance band - no viable offer at all.
+        partner_a = {"roster_id": 2, "players": ["target_a"]}
+        partner_c = {"roster_id": 3, "players": ["target_c"]}
+        partner_huge = {"roster_id": 4, "players": ["target_huge"]}
+        players["target_a"] = make_player("WR", full_name="Target A")
+        players["target_c"] = make_player("WR", full_name="Target C")
+        players["target_huge"] = make_player("WR", full_name="Target Huge")
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [
+                fc_entry("starter_wr", 150),
+                fc_entry("depth_wr", 100),
+                fc_entry("depth_wr2", 110),
+                fc_entry("target_a", 100),
+                fc_entry("target_c", 220),
+                fc_entry("target_huge", 100_000),
+            ]
+        )
+        rosters_by_id = {1: your_roster, 2: partner_a, 3: partner_c, 4: partner_huge}
+        candidates = [
+            {"player_id": "target_a", "roster_id": 2, "marginal_value": 1.0, "drop": None},
+            {"player_id": "target_c", "roster_id": 3, "marginal_value": 2.0, "drop": None},
+            {"player_id": "target_huge", "roster_id": 4, "marginal_value": 3.0, "drop": None},
+        ]
+
+        results = dc.suggested_trades(
+            your_roster, rosters_by_id, players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS, candidates
+        )
+
+        # target_huge dropped (no viable offer); target_a also dropped
+        # (viable, but a zero-gain offer isn't worth suggesting); only
+        # target_c (a real +70 lineup gain) survives.
+        assert [r["target_player_id"] for r in results] == ["target_c"]
+        assert results[0]["offers"][0]["your_side"]["lineup_delta_after_drops"] == pytest.approx(70.0)
+        assert results[0]["roster_id"] == 3
+
+    def test_respects_top_n(self):
+        your_roster, players, replacement_level = self._base_roster_and_players()
+        rosters_by_id = {1: your_roster}
+        # Same shape as target_c above (starter_wr=150, depth_wr=100,
+        # depth_wr2=110, target=220): a viable offer with a real +70
+        # lineup gain, so the positive-lineup-gain filter doesn't wipe out
+        # every candidate before top_n even gets a chance to matter.
+        fc_entries = [fc_entry("starter_wr", 150), fc_entry("depth_wr", 100), fc_entry("depth_wr2", 110)]
+        candidates = []
+        for i in range(2, 6):  # 4 viable, equally-easy targets
+            pid = f"target_{i}"
+            players[pid] = make_player("WR", full_name=pid)
+            fc_entries.append(fc_entry(pid, 220))
+            rosters_by_id[i] = {"roster_id": i, "players": [pid]}
+            candidates.append({"player_id": pid, "roster_id": i, "marginal_value": 1.0, "drop": None})
+        fc_by_id = dc.fc_value_by_sleeper_id(fc_entries)
+
+        results = dc.suggested_trades(
+            your_roster,
+            rosters_by_id,
+            players,
+            fc_by_id,
+            {},
+            self.LEAGUE,
+            replacement_level,
+            EMPTY_PICKS,
+            candidates,
+            top_n=2,
+        )
+
+        assert len(results) == 2

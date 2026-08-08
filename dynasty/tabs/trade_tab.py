@@ -1,4 +1,4 @@
-"""Trade Evaluator tab: manual two-sided trade evaluation plus the trade-target optimizer."""
+"""Trade Evaluator tab: manual two-sided trade evaluation plus leaguewide Suggested Trades."""
 
 from __future__ import annotations
 
@@ -15,6 +15,22 @@ def _trade_player_options(roster: dict, players: dict) -> list[str]:
         for pid in (roster.get("players") or [])
         if players.get(pid, {}).get("position") in dynasty_core.FANTASY_POSITIONS
     ]
+
+
+def _leaguewide_owner_by_player_id(rosters_by_id: dict[int, dict], user_roster_id: int, players: dict) -> dict[str, int]:
+    """player_id -> roster_id for every fantasy-relevant player on every *other* roster.
+
+    Same fantasy-position filter as `_trade_player_options`, just across
+    every roster but the user's own - the pool the Suggested Trades
+    section's single-target picker searches, since it isn't scoped to one
+    hand-picked partner."""
+    owner_by_player_id: dict[str, int] = {}
+    for roster_id, roster in rosters_by_id.items():
+        if roster_id == user_roster_id:
+            continue
+        for pid in _trade_player_options(roster, players):
+            owner_by_player_id[pid] = roster_id
+    return owner_by_player_id
 
 
 def _trade_player_label(pid: str, players: dict, fc_by_sleeper_id: dict) -> str:
@@ -191,75 +207,32 @@ def _render_manual_evaluator(
         _show_trade_side(f"{trade_team_names[partner_team_id]}'s side", partner_result)
 
 
-def _render_trade_optimizer(
+def _render_offer_body(offer: dict, target_label: str, partner_name: str, trade_players: dict) -> None:
+    combo_label = ", ".join(_combo_asset_label(a, trade_players) for a in offer["combo"])
+    st.caption(f"**You give:** {combo_label}  \n**You receive:** {target_label}")
+    off_col1, off_col2 = st.columns(2)
+    with off_col1:
+        _show_trade_side("Your side", offer["your_side"])
+    with off_col2:
+        _show_trade_side(f"{partner_name}'s side", offer["partner_side"])
+    if offer["partner_need_match"]:
+        positions = ", ".join(sorted(offer["partner_need_positions"]))
+        st.caption(f"Also addresses a flagged need at {positions} on {partner_name}'s roster.")
+
+
+def _render_single_target_search(
     state: dict,
+    target_player_id: str,
+    partner_roster: dict,
     partner_name: str,
-    partner_team_id: int,
-    your_trade_roster: dict,
-    partner_trade_roster: dict,
     trade_players: dict,
     trade_pick_values: pd.DataFrame,
-    pick_value_by_name: dict,
 ) -> None:
-    st.divider()
-    st.subheader("Trade-target optimizer")
-    with st.expander("How this works"):
-        st.caption(
-            "Given one specific asset on the trade partner's roster, decide whether it's "
-            "worth pursuing and search your own sellable depth/picks for a combination they'd "
-            "plausibly accept.\n"
-            "- **Worth pursuing** — the same season-average marginal-lineup read as elsewhere, "
-            "for acquiring this one asset for free, shown alongside its market value.\n"
-            "- **Offer search** — every combination (up to 3 assets) of your own sellable "
-            "players/picks, verified two-sided through the same evaluate_trade() check as the "
-            "evaluator above — not a new valuation model. A combo only surfaces if the "
-            "partner's own asset-value read doesn't come out too lopsided against them (the "
-            "real plausibility bar, not just 'cheap for you'); combos that also touch a "
-            "flagged need on the partner's roster today are preferred among otherwise-similar "
-            "options. Capped to your top 12 highest-value sellable assets so this stays fast.\n"
-            "- **💡 callouts** — same non-obvious-value signals as the evaluator above (bye-gap, "
-            "handcuffs, buried-bench/instant-starter, pick-in-class ranking), shown per side.\n"
-            "- If nothing clears the partner's bar, this says so directly instead of forcing a "
-            "marginal offer."
-        )
-
-    target_kind = st.radio("Target type", ["Player", "Pick"], key="optimizer_target_kind", horizontal=True)
-    target_player_id = target_pick_name = None
-    if target_kind == "Player":
-        partner_player_options = _trade_player_options(partner_trade_roster, trade_players)
-        if not partner_player_options:
-            st.write(f"{partner_name} has no fantasy-relevant players to target.")
-        else:
-            target_player_id = st.selectbox(
-                f"Asset on {partner_name}'s roster",
-                partner_player_options,
-                format_func=lambda pid: _trade_player_label(pid, trade_players, state["fc_by_sleeper_id"]),
-                key="optimizer_target_player",
-            )
-    else:
-        partner_pick_options = _trade_pick_options(partner_team_id, trade_pick_values)
-        if not partner_pick_options:
-            st.write(f"{partner_name} has no tracked picks to target.")
-        else:
-            target_pick_name = st.selectbox(
-                f"Pick owned by {partner_name}",
-                partner_pick_options,
-                format_func=lambda pick_name: _trade_pick_label(pick_name, pick_value_by_name),
-                key="optimizer_target_pick",
-            )
-
-    if not (target_player_id or target_pick_name):
-        return
-
-    target_label = (
-        _trade_player_label(target_player_id, trade_players, state["fc_by_sleeper_id"])
-        if target_player_id
-        else _trade_pick_label(target_pick_name, pick_value_by_name)
-    )
+    target_label = _trade_player_label(target_player_id, trade_players, state["fc_by_sleeper_id"])
     with st.spinner("Searching for offers..."):
         offer_result = dynasty_core.find_trade_offers(
-            your_trade_roster,
-            partner_trade_roster,
+            state["rosters_by_id"][state["user_roster_id"]],
+            partner_roster,
             trade_players,
             state["fc_by_sleeper_id"],
             state["byes"],
@@ -268,7 +241,6 @@ def _render_trade_optimizer(
             trade_pick_values,
             handcuffs=state["handcuffs"],
             target_player_id=target_player_id,
-            target_pick_name=target_pick_name,
         )
 
     _show_trade_side(f"If you acquired {target_label} for free", offer_result["target_read"])
@@ -291,15 +263,102 @@ def _render_trade_optimizer(
             combo_label = ", ".join(_combo_asset_label(a, trade_players) for a in offer["combo"])
             title = f"{'Best offer' if i == 0 else f'Alternative {i}'}: give {combo_label} → receive {target_label}"
             with st.expander(title, expanded=(i == 0)):
-                st.caption(f"**You give:** {combo_label}  \n**You receive:** {target_label}")
-                off_col1, off_col2 = st.columns(2)
-                with off_col1:
-                    _show_trade_side("Your side", offer["your_side"])
-                with off_col2:
-                    _show_trade_side(f"{partner_name}'s side", offer["partner_side"])
-                if offer["partner_need_match"]:
-                    positions = ", ".join(sorted(offer["partner_need_positions"]))
-                    st.caption(f"Also addresses a flagged need at {positions} on {partner_name}'s roster.")
+                _render_offer_body(offer, target_label, partner_name, trade_players)
+
+
+def _render_leaguewide_scan(state: dict, trade_players: dict, trade_pick_values: pd.DataFrame) -> None:
+    candidates = state["suggested_trade_candidates"]
+    st.caption(f"{len(candidates)} leaguewide candidate{'s' if len(candidates) != 1 else ''} worth a look right now.")
+    if not candidates:
+        st.info("No leaguewide candidate cleared the affordability/marginal-value bar this refresh.")
+        return
+
+    if st.button("Scan the league for offers"):
+        with st.spinner("Scanning the league..."):
+            st.session_state["suggested_trades_results"] = dynasty_core.suggested_trades(
+                state["rosters_by_id"][state["user_roster_id"]],
+                state["rosters_by_id"],
+                trade_players,
+                state["fc_by_sleeper_id"],
+                state["byes"],
+                state["league"],
+                state["replacement_level"],
+                trade_pick_values,
+                candidates,
+                handcuffs=state["handcuffs"],
+            )
+
+    results = st.session_state.get("suggested_trades_results")
+    if results is None:
+        return
+    if not results:
+        st.info(
+            "None of the top leaguewide candidates cleared a partner's plausibility bar right "
+            "now — try again after your roster or the market shifts, or search a specific "
+            "player directly above."
+        )
+        return
+
+    for i, result in enumerate(results):
+        partner_name = state["team_names"][result["roster_id"]]
+        target_label = _trade_player_label(result["target_player_id"], trade_players, state["fc_by_sleeper_id"])
+        best_offer = result["offers"][0]
+        combo_label = ", ".join(_combo_asset_label(a, trade_players) for a in best_offer["combo"])
+        title = f"#{i + 1}: give {combo_label} → receive {target_label} ({partner_name})"
+        with st.expander(title, expanded=(i == 0)):
+            _render_offer_body(best_offer, target_label, partner_name, trade_players)
+
+
+def _render_suggested_trades(state: dict) -> None:
+    st.divider()
+    st.subheader("Suggested Trades")
+    with st.expander("How this works"):
+        st.caption(
+            "Leaguewide by default, not scoped to the 'Your team'/'Trade partner' selectors "
+            "above — always scans for your own actual roster, regardless of what's selected "
+            "there for the manual evaluator.\n"
+            "- **Leaguewide candidates** — every fantasy-relevant player on every other "
+            "team's roster, ranked by the same season-average marginal-lineup read used "
+            "elsewhere, pre-filtered to ones your own sellable depth could plausibly afford "
+            "(a rough ceiling from your top 3 sellable assets' value) so the real search "
+            "below isn't spent entirely on unreachable stars. Free to show — already "
+            "computed this refresh.\n"
+            "- **Scan the league for offers** — the real two-sided search (same "
+            "evaluate_trade() check as the manual evaluator above, not a new valuation "
+            "model), repeated for the strongest ~15 leaguewide candidates, showing the top 3 "
+            "that actually clear a partner's plausibility bar. This is the expensive part, "
+            "so it's behind a button rather than running on every page interaction.\n"
+            "- **Or search one player directly** — pick anyone on another team's roster to "
+            "search immediately, without a full leaguewide scan or picking a partner first.\n"
+            "- Picks aren't targetable in this section yet — draft-pick trades are still "
+            "fully supported in the manual evaluator above."
+        )
+
+    trade_players = state["players"]
+    trade_pick_values = state["pick_trade_values"]
+    owner_by_player_id = _leaguewide_owner_by_player_id(state["rosters_by_id"], state["user_roster_id"], trade_players)
+
+    target_player_id = st.selectbox(
+        "Or search one specific player instead",
+        [None] + sorted(owner_by_player_id, key=lambda pid: trade_players.get(pid, {}).get("full_name") or ""),
+        format_func=lambda pid: (
+            "(none — show leaguewide suggestions)"
+            if pid is None
+            else f"{_trade_player_label(pid, trade_players, state['fc_by_sleeper_id'])} "
+            f"— {state['team_names'][owner_by_player_id[pid]]}"
+        ),
+        key="suggested_trades_target_player",
+    )
+
+    if target_player_id:
+        partner_roster = state["rosters_by_id"][owner_by_player_id[target_player_id]]
+        partner_name = state["team_names"][owner_by_player_id[target_player_id]]
+        _render_single_target_search(
+            state, target_player_id, partner_roster, partner_name, trade_players, trade_pick_values
+        )
+        return
+
+    _render_leaguewide_scan(state, trade_players, trade_pick_values)
 
 
 def render_trade_tab(state: dict) -> None:
@@ -335,13 +394,4 @@ def render_trade_tab(state: dict) -> None:
         trade_pick_values,
         pick_value_by_name,
     )
-    _render_trade_optimizer(
-        state,
-        trade_team_names[partner_team_id],
-        partner_team_id,
-        your_trade_roster,
-        partner_trade_roster,
-        trade_players,
-        trade_pick_values,
-        pick_value_by_name,
-    )
+    _render_suggested_trades(state)
