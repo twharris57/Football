@@ -33,6 +33,7 @@ from .player_pools import (
 )
 from .power_timeline import team_power_timeline_scores
 from .roster_needs import position_replacement_levels
+from .summary import build_attention_digest
 from .team_analysis import team_roster_analysis
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,17 @@ def gather_state(
         board_pool, fc_by_sleeper_id, user_analysis["need_positions"], user_handcuff_targets, draft_attribution
     )
 
+    attention_digest = build_attention_digest(
+        user_analysis["need_positions"],
+        user_analysis["roster_weekly_gaps"],
+        user_analysis["sellable_players"],
+        user_analysis["free_agent_board"],
+        # Same field/fallback roster_tab.py's _render_bye_impact() already
+        # uses for "already happened" vs. "still ahead" - not otherwise
+        # threaded through gather_state() yet.
+        league["settings"].get("leg", 1),
+    )
+
     return {
         "league": league,
         "players": players,
@@ -271,6 +283,11 @@ def gather_state(
         "picks_until_turn": picks_until_turn(ownership, user_roster_id, current_pick_no),
         "your_picks": format_your_picks(ownership, user_roster_id, current_pick_no, team_names),
         **user_analysis,
+        # Short "what needs a look right now" digest (see summary.py) - built
+        # entirely from user_analysis fields already in this dict, not a new
+        # signal. Pick timing/data_warnings aren't part of it - both are
+        # already surfaced globally above every tab in streamlit_app.py.
+        "attention_digest": attention_digest,
         "recent_picks": pd.DataFrame(recent_rows),
         "big_board": big_board,
         "multi_round_plan": multi_round_plan(

@@ -37,8 +37,6 @@ active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `RT-19` — a summary/digest tab surfacing what needs attention
-  instead of reviewing every tab.
 - [ ] `RT-9` — free-agent pickup monitor (`RT-20`'s
   `dynasty_core/draft_snapshots.py` persistence layer is done and worth
   reusing/extending rather than building a second one from scratch).
@@ -57,54 +55,21 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty — every finding from reviewing `feature/trade-callouts` (PR #29,
-2026-08-07) is fixed.
+Empty — the one finding from reviewing `feature/summary-tab` (PR #30,
+2026-08-08) is fixed.
 
-- `_pick_context_callouts()`'s season/class grouping broke for every
-  next-season pick name. `season` is now derived from the leading 4-digit
-  year rather than splitting on `" Pick "` — handles both
-  `pick_trade_values()` name formats, with a fallback to the pick's own name
-  for the (never-real, but test-exercised) case of a name with no leading
-  year at all, so a malformed/placeholder name degrades gracefully instead
-  of crashing the rank computation. New tests cover the next-season format,
-  the malformed-name fallback, and the original current-season case. Durable
-  rule filed in `.claude/conventions/valuation_principles.md`'s "A composite
-  label needs a parser that handles every format its own source can
-  produce."
-- `find_trade_offers()`'s sellable-player pool used a bare
-  `row["adj_value"] or 0.0`, which doesn't catch `NaN` (a missing
-  `adj_value` becomes real `NaN`, not `None`, once `sellable_players()`'s
-  rows go through a `pd.DataFrame` — `NaN` is truthy in Python, so `or 0.0`
-  never fires). An unmatched sellable player's combo value silently stayed
-  `NaN` through the rest of the search instead of falling back to `0.0` like
-  every other missing-value spot in this codebase — same shape as
-  `valuation_principles.md`'s existing NaN rule, a new instance of it. Fixed
-  with an explicit `pd.notna()` check; new test confirms an unmatched
-  player's pool entry is `0.0`, not `NaN`.
-- The trade-target optimizer's "give" side (offer titles and the "You
-  give:" caption) showed only a bare player name and value with no
-  position, while the "receive" side showed `"Name (POS, value: X)"` via
-  `_trade_player_label()` — spotted live by the user
-  (`"J.J. McCarthy (value: 2400) → receive Rashee Rice (WR, value: 4292)"`).
-  New `_combo_asset_label()` helper in `trade_tab.py` renders a combo asset
-  in the same style as the target label, reused for both the give-side
-  listing and the offer title.
-- The trade-target optimizer got noticeably slow after RT-18 landed —
-  user-observed live, not a synthetic benchmark. Traced to `evaluate_trade()`
-  unconditionally computing all four `callouts` for every prefiltered combo
-  in `find_trade_offers()`'s search loop, even though only `top_n` (default
-  3) offers are ever shown — measured live at ~90% of the search's total
-  cost (1.95s → 0.21s with callouts stripped, on a 40-player/170-combo
-  synthetic benchmark) for value discarded on every combo that didn't make
-  the cut. Fixed with a new `evaluate_trade(..., compute_callouts=True)`
-  parameter: `find_trade_offers()`'s search loop now runs with it `False`
-  (filter/rank only) and re-evaluates just the final `top_n` combos with it
-  `True` to get their real callouts — ~7.4x faster on the same benchmark
-  (1.95s → 0.26s), with no change in the returned data shape. New test
-  confirms a returned offer still carries real callouts, not the stripped
-  search-pass ones. Also added an `st.spinner()` around the search call in
-  `trade_tab.py`, since even the optimized search isn't instant on a large
-  roster.
+`build_attention_digest()`'s weekly-gaps line listed gap weeks in raw
+chronological order with no current-week filtering, then capped to `top_n`
+— an already-passed gap week could crowd out a real upcoming one out of the
+capped slots, silently, in a tab whose entire purpose is "what needs
+attention right now." Fixed by threading a new required `current_week`
+parameter through `build_attention_digest()` and filtering
+`roster_weekly_gaps` to `week >= current_week` before computing/capping
+lines; `state.py` passes `league["settings"].get("leg", 1)`, the same
+field/fallback `roster_tab.py`'s `_render_bye_impact()` already uses for
+"already happened" vs. "still ahead." New tests cover a past gap week being
+excluded entirely and the cap applying only after that exclusion (not
+before, which would still let a stale week silently displace a real one).
 
 ## Now — blocking
 
@@ -281,21 +246,29 @@ pick-in-context. All four new parameters (`handcuffs`/
 optional, so every pre-existing call site/test keeps working unchanged.
 `find_trade_offers()` threads its own `handcuffs`/`pick_value_table`
 through to every `evaluate_trade()` call it makes.
-- [ ] **RT-19: A "summary" tab surfacing what actually needs attention,
-  instead of reviewing every tab** (user-flagged 2026-08-06) — five tabs,
-  each thorough for its own question, but nothing today answers "what do I
-  actually need to look at right now" in one place. Distinct from `RT-5`'s
-  all-teams league view (that's about scanning *other* teams; this is
-  about the user's own situation across everything the app already
-  knows). A first cut could pull entirely from data `gather_state()`
-  already computes, no new signals: current flagged roster needs, any
-  weekly-gap alerts, sellable-veteran candidates worth shopping, any
-  free-agent board entries with strongly positive marginal value, upcoming
-  pick timing, and (once `RT-9` lands) anything that changed since last
-  checked. Scope during design: this is a "so what" digest, which means
-  picking a small number of genuinely actionable items rather than
-  restating every tab's full table — the opposite instinct from every
-  other tab in the app, worth being deliberate about.
+**RT-19 (a "summary" tab surfacing what actually needs attention) is done**
+(user-flagged 2026-08-06) — new "Summary" tab, `dynasty_core/summary.py`'s
+`build_attention_digest()` composing four already-computed
+`gather_state()` fields into short, capped one-liner lists (flagged roster
+needs, weekly gap risk, sellable-veteran candidates, positive-marginal-value
+free agents) — no new signal or valuation model, matching `evaluate_trade()`'s
+`callouts`/`multi_round_plan`'s `reason` precedent. Two of the original
+five candidate categories were dropped during design, not forgotten:
+upcoming pick timing and `data_warnings` are both already surfaced globally
+above every tab (the "On the clock" banner and warning banners in
+`streamlit_app.py`), so repeating either here would just duplicate an
+always-visible banner; in-season "what changed since last checked" stays
+out of scope pending `RT-9`'s persistence layer, named explicitly in the
+tab's own "How this works" text rather than left silently absent. Tab
+order is conditional, not fixed (user-flagged during review): Draft Plan
+still leads while a draft is ongoing/upcoming (`NB-2`'s live-draft flow
+depends on it), Summary leads instead once the draft is complete, reusing
+the same `current_pick_no > total_picks` check already driving the
+existing "Draft complete." banner rather than an unverified
+`league["status"]` value. `tests/dynasty_core/test_summary.py` covers all
+four categories' formatting/capping, the `adj_value`-vs-`value` column trap,
+and a `free_agent_board`'s columnless-empty-DataFrame edge case that would
+otherwise raise `KeyError` on an empty free-agent pool.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all

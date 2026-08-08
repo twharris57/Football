@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+from collections.abc import Callable
 
 import dynasty_core
 import requests
@@ -23,6 +24,7 @@ from tabs.components import cols, show_df, show_glossary
 from tabs.draft_tab import render_draft_tab
 from tabs.plan_tab import render_plan_tab
 from tabs.roster_tab import render_roster_tab
+from tabs.summary_tab import render_summary_tab
 from tabs.trade_tab import render_trade_tab
 
 APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
@@ -135,14 +137,8 @@ else:
         turn_note = f" ({until_turn} pick{'s' if until_turn != 1 else ''} until your turn)"
     st.info(f"On the clock: pick {current_pick_no}/{total_picks} - {clock_team}{turn_note}")
 
-plan_tab, lineup_tab, draft_tab, roster_tab, trade_tab = st.tabs(
-    ["Draft Plan", "Lineup", "Draft Board", "Roster", "Trade Evaluator"]
-)
 
-with plan_tab:
-    render_plan_tab(state)
-
-with lineup_tab:
+def _render_lineup_tab() -> None:
     st.caption(
         "Optimal current lineup by value alone — a snapshot, not week-specific yet (doesn't "
         "account for byes or injuries when deciding who starts). A by-week/injury-aware version "
@@ -161,14 +157,30 @@ with lineup_tab:
     st.subheader("IR / Reserve")
     show_df(state["lineup_ir"], "(empty)", column_config=bench_cols)
 
-with draft_tab:
-    render_draft_tab(state)
 
-with roster_tab:
-    render_roster_tab(state)
+# Tab order shifts with the season rather than staying fixed: Draft Plan is
+# the tab checked right before a live pick (see NB-2), so it leads while a
+# draft is ongoing/upcoming; Summary is more useful once the draft is behind
+# you, so it leads instead once draft_complete (same condition already
+# driving the "Draft complete."/on-the-clock banner above - both "before any
+# picks" and "mid-draft" fall under draft_complete=False, exactly the
+# "ongoing/upcoming" grouping this is meant to capture).
+tab_specs: list[tuple[str, Callable[[], None]]] = [
+    ("Draft Plan", lambda: render_plan_tab(state)),
+    ("Lineup", _render_lineup_tab),
+    ("Draft Board", lambda: render_draft_tab(state)),
+    ("Roster", lambda: render_roster_tab(state)),
+    ("Trade Evaluator", lambda: render_trade_tab(state)),
+    ("Summary", lambda: render_summary_tab(state)),
+]
+draft_complete = current_pick_no > total_picks
+if draft_complete:
+    tab_specs.insert(0, tab_specs.pop())
 
-with trade_tab:
-    render_trade_tab(state)
+tabs = st.tabs([label for label, _ in tab_specs])
+for tab, (_, render_fn) in zip(tabs, tab_specs):
+    with tab:
+        render_fn()
 
 st.divider()
 st.caption(f"Dynasty Rookie Draft · build {APP_VERSION}")
