@@ -8,6 +8,7 @@ import pandas as pd
 
 from .byes import gap_delta
 from .draft_snapshots import AMBIGUOUS
+from .handcuffs import handcuff_targets as handcuff_targets_for
 from .lineup import assign_starters, player_value_rows
 from .marginal_value import rank_by_marginal_value
 from .picks import DraftPickSlot, own_draft_picks
@@ -21,13 +22,7 @@ def hypothetical_needs_and_handcuffs(
 ) -> tuple[frozenset[str], dict[str, str]]:
     """Recompute need_positions and handcuff targets for a hypothetical (simulated) roster."""
     needs = need_positions(roster_needs_summary({"players": player_ids}, players))
-    rb_ids = {pid for pid in player_ids if players.get(pid, {}).get("position") == "RB"}
-    handcuff_targets = {
-        backup_id: players.get(starter_id, {}).get("full_name", "")
-        for starter_id, backup_id in handcuffs.items()
-        if starter_id in rb_ids
-    }
-    return needs, handcuff_targets
+    return needs, handcuff_targets_for(player_ids, players, handcuffs)
 
 
 def alternate_gap_note(

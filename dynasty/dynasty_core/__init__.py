@@ -45,7 +45,7 @@ from .draft_plan import (
     multi_round_plan,
 )
 from .draft_snapshots import AMBIGUOUS, reconcile_snapshot
-from .handcuffs import HANDCUFFS_CACHE_TTL_SECONDS, handcuff_map, roster_handcuff_status
+from .handcuffs import HANDCUFFS_CACHE_TTL_SECONDS, handcuff_map, handcuff_targets, roster_handcuff_status
 from .lineup import (
     assign_starters,
     bye_for_row,
@@ -174,6 +174,7 @@ __all__ = [
     "gap_delta",
     "gather_state",
     "handcuff_map",
+    "handcuff_targets",
     "hypothetical_needs_and_handcuffs",
     "lineup_breakdown",
     "multi_round_plan",

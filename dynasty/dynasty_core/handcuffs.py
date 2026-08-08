@@ -55,6 +55,21 @@ def handcuff_map(season: str, force_refresh: bool = False) -> dict[str, str]:
     return handcuffs
 
 
+def handcuff_targets(player_ids: list[str], players: dict[str, dict], handcuffs: dict[str, str]) -> dict[str, str]:
+    """Map each of these players' rostered handcuffs to their starter's full name.
+
+    Shared by `draft_plan.py` (a hypothetical simulated roster) and
+    `trade.py` (a real roster, for a trade's "also handcuffs your own X"
+    callout) - same lookup, just pointed at different player_id lists.
+    """
+    rb_ids = {pid for pid in player_ids if players.get(pid, {}).get("position") == "RB"}
+    return {
+        backup_id: players.get(starter_id, {}).get("full_name", "")
+        for starter_id, backup_id in handcuffs.items()
+        if starter_id in rb_ids
+    }
+
+
 def roster_handcuff_status(roster: dict, players: dict[str, dict], handcuffs: dict[str, str]) -> pd.DataFrame:
     """For each rostered RB who is an NFL starter, show whether their handcuff is also rostered."""
     roster_ids = set(roster.get("players") or [])

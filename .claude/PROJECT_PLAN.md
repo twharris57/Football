@@ -37,16 +37,11 @@ active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `RT-18` — trade evaluator/optimizer callouts for non-obvious value
-  (bye-gap closing, pick value in context, handcuffs, buried-bench-to-
-  starter swaps).
 - [ ] `RT-19` — a summary/digest tab surfacing what needs attention
   instead of reviewing every tab.
 - [ ] `RT-9` — free-agent pickup monitor (`RT-20`'s
   `dynasty_core/draft_snapshots.py` persistence layer is done and worth
   reusing/extending rather than building a second one from scratch).
-- [ ] `RT-17` — confirmed test-coverage/scope gap in
-  `best_position_relevant_drop()`'s superflex handling.
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
@@ -62,38 +57,54 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Findings from a `/valuation-review` pass over `feature/draft-drop-tracking`
-(PR #28, "RT-20: Recover real draft-plan drops instead of always
-guessing"), reviewed 2026-08-07. The prior section's `feature/code-reorg`
-findings are gone — that branch merged to `main` as `d4476c7` and this
-section wasn't cleared at the time; nothing in it survived as still-open.
+Empty — every finding from reviewing `feature/trade-callouts` (PR #29,
+2026-08-07) is fixed.
 
-- [x] `dynasty/dynasty_core/draft_plan.py:185-188` — the new `"confirmed"`
-  `drop_status` branch computed `is_starter` for a recovered real drop by
-  calling `assign_starters(pre_round_rows, league["roster_positions"])`
-  directly on `player_value_rows(hypothetical_ids, players, fc_by_sleeper_id)`,
-  with no `ineligible_ids` filter first. Every other `is_starter`
-  computation in this codebase (`recommend_drop`, `best_position_relevant_drop`,
-  both in `marginal_value.py`) explicitly filters taxi/IR players out of
-  the rows passed to `assign_starters` before computing `starter_ids` —
-  documented inline as "Sleeper doesn't allow it" (a taxi/IR player can
-  never actually occupy a starting slot). This new branch skipped that
-  filter, so a taxi-stashed player — this league's normal roster state
-  under its rebuild strategy (`CLAUDE.md`'s "Dynasty rebuild strategy") —
-  could win a starting slot in this one computation and bump a real
-  starter onto the "bench" side of `pre_round_starters`. Concretely: if
-  the confirmed recovered drop was actually a real starter, but a
-  higher-`adj_value` taxi player sat in `hypothetical_ids`, `is_starter`
-  came back `False` and the UI's ⚠️ "current starter" warning silently
-  didn't fire for exactly the round it's meant to matter most on. No test
-  in `test_draft_plan.py`'s new `TestRealDropReconciliation` used a
-  non-empty `taxi`/`reserve` roster, so this wasn't caught.
-  **Fixed**: filtered `pre_round_rows` by `ineligible_ids` before calling
-  `assign_starters`, matching `recommend_drop`'s existing pattern
-  (`pre_round_eligible_rows = [r for r in pre_round_rows if r["player_id"] not in ineligible_ids]`).
-  Added `TestRealDropReconciliation::test_confirmed_drop_is_starter_ignores_taxi_players_value`
-  (a taxi-stashed 500-value WR that must not displace a real 100-value WR
-  starter) — verified it fails against the pre-fix code and passes after.
+- `_pick_context_callouts()`'s season/class grouping broke for every
+  next-season pick name. `season` is now derived from the leading 4-digit
+  year rather than splitting on `" Pick "` — handles both
+  `pick_trade_values()` name formats, with a fallback to the pick's own name
+  for the (never-real, but test-exercised) case of a name with no leading
+  year at all, so a malformed/placeholder name degrades gracefully instead
+  of crashing the rank computation. New tests cover the next-season format,
+  the malformed-name fallback, and the original current-season case. Durable
+  rule filed in `.claude/conventions/valuation_principles.md`'s "A composite
+  label needs a parser that handles every format its own source can
+  produce."
+- `find_trade_offers()`'s sellable-player pool used a bare
+  `row["adj_value"] or 0.0`, which doesn't catch `NaN` (a missing
+  `adj_value` becomes real `NaN`, not `None`, once `sellable_players()`'s
+  rows go through a `pd.DataFrame` — `NaN` is truthy in Python, so `or 0.0`
+  never fires). An unmatched sellable player's combo value silently stayed
+  `NaN` through the rest of the search instead of falling back to `0.0` like
+  every other missing-value spot in this codebase — same shape as
+  `valuation_principles.md`'s existing NaN rule, a new instance of it. Fixed
+  with an explicit `pd.notna()` check; new test confirms an unmatched
+  player's pool entry is `0.0`, not `NaN`.
+- The trade-target optimizer's "give" side (offer titles and the "You
+  give:" caption) showed only a bare player name and value with no
+  position, while the "receive" side showed `"Name (POS, value: X)"` via
+  `_trade_player_label()` — spotted live by the user
+  (`"J.J. McCarthy (value: 2400) → receive Rashee Rice (WR, value: 4292)"`).
+  New `_combo_asset_label()` helper in `trade_tab.py` renders a combo asset
+  in the same style as the target label, reused for both the give-side
+  listing and the offer title.
+- The trade-target optimizer got noticeably slow after RT-18 landed —
+  user-observed live, not a synthetic benchmark. Traced to `evaluate_trade()`
+  unconditionally computing all four `callouts` for every prefiltered combo
+  in `find_trade_offers()`'s search loop, even though only `top_n` (default
+  3) offers are ever shown — measured live at ~90% of the search's total
+  cost (1.95s → 0.21s with callouts stripped, on a 40-player/170-combo
+  synthetic benchmark) for value discarded on every combo that didn't make
+  the cut. Fixed with a new `evaluate_trade(..., compute_callouts=True)`
+  parameter: `find_trade_offers()`'s search loop now runs with it `False`
+  (filter/rank only) and re-evaluates just the final `top_n` combos with it
+  `True` to get their real callouts — ~7.4x faster on the same benchmark
+  (1.95s → 0.26s), with no change in the returned data shape. New test
+  confirms a returned offer still carries real callouts, not the stripped
+  search-pass ones. Also added an `st.spinner()` around the search call in
+  `trade_tab.py`, since even the optimized search isn't instant on a large
+  roster.
 
 ## Now — blocking
 
@@ -235,109 +246,41 @@ where possible, instead of always showing the live-guess heuristic; see
   marginal value is clearly not worth pursuing at all) to keep a
   whole-roster scan responsive - not decided yet, scope during
   implementation.
-- [ ] **RT-17: `best_position_relevant_drop()`'s slot-type restriction is a
-  no-op in this league's actual superflex format** (user-flagged
-  2026-08-06, investigated) — its whole value over the cheap
-  `recommend_drop()` heuristic is restricting the drop search to "players
-  who share a slot type with the candidate" (own position, plus FLEX/
-  SUPER_FLEX-eligible positions if the league has those slots). But
-  `SUPERFLEX_ELIGIBLE_POSITIONS` is all four fantasy positions by
-  definition, so for *any* candidate in a league with a `SUPER_FLEX` slot
-  (this league, always), `eligible_positions` expands to {QB, RB, WR, TE}
-  — every fantasy-relevant player on the roster, not a restricted pool.
-  Confirmed via the existing test suite: `TestBestPositionRelevantDrop`'s
-  only "restricts to same slot type" test deliberately uses a league with
-  no FLEX/SUPER_FLEX ("No FLEX/SUPER_FLEX in this league" per its own
-  comment) — there is no coverage of this function's behavior in the
-  league format the whole project is actually built for.
-  Doesn't appear to produce a *wrong* answer: the function still runs the
-  real `season_average_starter_value()` simulation over the (unintentionally
-  unrestricted) pool and returns whichever candidate empirically maximizes
-  marginal value, so a nonsensical drop (cutting a strong bench WR to make
-  room for a mediocre backup QB) should simply lose to the sensible one on
-  real value — the same way `assign_starters()` already lets the
-  highest-*value* eligible player win a SUPER_FLEX slot regardless of
-  position, correctly reflecting "QBs are the practical SUPER_FLEX
-  occupant" through market value rather than a hardcoded rule. The cost is
-  scope, not correctness: the docstring's "restricts the search" claim
-  doesn't hold here, and every on-demand lookup (Draft Plan tab's
-  player-projection dropdown) searches the *entire* bench instead of a
-  realistically narrowed one.
-  Worth a deliberate decision, not an immediate fix: either (a) document
-  that the restriction is intentionally a no-op in a superflex league and
-  correctness rests entirely on the simulation, or (b) add a real
-  SUPER_FLEX-aware narrowing (e.g., only fold in RB/WR/TE once the
-  candidate's own position genuinely runs out of meaningful bench
-  competitors) if the search-space cost ever matters at scale. Add a
-  superflex-league test case either way — confirmed gap in the current
-  suite. Checked whether this same naive "SUPER_FLEX = any of 4 positions
-  equally" assumption shows up anywhere else with real consequence (not
-  just search-space cost) and didn't find one: `_position_starter_demand()`
-  already models SUPER_FLEX as QB-specific demand for replacement-level/VOR
-  purposes (`.claude/conventions/valuation_principles.md`'s "superflex
-  inflates QB value" rule), and `assign_starters()`'s greedy value-based
-  fill already lets real market value decide who wins the slot — this
-  function is the one place the "equally eligible" framing leaked into
-  code without a value-simulation backstop.
-- [ ] **RT-18: Trade evaluator/optimizer should call out non-obvious value,
-  not just lineup/asset deltas** (user-flagged 2026-08-06) —
-  `evaluate_trade()`'s two numbers (season-average lineup value, market
-  asset value) are the right foundation but miss real trade value that
-  doesn't show up in either: closing a bye-week gap, a future pick's value
-  in context, or a handcuff to a player already on the roster. All three
-  are already computable from existing primitives, not a new data pull or
-  model:
-  - **Bye-week gap closing/opening** — `gap_delta(before_roster,
-    after_roster, players, byes, league)` already exists and is used
-    exactly this way elsewhere (`sellable_players`'s "would dropping this
-    open a gap" check, the Draft Plan's `alternate_gap_note`/
-    `weekly_gap_alerts`). Running it on the trade's before/after rosters
-    would directly answer "does this trade fix or create a weekly starter
-    gap," a callout `evaluate_trade()` doesn't currently surface at all.
-  - **Future pick value in context** — `pick_trade_values()` already
-    computes and ranks every pick leaguewide; a trade involving a pick
-    could note where it falls in that ranking (e.g., "currently the #2
-    remaining pick this class") instead of a bare number, using data the
-    trade tab already loads (`state["pick_trade_values"]`).
-  - **Handcuff to a current roster player** — `handcuff_map()`/
-    `roster_handcuff_status()` already back the Roster tab's handcuff
-    section and the big board's "Handcuff To" column; checking whether an
-    incoming player is a handcuff to one of the *receiving* roster's own
-    current RBs is the same lookup, just pointed at the trade's incoming
-    side instead of the whole roster.
-  - **Buried on one bench, would start on the other** (user-flagged
-    2026-08-07, expanding this item) — a player who can't crack the
-    sending team's lineup but would immediately start for the receiving
-    team is a real, mutually-legible reason a trade makes sense even when
-    raw asset value is close to even: the sender gives up a player they
-    weren't deploying anyway (low real cost to them), and the receiver
-    gets an immediate lineup upgrade. This is partially already implicit
-    in each side's own `lineup_delta` — a bench-to-starter jump shows up
-    as a bigger value swing for the receiver than the raw `adj_value` gap
-    alone would suggest — but it deserves to be its own named callout
-    rather than staying buried in an aggregate number, especially in a
-    multi-asset trade where it could be one of several offsetting moves.
-    Computable from primitives that already exist: whether a player is
-    currently a bench, not starting, player for the sender is exactly
-    what `lineup_breakdown()`'s starters/bench split already answers for
-    one roster; whether they'd start for the receiver is the same check
-    against that side's post-trade roster (`evaluate_trade()` already
-    computes a full `assign_starters()` pass for `roster_after` — the
-    piece that's missing is exposing *which* players landed in the
-    starting lineup, not just the aggregate value, so this would need a
-    small addition there, not a new simulation). The *ideal* shape this
-    points at — both sides trading away a player who's stuck behind
-    someone on their own roster but would start for the other side, a
-    genuine mutual unlock rather than one side just paying up — is worth
-    keeping in mind as a north star for `find_trade_offers()`'s ranking
-    eventually, not just something the manual evaluator narrates after
-    the fact, once the basic callout exists and this is picked up.
-  Composing these into `evaluate_trade()`'s/`find_trade_offers()`'s output
-  keeps this consistent with the "one valuation strategy" rule — no new
-  signal, just surfacing existing ones at the right moment. Worth deciding
-  during design whether these are free-text callouts (similar to
-  `multi_round_plan`'s `reason` field) or a structured per-signal list the
-  UI renders as tags/badges.
+
+**RT-17 (`best_position_relevant_drop()`'s superflex slot-type restriction)
+is resolved as documentation + test coverage, not a code change** — went
+with option (a) from the investigation: the "restrict to a shared slot
+type" narrowing is confirmed a no-op in this league's actual superflex
+format (`SUPERFLEX_ELIGIBLE_POSITIONS` is all four fantasy positions), but
+correctness never depended on that narrowing — the real
+`season_average_starter_value()` simulation already decides the right
+answer over whatever pool it's given. Added a docstring paragraph stating
+this explicitly (`dynasty_core/marginal_value.py`), and a superflex-league
+test case (`TestBestPositionRelevantDrop::test_superflex_league_still_finds_the_correct_cross_position_drop`,
+a cross-position bye-overlap scenario — a bench QB correctly beats a
+higher-raw-value bench WR) that closes the confirmed coverage gap. Real
+SUPER_FLEX-aware narrowing was deliberately not built: the search-space
+cost this would address isn't demonstrated to matter at this league's
+roster/bench sizes — solving it now would be building for a hypothetical,
+not an observed, problem.
+
+**RT-18 (trade evaluator/optimizer non-obvious-value callouts) is done** —
+see `docs/rookie-draft-big-board.md`'s "Trade evaluator"/"Trade-target
+optimizer" sections. `evaluate_trade()` now returns a `callouts` list
+(free-text, matching `multi_round_plan`'s `reason` field precedent) built
+from four composed primitives: `gap_delta()` in both directions for a bye
+gap opened/closed, the new `handcuff_targets()` (extracted from
+`draft_plan.py`'s `hypothetical_needs_and_handcuffs` into
+`dynasty_core/handcuffs.py` so both callers share it — no duplicated
+logic) for an incoming handcuff to a kept RB, `assign_starters()` +
+`ineligible_ids` filtering (`recommend_drop()`'s pattern) for a buried
+bench player given up or an instant starter received, and
+`pick_trade_values()`'s output ranked within each pick's own season for
+pick-in-context. All four new parameters (`handcuffs`/
+`outgoing_pick_names`/`incoming_pick_names`/`pick_value_table`) are
+optional, so every pre-existing call site/test keeps working unchanged.
+`find_trade_offers()` threads its own `handcuffs`/`pick_value_table`
+through to every `evaluate_trade()` call it makes.
 - [ ] **RT-19: A "summary" tab surfacing what actually needs attention,
   instead of reviewing every tab** (user-flagged 2026-08-06) — five tabs,
   each thorough for its own question, but nothing today answers "what do I
@@ -650,6 +593,37 @@ methodology.
   `:latest`/`:<short-sha>` tags, and the footer showing the version number
   with the short SHA alongside it for the precise-commit case, not instead
   of it.
+- [ ] **CQ-5: Represent draft-pick identity as structured fields at ingestion, not a
+  display string re-parsed downstream** (user-suggested, 2026-08-07, filed while
+  reviewing the RT-18 pick-callout season bug above) — `pick_trade_values()` already
+  builds a formatted `"pick"` label per row (`"2026 Pick 1.01"` this season, `"2027
+  1st"` next season) as effectively the only column that encodes season/round, so
+  every downstream consumer that needs the season or round has to re-parse that label
+  — `_pick_context_callouts()`'s now-fixed `" Pick "` split was one instance;
+  `trade_tab.py`'s pick-selection/labeling helpers likely re-derive similarly. The
+  general principle: parse an externally- or internally-generated composite string
+  once, at the point it's produced, into real fields with a well-defined "unknown"
+  case — not repeatedly downstream, where each call site can (and, once already did)
+  parse it differently or incompletely. Concretely: give `pick_trade_values()`'s output
+  real `season`/`round` (and `slot` where it exists) columns alongside the display
+  `"pick"` label, and move every downstream consumer that currently
+  slices/splits/matches the label for meaning (grouping by class, sorting by round)
+  over to those columns instead — the label stays purely a rendering concern. Distinct
+  from `pick_trade_values()`'s own name-string matching against FantasyCalc's data
+  (`valuation_principles.md`'s "opaque keys" rule) — that's an external join key and
+  has to stay a string match; this is about not re-deriving *this codebase's own*
+  already-known structure from a string it built. Cleanup scope, not urgent — no
+  known live bug beyond the one already fixed above.
+
+**CQ-4 (`gather_state()`'s duplicated handcuff-target computation) is
+fixed** — `state.py` now calls the shared `handcuff_targets()` helper
+directly instead of its own inline copy. Caught in the same pass: the
+local variable this replaced was itself named `handcuff_targets`, shadowing
+the imported function of the same name — renamed to `user_handcuff_targets`
+and fixed the one other call site (`build_big_board(...)`) that had been
+silently about to receive the function object instead of the computed dict
+once the shadowing local was removed.
+
 ## Deferred / low priority
 
 Judged not worth the time right now; revisit only if the underlying

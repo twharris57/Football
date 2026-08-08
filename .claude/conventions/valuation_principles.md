@@ -316,3 +316,42 @@ rule, specifically for starter assignment: a parallel `assign_starters()`
 call site is a second implementation of "who's starting," not a new
 question, and it will silently drift from the established one the moment
 it forgets a filter the others already carry.
+
+## A composite label needs a parser that handles every format its own source can produce
+
+`_pick_context_callouts()` (`trade.py`, RT-18, 2026-08-07 review) derived a
+traded pick's season/class by splitting its display name on the literal
+substring `" Pick "` — correct for `pick_trade_values()`'s current-season
+name format (`"2026 Pick 1.01"`), but that same function also emits a
+structurally different next-season format with no `" Pick "` substring at
+all (`"2027 1st"`, built from `ROUND_ORDINAL`, since there's no real draft
+slot to name a future pick by yet). Splitting on an absent substring
+returns the original string untouched, so every next-season pick's
+"season" silently became its own full pick name — not an exception, not
+an empty result, just a wrong-but-plausible-looking one: every next-season
+pick always ranked `#1` in a one-member "class" whose printed label was
+the garbled pick name instead of a year. The bug was invisible in review
+because the one new test exercised only the current-season format the
+code was written against, never the next-season format the same producer
+function also emits.
+
+**The rule**: when a field is a formatted display string produced by a
+function that itself emits more than one shape for different inputs (a
+per-slot name this season vs. a per-round name next season; a singular vs.
+plural label; an abbreviated vs. full form), parsing code downstream must
+be checked against every shape that producer can emit, not just the shape
+the immediate use case happened to be written against. Trace the value
+back to where it's constructed — here, `pick_trade_values()`'s two
+separate `rows.append()` blocks, one per season — and check each branch,
+not just the one the new code's own test picked. Prefer parsing on a
+stable, format-independent anchor (a leading year, a delimiter guaranteed
+present in every format) over a substring that only some formats actually
+contain.
+
+The anchor-based parse above is the immediate fix; the sturdier version is
+not parsing at all downstream. If a value's structure (a pick's
+season/round) is already known at the point its display label is built,
+attach it as its own field there and have every consumer read the field —
+never re-derive it from the label later, where each call site can (and
+here, already did) get the derivation subtly wrong in its own way. Tracked
+as a deferred cleanup, `CQ-5` in `.claude/PROJECT_PLAN.md`.

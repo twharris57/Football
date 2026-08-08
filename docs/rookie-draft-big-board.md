@@ -423,6 +423,26 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   - A pick with no resolvable value (the same FantasyCalc pick-naming-mismatch
     gap `pick_trade_values` already documents) contributes `0` to that
     side's asset value, surfaced to the user rather than silently wrong.
+  - **Non-obvious-value callouts** (RT-18) — `callouts`, a list of
+    plain-text notes surfacing value the two headline deltas alone can
+    miss, all composed from existing primitives (no new signal, per
+    `.claude/conventions/valuation_principles.md`'s "one valuation
+    strategy" rule): a weekly starting gap this trade opens or closes
+    (`gap_delta()`, called in both directions — swapping before/after finds
+    the "closes an existing gap" case, not just "opens a new one"); an
+    incoming player who handcuffs one of this roster's own *kept* RBs
+    (`handcuff_targets()` in `dynasty_core/handcuffs.py`, shared with the
+    Draft Plan's identical "also handcuffs your own X" reason — a starter
+    also leaving in the same trade doesn't count); an outgoing player who
+    wasn't even starting here (a low real cost to give up) or an incoming
+    one who'd start immediately (real value beyond raw `adj_value`), via
+    the same `assign_starters()` + `ineligible_ids` filtering pattern
+    `recommend_drop()` uses; and where an involved pick ranks within its
+    own season's class specifically (not the whole leaguewide table), from
+    `pick_trade_values()`'s own output. `handcuffs`/`outgoing_pick_names`/
+    `incoming_pick_names`/`pick_value_table` are optional parameters —
+    omitting them just skips the callouts that need them, so every
+    pre-existing caller/test keeps working unchanged.
 - **Trade-target optimizer** (`find_trade_offers()`) — one step earlier
   than the evaluator above: given one asset (player or pick, not a bundle)
   on a partner's roster, is it worth pursuing and what should be offered
@@ -442,9 +462,12 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   of zero. Combos touching one of the partner's current `need_positions`
   rank ahead of otherwise-equal alternatives (a tiebreaker only, not a
   second gate). Returns up to `top_n`, empty if nothing clears the bar.
-  Lives in the Trade Evaluator tab below the manual evaluator. Out of
-  scope: multi-asset targets, 3-way trades, and improving an offer someone
-  else proposed *to* us (tracked in `.claude/PROJECT_PLAN.md`).
+  `handcuffs` and `pick_value_table` (already required here for the offer
+  search itself) pass straight through to every `evaluate_trade()` call for
+  the same `callouts` the manual evaluator surfaces above. Lives in the
+  Trade Evaluator tab below the manual evaluator. Out of scope: multi-asset
+  targets, 3-way trades, and improving an offer someone else proposed *to*
+  us (tracked in `.claude/PROJECT_PLAN.md`).
 - **Bye-week impact** and **weekly gaps** — the former
   (`roster_bye_conflicts`) shows every week with an active-roster player on
   bye: who's out, who fills in, and the resulting delta to optimal

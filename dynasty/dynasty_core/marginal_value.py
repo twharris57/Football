@@ -79,6 +79,26 @@ def best_position_relevant_drop(
     per-round loop — evaluating every drop option for every candidate would
     multiply that pass's cost by the search pool size. Meant for on-demand
     lookup (one candidate at a time, e.g. a UI dropdown selection).
+
+    In a league with a `SUPER_FLEX` slot (this league, always -
+    `SUPERFLEX_ELIGIBLE_POSITIONS` is all four fantasy positions by
+    definition), the "restrict to a shared slot type" narrowing above is a
+    no-op for every candidate: `eligible_positions` always expands to every
+    fantasy position, so `drop_pool` is effectively the same as
+    `recommend_drop()`'s whole-roster pool (RT-17, confirmed 2026-08-06 -
+    `.claude/PROJECT_PLAN.md`). This doesn't make the *result* wrong: the
+    search still runs the real `season_average_starter_value()` simulation
+    over that pool and returns whichever drop empirically maximizes
+    marginal value, so correctness rests entirely on the simulation, not on
+    the narrowing - the same way `assign_starters()` already lets the
+    highest-*value* eligible player win a SUPER_FLEX slot regardless of
+    position rather than a hardcoded rule. The cost is scope only: every
+    on-demand lookup in this league searches the whole bench instead of a
+    realistically narrowed one. Deliberately left as-is rather than adding
+    real SUPER_FLEX-aware narrowing - the search-space cost isn't
+    demonstrated to matter at this league's roster/bench sizes, and
+    building a narrowing rule for a cost that hasn't actually shown up
+    would be solving a hypothetical problem instead of a real one.
     """
     candidate_position = players.get(candidate_id, {}).get("position")
     # Gated on whether the league's actual roster_positions has that slot

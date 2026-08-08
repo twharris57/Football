@@ -329,6 +329,175 @@ class TestEvaluateTrade:
         assert my_side["asset_value_delta"] == pytest.approx(-partner_side["asset_value_delta"])
 
 
+class TestEvaluateTradeCallouts:
+    """RT-18: evaluate_trade() should surface non-obvious value beyond the lineup/asset
+    deltas - a bye-week gap opened or closed, a handcuff to a kept RB, a buried bench
+    player given up or an instant starter received, and a traded pick's rank in its
+    own class - each composed from an existing primitive, not a new signal."""
+
+    def test_omitting_handcuffs_and_pick_context_means_no_error_and_no_such_callouts(self):
+        # Omitting handcuffs/pick names/pick_value_table (the pre-RT-18 call
+        # shape, still used by every other existing test in this file) must
+        # not error - it just means those two specific callouts can't fire.
+        # (The bye-gap/buried-bench/instant-starter callouts don't depend on
+        # this optional context, so they're exercised in their own tests
+        # below rather than asserted away here.)
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": ["old_wr"], "taxi": [], "reserve": []}
+        players = {"old_wr": make_player("WR"), "new_wr": make_player("WR")}
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("old_wr", 100), fc_entry("new_wr", 200)])
+
+        result = dc.evaluate_trade(roster, ["old_wr"], ["new_wr"], players, fc_by_id, {}, league)
+
+        assert not any("handcuffs" in c or "remaining pick" in c for c in result["callouts"])
+
+    def test_bye_gap_callout_fires_when_trade_opens_a_new_gap(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {
+            "wr_keep": make_player("WR", team="AAA", full_name="Keep WR"),
+            "wr_out": make_player("WR", team="BBB", full_name="Out WR"),
+            "wr_in": make_player("WR", team="AAA", full_name="In WR"),  # same bye as wr_keep
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr_keep", 100), fc_entry("wr_out", 100), fc_entry("wr_in", 100)]
+        )
+        roster = {"players": ["wr_keep", "wr_out"], "taxi": [], "reserve": []}
+        byes = {"AAA": 5, "BBB": 9}
+
+        result = dc.evaluate_trade(roster, ["wr_out"], ["wr_in"], players, fc_by_id, byes, league)
+
+        assert any("open a weekly starting gap in week(s) 5" in c for c in result["callouts"])
+
+    def test_bye_gap_callout_fires_when_trade_closes_an_existing_gap(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {
+            "wr_keep": make_player("WR", team="AAA", full_name="Keep WR"),
+            "wr_out": make_player("WR", team="AAA", full_name="Out WR"),  # same bye as wr_keep
+            "wr_in": make_player("WR", team="BBB", full_name="In WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr_keep", 100), fc_entry("wr_out", 100), fc_entry("wr_in", 100)]
+        )
+        roster = {"players": ["wr_keep", "wr_out"], "taxi": [], "reserve": []}
+        byes = {"AAA": 5, "BBB": 9}
+
+        result = dc.evaluate_trade(roster, ["wr_out"], ["wr_in"], players, fc_by_id, byes, league)
+
+        assert any("close an existing weekly starting gap in week(s) 5" in c for c in result["callouts"])
+
+    def test_handcuff_callout_fires_for_an_incoming_backup_to_a_kept_starter(self):
+        league = {"roster_positions": ["RB", "BN"]}
+        players = {
+            "rb_starter": make_player("RB", full_name="Starter RB"),
+            "hc_backup": make_player("RB", full_name="Backup RB"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("rb_starter", 300), fc_entry("hc_backup", 20)])
+        roster = {"players": ["rb_starter"], "taxi": [], "reserve": []}
+        handcuffs = {"rb_starter": "hc_backup"}
+
+        result = dc.evaluate_trade(
+            roster, [], ["hc_backup"], players, fc_by_id, {}, league, handcuffs=handcuffs
+        )
+
+        assert any("handcuffs your own Starter RB" in c for c in result["callouts"])
+
+    def test_buried_bench_and_instant_starter_callouts(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "bench_wr": make_player("WR", full_name="Bench WR"),
+            "new_wr": make_player("WR", full_name="New WR"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("bench_wr", 100), fc_entry("new_wr", 900)]
+        )
+        roster = {"players": ["starter_wr", "bench_wr"], "taxi": [], "reserve": []}
+
+        result = dc.evaluate_trade(roster, ["bench_wr"], ["new_wr"], players, fc_by_id, {}, league)
+
+        assert any("Bench WR wasn't even starting for you" in c for c in result["callouts"])
+        assert any("New WR would start for you immediately" in c for c in result["callouts"])
+
+    def test_pick_context_callout_ranks_within_the_picks_own_class(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": [], "taxi": [], "reserve": []}
+        players: dict[str, dict] = {}
+        fc_by_id: dict[str, dict] = {}
+        pick_value_table = pd.DataFrame(
+            [
+                {"pick": "2026 Pick 1.01", "owner": "x", "owner_roster_id": 1, "value": 500},
+                {"pick": "2026 Pick 1.02", "owner": "x", "owner_roster_id": 1, "value": 300},
+                {"pick": "2026 Pick 2.05", "owner": "x", "owner_roster_id": 1, "value": 50},
+                {"pick": "2027 Pick 1.01", "owner": "x", "owner_roster_id": 1, "value": 400},
+            ]
+        )
+
+        result = dc.evaluate_trade(
+            roster, [], [], players, fc_by_id, {}, league,
+            outgoing_pick_value=300, outgoing_pick_names=["2026 Pick 1.02"], pick_value_table=pick_value_table,
+        )
+
+        # #2 within the 2026 class specifically (500 > 300 > 50), not #2
+        # across the whole table (which also has the 2027 pick).
+        assert any(
+            "2026 Pick 1.02 is currently the #2 remaining pick in the 2026 class (value 300)" in c
+            for c in result["callouts"]
+        )
+
+    def test_pick_context_callout_handles_next_seasons_round_only_pick_name_format(self):
+        # pick_trade_values() names next-season picks "{season} {round}st/nd/..."
+        # (e.g. "2027 1st") since there's no real draft object yet to assign
+        # a slot - no " Pick " substring, unlike this season's slot-specific
+        # "2026 Pick R.SS" names. Splitting on " Pick " to derive "season"
+        # would leave a next-season pick's season as its own full name,
+        # stranding it alone in a one-pick class that always ranks #1 with a
+        # garbled season label - this locks in the leading-year-based fix.
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": [], "taxi": [], "reserve": []}
+        players: dict[str, dict] = {}
+        fc_by_id: dict[str, dict] = {}
+        pick_value_table = pd.DataFrame(
+            [
+                {"pick": "2027 1st", "owner": "x", "owner_roster_id": 1, "value": 400},
+                {"pick": "2027 2nd", "owner": "x", "owner_roster_id": 1, "value": 250},
+                {"pick": "2026 Pick 1.01", "owner": "x", "owner_roster_id": 1, "value": 500},
+            ]
+        )
+
+        result = dc.evaluate_trade(
+            roster, [], [], players, fc_by_id, {}, league,
+            outgoing_pick_value=250, outgoing_pick_names=["2027 2nd"], pick_value_table=pick_value_table,
+        )
+
+        # #2 within the 2027 class (400 > 250), not stranded alone at #1 in
+        # a one-row class named after its own full pick name.
+        assert any(
+            "2027 2nd is currently the #2 remaining pick in the 2027 class (value 250)" in c
+            for c in result["callouts"]
+        )
+
+    def test_pick_context_callout_does_not_crash_on_a_pick_name_with_no_leading_year(self):
+        # A pick name with nothing matching the leading-year pattern (never
+        # a real pick_trade_values() output, but shouldn't be able to crash
+        # this) must fall back gracefully - its own name as an isolated
+        # "season" - rather than leaving a NaN season that breaks the
+        # int-cast rank column for every other pick's callout too.
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": [], "taxi": [], "reserve": []}
+        players: dict[str, dict] = {}
+        fc_by_id: dict[str, dict] = {}
+        pick_value_table = pd.DataFrame(
+            [{"pick": "weird_pick_name", "owner": "x", "owner_roster_id": 1, "value": 100}]
+        )
+
+        result = dc.evaluate_trade(
+            roster, [], [], players, fc_by_id, {}, league,
+            outgoing_pick_value=100, outgoing_pick_names=["weird_pick_name"], pick_value_table=pick_value_table,
+        )
+
+        assert any("weird_pick_name is currently the #1 remaining pick" in c for c in result["callouts"])
+
+
 class TestFindTradeOffers:
     """find_trade_offers should answer 'is this target worth pursuing' by direct reuse of
     evaluate_trade(), then search the caller's own sellable players/picks for offers a
@@ -394,6 +563,40 @@ class TestFindTradeOffers:
 
         assert len(result["offers"]) == 1
         assert [asset["id"] for asset in result["offers"][0]["combo"]] == ["depth_wr"]
+
+    def test_returned_offers_carry_real_callouts_not_the_stripped_search_pass(self):
+        # The search loop evaluates every prefiltered combo with
+        # compute_callouts=False (computing callouts for combos that get
+        # filtered out or don't make top_n was ~90% of this search's cost
+        # for value no caller ever saw) and only re-evaluates the final
+        # top_n combos with callouts on. This locks in that a returned
+        # offer carries real callouts, not the stripped search-pass ones -
+        # depth_wr is pure bench here (never a starter in a 1-WR league),
+        # so giving it up should surface the "wasn't even starting" callout.
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": ["starter_wr", "depth_wr"], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "depth_wr": make_player("WR", full_name="Depth WR"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+        }
+        players["starter_wr"]["years_exp"] = 5
+        players["depth_wr"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("depth_wr", 100), fc_entry("target_wr", 100)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="target_wr",
+        )
+
+        assert any(
+            "Depth WR wasn't even starting for you" in c
+            for c in result["offers"][0]["your_side"]["callouts"]
+        )
 
     def test_lopsided_combo_is_filtered_even_when_cheap_for_you(self):
         # cheap_wr (120) for target_wr (200) looks great for you in
@@ -500,6 +703,7 @@ class TestFindTradeOffers:
         best = result["offers"][0]
         assert [asset["id"] for asset in best["combo"]] == ["rb_offer"]
         assert best["partner_need_match"] is True
+        assert best["partner_need_positions"] == frozenset({"RB"})
 
     def test_pool_and_combo_size_bounds_cap_the_search_regardless_of_pool_size(self):
         # 30 owned picks, no sellable players at all - the pool must still
@@ -603,3 +807,61 @@ class TestFindTradeOffers:
         assert result["target_value"] == 0.0
         assert result["offers"] == []
         assert not math.isnan(result["target_read"]["asset_value_delta"])
+
+    def test_unmatched_sellable_player_falls_back_to_zero_value_not_nan(self):
+        # unmatched_wr has no FantasyCalc entry, so sellable_players()'s
+        # adj_value for it comes back as real NaN once its row goes through
+        # a DataFrame (not a None a bare `or 0.0` would catch - NaN is
+        # truthy in Python). The pool must fall back to 0.0 for it, like
+        # every other possibly-missing-value spot in this codebase, rather
+        # than letting a NaN combo value slip into a displayed offer.
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {
+            "roster_id": 1,
+            "players": ["starter_wr", "priced_wr", "unmatched_wr"],
+            "taxi": [],
+            "reserve": [],
+        }
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "priced_wr": make_player("WR", full_name="Priced WR"),
+            "unmatched_wr": make_player("WR", full_name="Unmatched WR"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+        }
+        players["priced_wr"]["years_exp"] = 3
+        players["unmatched_wr"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("priced_wr", 150), fc_entry("target_wr", 150)]
+        )  # unmatched_wr deliberately has no FantasyCalc entry
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="target_wr",
+        )
+
+        assert any(a["id"] == "unmatched_wr" for offer in result["offers"] for a in offer["combo"])
+        assert not any(math.isnan(a["value"]) for offer in result["offers"] for a in offer["combo"])
+
+    def test_handcuffs_and_pick_value_table_pass_through_to_target_read_callouts(self):
+        # RT-18: find_trade_offers() should thread its own handcuffs/
+        # pick_value_table into evaluate_trade()'s callouts, not just use
+        # them for the offer search itself.
+        league = {"roster_positions": ["RB", "BN"]}
+        your_roster = {"roster_id": 1, "players": ["rb_starter"], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["hc_backup"], "taxi": [], "reserve": []}
+        players = {
+            "rb_starter": make_player("RB", full_name="Starter RB"),
+            "hc_backup": make_player("RB", full_name="Backup RB"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("rb_starter", 300), fc_entry("hc_backup", 20)])
+        handcuffs = {"rb_starter": "hc_backup"}
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            handcuffs=handcuffs, target_player_id="hc_backup",
+        )
+
+        assert any("handcuffs your own Starter RB" in c for c in result["target_read"]["callouts"])

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import itertools
+from collections.abc import Sequence
 from typing import Any
 
 import pandas as pd
 
 from .byes import gap_delta
 from .constants import FANTASY_POSITIONS, FLEX_ELIGIBLE_POSITIONS
-from .lineup import roster_total_capacity
+from .handcuffs import handcuff_targets as handcuff_targets_for
+from .lineup import assign_starters, player_value_rows, roster_total_capacity
 from .marginal_value import recommend_drop, season_average_starter_value
 from .player_pools import roster_fantasy_players
 from .roster_needs import (
@@ -103,6 +105,123 @@ def sellable_players(
     return sellable.sort_values("adj_value", ascending=False, na_position="last").reset_index(drop=True)
 
 
+def _bye_gap_callouts(
+    before_roster: dict, after_roster: dict, players: dict[str, dict], byes: dict[str, int], league: dict
+) -> list[str]:
+    """Weeks this trade newly breaks or newly fixes a dedicated-slot weekly gap.
+
+    Reuses `gap_delta()` in both directions - swapping before/after finds
+    the reverse case (a gap that existed before but not after), the same
+    primitive `alternate_gap_note`/`sellable_players` already use, just
+    read backwards - not a second gap-detection model.
+    """
+    callouts = []
+    worsened = gap_delta(before_roster, after_roster, players, byes, league)
+    if not worsened.empty:
+        weeks = ", ".join(str(w) for w in worsened["week"])
+        callouts.append(f"would open a weekly starting gap in week(s) {weeks}")
+    closed = gap_delta(after_roster, before_roster, players, byes, league)
+    if not closed.empty:
+        weeks = ", ".join(str(w) for w in closed["week"])
+        callouts.append(f"would close an existing weekly starting gap in week(s) {weeks}")
+    return callouts
+
+
+def _handcuff_callouts(
+    current_ids: list[str],
+    outgoing_set: set[str],
+    incoming_player_ids: list[str],
+    players: dict[str, dict],
+    handcuffs: dict[str, str],
+) -> list[str]:
+    """Incoming players that handcuff one of this roster's own current (kept) RBs."""
+    if not handcuffs:
+        return []
+    keep_ids = [pid for pid in current_ids if pid not in outgoing_set]
+    targets = handcuff_targets_for(keep_ids, players, handcuffs)
+    return [f"also handcuffs your own {targets[pid]}" for pid in incoming_player_ids if targets.get(pid)]
+
+
+def _buried_to_starter_callouts(
+    current_ids: list[str],
+    roster_after_drops: list[str],
+    outgoing_player_ids: list[str],
+    incoming_player_ids: list[str],
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    ineligible_ids: frozenset[str],
+    league: dict,
+) -> list[str]:
+    """Outgoing players who weren't even starting here, and incoming players who immediately would.
+
+    A genuine mutual-unlock reason a trade can make sense even at close to
+    even raw asset value - a bench player is a low real cost for the
+    sender to give up, and an instant starter is real value for the
+    receiver, neither of which shows up as anything special in the
+    lineup/asset deltas alone. Same `assign_starters()` + `ineligible_ids`
+    filtering pattern as `recommend_drop()`.
+    """
+
+    def _starter_ids(player_ids: list[str]) -> set[str]:
+        rows = [r for r in player_value_rows(player_ids, players, fc_by_sleeper_id) if r["player_id"] not in ineligible_ids]
+        return {pid for _, pid in assign_starters(rows, league["roster_positions"]) if pid}
+
+    before_starters = _starter_ids(current_ids)
+    after_starters = _starter_ids(roster_after_drops)
+
+    callouts = []
+    for player_id in outgoing_player_ids:
+        if player_id in current_ids and player_id not in before_starters:
+            name = players.get(player_id, {}).get("full_name")
+            callouts.append(f"{name} wasn't even starting for you")
+    for player_id in incoming_player_ids:
+        if player_id in after_starters:
+            name = players.get(player_id, {}).get("full_name")
+            callouts.append(f"{name} would start for you immediately")
+    return callouts
+
+
+def _pick_context_callouts(pick_names: list[str], pick_value_table: pd.DataFrame | None) -> list[str]:
+    """Where each involved pick falls in its own class's value ranking, not just a bare number.
+
+    `pick_value_table` is `pick_trade_values()`'s leaguewide output (every
+    owner's picks, one row per pick) - ranked here within the pick's own
+    season ("class"), not the whole table, so "the #2 pick" means #2 among
+    that year's picks specifically. The leading 4-digit year is the only
+    season anchor common to both of `pick_trade_values()`'s name formats -
+    this season's slot-specific "2026 Pick 1.01" and next season's
+    round-only "2027 1st" (no real draft object yet to assign a slot).
+    Splitting on " Pick " instead would leave a next-season pick's "season"
+    as its own full name, putting it alone in a one-pick class that always
+    ranks #1 - fixed after verifying live (RT-18 fix-before-merge review,
+    2026-08-07 - see `.claude/conventions/valuation_principles.md`).
+    """
+    if not pick_names or pick_value_table is None or pick_value_table.empty:
+        return []
+    ranked = pick_value_table.dropna(subset=["value"]).copy()
+    if ranked.empty:
+        return []
+    # A name with no leading year (never a real pick_trade_values() output,
+    # but happens in tests using placeholder pick names) falls back to its
+    # own full name as "season" - an isolated one-row group, same graceful
+    # degradation a real but literally unparseable name would need, rather
+    # than a NaN group that breaks the int cast below.
+    ranked["season"] = ranked["pick"].str.extract(r"^(\d{4})")[0].fillna(ranked["pick"])
+    ranked["rank"] = ranked.groupby("season")["value"].rank(ascending=False, method="min").astype(int)
+    rank_by_pick = dict(zip(ranked["pick"], zip(ranked["rank"], ranked["value"])))
+    season_by_pick = dict(zip(ranked["pick"], ranked["season"]))
+
+    callouts = []
+    for pick_name in pick_names:
+        info = rank_by_pick.get(pick_name)
+        if info is None:
+            continue
+        rank, value = info
+        season = season_by_pick.get(pick_name, pick_name)
+        callouts.append(f"{pick_name} is currently the #{rank} remaining pick in the {season} class (value {value:.0f})")
+    return callouts
+
+
 def evaluate_trade(
     roster: dict,
     outgoing_player_ids: list[str],
@@ -113,6 +232,11 @@ def evaluate_trade(
     league: dict,
     outgoing_pick_value: float = 0.0,
     incoming_pick_value: float = 0.0,
+    handcuffs: dict[str, str] | None = None,
+    outgoing_pick_names: list[str] | None = None,
+    incoming_pick_names: list[str] | None = None,
+    pick_value_table: pd.DataFrame | None = None,
+    compute_callouts: bool = True,
 ) -> dict[str, Any]:
     """Evaluate one side of a proposed multi-asset trade (players + picks) for one roster.
 
@@ -133,6 +257,26 @@ def evaluate_trade(
     impact including those forced cuts, while `lineup_delta` stays the
     trade-only number. Newly-incoming players are protected from being
     recommended for their own trade's forced cut via `exclude_ids`.
+
+    `callouts` (RT-18) surfaces non-obvious value the two headline deltas
+    can miss - a bye-week gap this trade opens or closes, an incoming
+    player who handcuffs one of this roster's own current RBs, an outgoing
+    player who was buried on this bench or an incoming one who'd start
+    immediately, and where an involved pick ranks in its own class. All
+    four compose existing primitives (`gap_delta`, `handcuff_targets`,
+    `assign_starters`, `pick_trade_values()`'s output) rather than a new
+    signal - see `.claude/conventions/valuation_principles.md`'s "one
+    valuation strategy" rule. `handcuffs`/`outgoing_pick_names`/
+    `incoming_pick_names`/`pick_value_table` are optional so existing
+    callers/tests that don't have pick or handcuff context on hand keep
+    working unchanged; omitting them just means those specific callouts
+    don't fire. `compute_callouts=False` skips all four entirely (`callouts`
+    comes back `[]`) - for a caller like `find_trade_offers()` that runs
+    this in a combinatorial search loop and only needs callouts for the
+    handful of combos it actually surfaces, computing them for every combo
+    explored is pure waste (verified live: ~90% of this function's cost
+    with callouts on, for a combo that gets filtered out or ranked below
+    `top_n` and never shown).
     """
     current_ids = list(roster.get("players") or [])
     outgoing_set = set(outgoing_player_ids)
@@ -175,6 +319,19 @@ def evaluate_trade(
         else after_value
     )
 
+    callouts: list[str] = []
+    if compute_callouts:
+        after_roster = {**roster, "players": roster_after_drops}
+        callouts = (
+            _bye_gap_callouts(roster, after_roster, players, byes, league)
+            + _handcuff_callouts(current_ids, outgoing_set, incoming_player_ids, players, handcuffs or {})
+            + _buried_to_starter_callouts(
+                current_ids, roster_after_drops, outgoing_player_ids, incoming_player_ids,
+                players, fc_by_sleeper_id, ineligible_ids, league,
+            )
+            + _pick_context_callouts((outgoing_pick_names or []) + (incoming_pick_names or []), pick_value_table)
+        )
+
     return {
         "lineup_delta": after_value - before_value,
         "lineup_delta_after_drops": after_value_post_drops - before_value,
@@ -183,6 +340,7 @@ def evaluate_trade(
         "roster_size_after": len(roster_after),
         "capacity": capacity,
         "recommended_drops": recommended_drops,
+        "callouts": callouts,
     }
 
 
@@ -195,6 +353,7 @@ def find_trade_offers(
     league: dict,
     replacement_level: dict[str, float],
     pick_value_table: pd.DataFrame,
+    handcuffs: dict[str, str] | None = None,
     target_player_id: str | None = None,
     target_pick_name: str | None = None,
     top_n: int = 3,
@@ -228,12 +387,18 @@ def find_trade_offers(
     `TRADE_OFFER_PARTNER_TOLERANCE_PCT` of zero - the one hard acceptance
     gate. Combos touching one of the partner's current `need_positions`
     (today's roster, not post-trade) rank ahead of otherwise-equal
-    alternatives, as a tiebreaker only. Ranked best-for-you first, then
-    need-match, then fewest assets. Returns up to `top_n`, empty if
-    nothing clears the bar.
+    alternatives, as a tiebreaker only - each offer's `partner_need_match`
+    (bool) and `partner_need_positions` (which position(s) specifically)
+    reflect this. Ranked best-for-you first, then need-match, then fewest
+    assets. Returns up to `top_n`, empty if nothing clears the bar.
 
     `combos_considered`/`combos_evaluated` are the raw and post-prefilter
     combo counts, so an empty result can say something concrete.
+
+    `handcuffs` and `pick_value_table` pass straight through to every
+    `evaluate_trade()` call for its `callouts` (RT-18) - `pick_value_table`
+    is already required here for offer search, so it's reused rather than
+    a second lookup table.
     """
     if bool(target_player_id) == bool(target_pick_name):
         raise ValueError("Exactly one of target_player_id or target_pick_name must be given.")
@@ -243,12 +408,15 @@ def find_trade_offers(
     if target_player_id:
         target_entry = fc_by_sleeper_id.get(target_player_id)
         raw_target_value = target_entry.get("adj_value") if target_entry else None
-        target_read = evaluate_trade(your_roster, [], [target_player_id], players, fc_by_sleeper_id, byes, league)
+        target_read = evaluate_trade(
+            your_roster, [], [target_player_id], players, fc_by_sleeper_id, byes, league, handcuffs=handcuffs
+        )
     else:
         raw_target_value = pick_value_by_name.get(target_pick_name)
         target_read = evaluate_trade(
             your_roster, [], [], players, fc_by_sleeper_id, byes, league,
             incoming_pick_value=float(raw_target_value) if pd.notna(raw_target_value) else 0.0,
+            handcuffs=handcuffs, incoming_pick_names=[target_pick_name], pick_value_table=pick_value_table,
         )
 
     target_value_resolved = pd.notna(raw_target_value)
@@ -266,7 +434,12 @@ def find_trade_offers(
 
     your_sellable = sellable_players(your_roster, players, fc_by_sleeper_id, replacement_level, league, byes)
     pool = [
-        {"kind": "player", "id": row["player_id"], "label": row["name"], "value": row["adj_value"] or 0.0}
+        {
+            "kind": "player",
+            "id": row["player_id"],
+            "label": row["name"],
+            "value": row["adj_value"] if pd.notna(row["adj_value"]) else 0.0,
+        }
         for _, row in your_sellable.iterrows()
     ]
     your_picks = pick_value_table[pick_value_table["owner_roster_id"] == your_roster["roster_id"]]
@@ -294,49 +467,71 @@ def find_trade_offers(
                 continue
             prefiltered.append(combo)
 
-    tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * target_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)
-    offers = []
-    for combo in prefiltered:
+    def _evaluate_combo(combo: Sequence[dict], compute_callouts: bool) -> tuple[dict, dict]:
         combo_player_ids = [c["id"] for c in combo if c["kind"] == "player"]
+        combo_pick_names = [c["id"] for c in combo if c["kind"] == "pick"]
         combo_pick_value = sum(c["value"] for c in combo if c["kind"] == "pick")
 
         if target_player_id:
-            your_incoming, your_incoming_pick_value = [target_player_id], 0.0
-            partner_outgoing, partner_outgoing_pick_value = [target_player_id], 0.0
+            your_incoming, your_incoming_pick_value, your_incoming_pick_names = [target_player_id], 0.0, []
+            partner_outgoing, partner_outgoing_pick_value, partner_outgoing_pick_names = [target_player_id], 0.0, []
         else:
-            your_incoming, your_incoming_pick_value = [], target_value
+            your_incoming, your_incoming_pick_value, your_incoming_pick_names = [], target_value, [target_pick_name]
             partner_outgoing, partner_outgoing_pick_value = [], target_value
+            partner_outgoing_pick_names = [target_pick_name]
 
         your_side = evaluate_trade(
             your_roster, combo_player_ids, your_incoming, players, fc_by_sleeper_id, byes, league,
             outgoing_pick_value=combo_pick_value, incoming_pick_value=your_incoming_pick_value,
+            handcuffs=handcuffs, outgoing_pick_names=combo_pick_names, incoming_pick_names=your_incoming_pick_names,
+            pick_value_table=pick_value_table, compute_callouts=compute_callouts,
         )
         partner_side = evaluate_trade(
             partner_roster, partner_outgoing, combo_player_ids, players, fc_by_sleeper_id, byes, league,
             outgoing_pick_value=partner_outgoing_pick_value, incoming_pick_value=combo_pick_value,
+            handcuffs=handcuffs, outgoing_pick_names=partner_outgoing_pick_names, incoming_pick_names=combo_pick_names,
+            pick_value_table=pick_value_table, compute_callouts=compute_callouts,
         )
+        return your_side, partner_side
+
+    tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * target_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)
+    offers = []
+    for combo in prefiltered:
+        # compute_callouts=False here: this loop runs for every prefiltered
+        # combo just to filter/rank them, and only `top_n` ever get shown -
+        # computing full callouts (bye-gap/handcuff/buried-bench/pick-rank)
+        # for every one of them was ~90% of this search's cost for value no
+        # caller ever saw. Recomputed with callouts on, below, for only the
+        # combos that actually make the cut.
+        your_side, partner_side = _evaluate_combo(combo, compute_callouts=False)
         if partner_side["asset_value_delta"] < -tolerance:
             continue
 
-        partner_need_match = any(
-            c["kind"] == "player" and players.get(c["id"], {}).get("position") in partner_needs for c in combo
+        partner_need_positions = frozenset(
+            players.get(c["id"], {}).get("position")
+            for c in combo
+            if c["kind"] == "player" and players.get(c["id"], {}).get("position") in partner_needs
         )
         offers.append(
             {
                 "combo": list(combo),
                 "your_side": your_side,
                 "partner_side": partner_side,
-                "partner_need_match": partner_need_match,
+                "partner_need_match": bool(partner_need_positions),
+                "partner_need_positions": partner_need_positions,
             }
         )
 
     offers.sort(key=lambda o: (-o["your_side"]["asset_value_delta"], not o["partner_need_match"], len(o["combo"])))
+    offers = offers[:top_n]
+    for offer in offers:
+        offer["your_side"], offer["partner_side"] = _evaluate_combo(offer["combo"], compute_callouts=True)
 
     return {
         "target_value": target_value,
         "target_value_resolved": True,
         "target_read": target_read,
-        "offers": offers[:top_n],
+        "offers": offers,
         "combos_considered": combos_considered,
         "combos_evaluated": len(prefiltered),
     }
