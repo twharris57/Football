@@ -122,6 +122,7 @@ class TestRealDropReconciliation:
         "filler": make_player("WR", full_name="Filler"),
         "extra": make_player("WR", full_name="Extra"),
         "good_qb": make_player("QB", full_name="Good QB"),
+        "taxi_stud": make_player("WR", full_name="Taxi Stud"),
     }
     FC_BY_ID = dc.fc_value_by_sleeper_id(
         [
@@ -129,6 +130,7 @@ class TestRealDropReconciliation:
             fc_entry("filler", 100, position="WR"),
             fc_entry("extra", 10, position="WR"),
             fc_entry("good_qb", 300, position="QB"),
+            fc_entry("taxi_stud", 500, position="WR"),
         ]
     )
     OWNERSHIP = [
@@ -235,3 +237,39 @@ class TestRealDropReconciliation:
         # The confirmed frontier still advances (and feeds forward) even
         # though this specific round's drop couldn't be isolated.
         assert plan["hypothetical_ids_by_pick"][2] == ["surprise"]
+
+    def test_confirmed_drop_is_starter_ignores_taxi_players_value(self):
+        # A taxi player can never actually occupy a starting slot, no matter
+        # how high its value - it must not be able to "steal" the WR slot
+        # from the real active-roster starter in this is_starter check and
+        # mask that the confirmed drop really was a starter (fix-before-merge
+        # finding from the 2026-08-07 valuation review).
+        user_roster = {"players": ["old_wr", "filler", "taxi_stud"], "taxi": ["taxi_stud"], "reserve": []}
+        draft_snapshot = {
+            "confirmed_through_pick": 1,
+            "confirmed_roster": ["old_wr", "good_qb", "taxi_stud"],
+            "confirmed_drops": {"1": "filler"},
+        }
+
+        plan = dc.multi_round_plan(
+            ownership=self.OWNERSHIP,
+            user_roster_id=1,
+            current_pick_no=2,
+            available={},
+            players=self.PLAYERS,
+            fc_by_sleeper_id=self.FC_BY_ID,
+            user_roster=user_roster,
+            league=self.LEAGUE,
+            byes={},
+            handcuffs={},
+            real_picks_by_overall=self.REAL_PICKS_BY_OVERALL,
+            draft_snapshot=draft_snapshot,
+        )
+
+        round1 = plan["rounds"].iloc[0]
+        assert round1["drop_status"] == "confirmed"
+        assert round1["drop_name"] == "Filler"
+        # Filler (100) outvalues Old WR (50) for the one real WR slot -
+        # Taxi Stud (500) is ineligible to start at all, so it must not
+        # displace Filler from pre_round_starters.
+        assert bool(round1["drop_is_starter"]) is True

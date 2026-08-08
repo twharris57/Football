@@ -181,10 +181,13 @@ def multi_round_plan(
                 drop_info = players.get(confirmed_entry, {})
                 # is_starter: was this player a starter in the roster as it
                 # stood entering this round (hypothetical_ids, still
-                # accurate at this point in the loop)?
+                # accurate at this point in the loop)? Taxi/IR players are
+                # filtered out first - Sleeper doesn't allow them to occupy
+                # a starting slot, same as recommend_drop()'s eligible_rows.
                 pre_round_rows = player_value_rows(hypothetical_ids, players, fc_by_sleeper_id)
+                pre_round_eligible_rows = [r for r in pre_round_rows if r["player_id"] not in ineligible_ids]
                 pre_round_starters = {
-                    pid for _, pid in assign_starters(pre_round_rows, league["roster_positions"]) if pid
+                    pid for _, pid in assign_starters(pre_round_eligible_rows, league["roster_positions"]) if pid
                 }
                 drop = {
                     "player_id": confirmed_entry,
