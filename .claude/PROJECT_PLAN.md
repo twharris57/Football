@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-22`, `VA-5`, `CQ-5`, `DL-8`.
+below): `NB-2`, `RT-22`, `VA-5`, `CQ-5`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -222,6 +222,13 @@ Deliberately out of v1, not forgotten:
   per-candidate combinatorial search, not just within one partner's
   roster as RT-15 already considered) - not a small extension of RT-15's
   existing scope, a real architecture question of its own.
+  **Also noted 2026-08-08** (user-flagged, future option, not v1 scope):
+  besides the optional single-target filter above, also let the user scope
+  suggestions by position (e.g. "show me RB opportunities only") - a
+  second, independent optional filter within the same section, not a
+  replacement for the target filter. Not needed for the first cut; revisit
+  once leaguewide scanning itself is built and the section's filter UI
+  exists to extend.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all
@@ -581,3 +588,21 @@ assumption changes.
   Sleeper), so it's harmless to leave behind, just permanent clutter in
   `.cache/`. No retention/cleanup logic was built in `RT-20`'s first pass.
   Revisit only if `.cache/` growth ever actually matters.
+- [ ] **DL-9: Non-fantasy-position filtering happens per-consumer, not once
+  at ingest** (user-flagged 2026-08-08, verified during the RT-15 planning
+  pass) — `sleeper_api.get_players()` caches Sleeper's full ~14MB/~10k-player
+  dataset as-is (every NFL position, including defense/kicker/etc., which
+  this league's `roster_positions` has no slot for at all). Audited every
+  direct consumer of the raw `players` dict for a leak (`player_pools.py`'s
+  `rookie_pool`/`free_agent_pool`/`roster_fantasy_players`/
+  `fantasy_relevant_teamed_players`, `lineup.py`'s `player_value_rows`,
+  `roster_needs.py`'s `position_replacement_levels`, `trade.py`'s
+  candidate-building) — every one of them already checks
+  `position in FANTASY_POSITIONS` before a player reaches any real
+  computation, so no live bug was found. But the guarantee is enforced by
+  convention at each call site, not structurally at the source — a new
+  consumer that iterates the raw `players` dict and forgets the check
+  would silently let an irrelevant position through. Worth consolidating
+  to a single ingest-time (or single shared-helper) filter if a new
+  consumer of raw `players` is ever added; not urgent since nothing is
+  broken today.
