@@ -55,54 +55,29 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty — every finding from reviewing `feature/trade-callouts` (PR #29,
-2026-08-07) is fixed.
+Findings from reviewing `feature/summary-tab` (PR #30, 2026-08-08):
 
-- `_pick_context_callouts()`'s season/class grouping broke for every
-  next-season pick name. `season` is now derived from the leading 4-digit
-  year rather than splitting on `" Pick "` — handles both
-  `pick_trade_values()` name formats, with a fallback to the pick's own name
-  for the (never-real, but test-exercised) case of a name with no leading
-  year at all, so a malformed/placeholder name degrades gracefully instead
-  of crashing the rank computation. New tests cover the next-season format,
-  the malformed-name fallback, and the original current-season case. Durable
-  rule filed in `.claude/conventions/valuation_principles.md`'s "A composite
-  label needs a parser that handles every format its own source can
-  produce."
-- `find_trade_offers()`'s sellable-player pool used a bare
-  `row["adj_value"] or 0.0`, which doesn't catch `NaN` (a missing
-  `adj_value` becomes real `NaN`, not `None`, once `sellable_players()`'s
-  rows go through a `pd.DataFrame` — `NaN` is truthy in Python, so `or 0.0`
-  never fires). An unmatched sellable player's combo value silently stayed
-  `NaN` through the rest of the search instead of falling back to `0.0` like
-  every other missing-value spot in this codebase — same shape as
-  `valuation_principles.md`'s existing NaN rule, a new instance of it. Fixed
-  with an explicit `pd.notna()` check; new test confirms an unmatched
-  player's pool entry is `0.0`, not `NaN`.
-- The trade-target optimizer's "give" side (offer titles and the "You
-  give:" caption) showed only a bare player name and value with no
-  position, while the "receive" side showed `"Name (POS, value: X)"` via
-  `_trade_player_label()` — spotted live by the user
-  (`"J.J. McCarthy (value: 2400) → receive Rashee Rice (WR, value: 4292)"`).
-  New `_combo_asset_label()` helper in `trade_tab.py` renders a combo asset
-  in the same style as the target label, reused for both the give-side
-  listing and the offer title.
-- The trade-target optimizer got noticeably slow after RT-18 landed —
-  user-observed live, not a synthetic benchmark. Traced to `evaluate_trade()`
-  unconditionally computing all four `callouts` for every prefiltered combo
-  in `find_trade_offers()`'s search loop, even though only `top_n` (default
-  3) offers are ever shown — measured live at ~90% of the search's total
-  cost (1.95s → 0.21s with callouts stripped, on a 40-player/170-combo
-  synthetic benchmark) for value discarded on every combo that didn't make
-  the cut. Fixed with a new `evaluate_trade(..., compute_callouts=True)`
-  parameter: `find_trade_offers()`'s search loop now runs with it `False`
-  (filter/rank only) and re-evaluates just the final `top_n` combos with it
-  `True` to get their real callouts — ~7.4x faster on the same benchmark
-  (1.95s → 0.26s), with no change in the returned data shape. New test
-  confirms a returned offer still carries real callouts, not the stripped
-  search-pass ones. Also added an `st.spinner()` around the search call in
-  `trade_tab.py`, since even the optimized search isn't instant on a large
-  roster.
+- `build_attention_digest()`'s weekly-gaps line (`dynasty_core/summary.py`,
+  `_weekly_gap_lines()`) lists gap weeks in raw chronological order (week
+  1..18) with no current-week filtering, then caps to `top_n` (default 3).
+  On a roster with more than `top_n` gap weeks spread across the season, a
+  week that's already happened crowds out a real upcoming week from the
+  capped list — e.g. in week 10, gaps flagged in weeks 2/4/6 (nothing left
+  to do about them) fill all 3 slots and a real week-14 gap never appears,
+  silently, in a tab whose entire purpose is "what needs attention right
+  now." `roster_tab.py`'s `_render_bye_impact()` already solves exactly
+  this ("already happened" vs. "still ahead") via
+  `league["settings"].get("leg", 1)` (Sleeper's current-week counter) —
+  reuse that here: filter `roster_weekly_gaps` to `week >= current_week`
+  before computing/capping lines, threading `current_week` into
+  `build_attention_digest()`'s signature the same way `state.py` already
+  has `league` available at the call site. `sellable`/`free_agents` don't
+  have this problem — both are already sorted by their own value/impact
+  before capping, not by an unrelated fixed order. No test constructs a
+  digest with more gap weeks than `top_n` spread across past and future, so
+  the gap wasn't caught by `test_weekly_gaps_caps_at_top_n_with_a_more_note`
+  (all 5 fixture weeks are equally "in the past or future" since the test
+  never passes a current week at all).
 
 ## Now — blocking
 

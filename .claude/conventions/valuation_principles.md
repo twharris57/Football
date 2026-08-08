@@ -355,3 +355,32 @@ attach it as its own field there and have every consumer read the field —
 never re-derive it from the label later, where each call site can (and
 here, already did) get the derivation subtly wrong in its own way. Tracked
 as a deferred cleanup, `CQ-5` in `.claude/PROJECT_PLAN.md`.
+
+## A "right now" list needs to anchor on the live current week, not raw order
+
+`build_attention_digest()`'s weekly-gap line (`summary.py`, RT-19,
+2026-08-08 review) lists `roster_weekly_gaps` gap weeks in the same order
+`roster_weekly_gaps()` already produces them — week 1..18 — then caps to
+`top_n`. That order is fine for `roster_tab.py`'s full 18-week reference
+table, where nothing is hidden and the user reads week numbers directly.
+It's wrong for a capped "what needs attention right now" digest: a week
+that's already happened has nothing left to act on, but nothing stopped it
+from filling one of the few capped slots ahead of a real upcoming week,
+which then never appears at all. The project already has the right tool
+for "already happened vs. still ahead" — `league["settings"]["leg"]`
+(Sleeper's current-week counter), used by `roster_tab.py`'s
+`_render_bye_impact()` for exactly this distinction — it just wasn't
+threaded into the new digest.
+
+**The rule**: any user-facing summary that presents a short, *capped* list
+of time-scoped items (weekly gaps, bye conflicts, deadlines, anything
+keyed by NFL week) must filter or sort by proximity to the live
+current-week counter before capping, not by the item's raw storage order.
+An uncapped reference table showing the same data in the same raw order is
+fine — the failure only appears once truncation enters the picture, because
+that's the point past-relevance stops being harmless and starts silently
+displacing something actionable. Recognize this shape wherever a new
+feature caps or ranks a list built from week-indexed data (the planned
+`RT-9` free-agent monitor is a likely next case) — check whether "current
+week" needs to be a parameter before the list is capped, the same way
+`roster_tab.py` already had to for its own bye-impact view.
