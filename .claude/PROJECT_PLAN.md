@@ -501,6 +501,43 @@ where possible, instead of always showing the live-guess heuristic; see
   problem (`dynasty_core/draft_snapshots.py`) — worth checking whether it
   can be reused/extended here rather than building a second one from
   scratch.
+- [ ] **RT-21: Sleeper's transaction log as a secondary data source —
+  revisit before next year's draft** (assistant-flagged 2026-08-07, filed
+  while scoping `RT-20`, user-flagged as worth keeping for later rather
+  than acting on now) — `RT-20` was built as a roster-snapshot-and-diff
+  design, but a live check against this league's real API during scoping
+  found Sleeper's `/league/{id}/transactions/{leg}` endpoint already
+  records every real roster move with a timestamp, including plain
+  "drop to make room" cuts (`type: "free_agent"`, `adds: null`, a real
+  `drops: {player_id: roster_id}`). Two distinct reasons this could be
+  worth building out, not investigated further this pass given draft-day
+  time pressure:
+  - **Closing `RT-20`'s own gap.** Its `"ambiguous"` state exists because
+    a roster-diff snapshot can't isolate which drop paired with which pick
+    when two or more of the user's own picks complete in the same refresh
+    gap. Sleeper's transaction log doesn't have this problem — it's
+    timestamped and complete regardless of when this app happens to
+    refresh — though it introduces a different gap instead: Sleeper
+    doesn't timestamp individual draft picks, so pairing a transaction to
+    a specific pick would still need a positional/count-based heuristic,
+    not a hard fact. Unverified going into this: whether draft-day cuts
+    always land as `type: "free_agent"` (vs. some other transaction type),
+    and `league["settings"]["leg"]`'s bucketing behavior beyond the
+    single `leg=1` value checked live (this league was still in
+    `"pre_draft"` status with zero picks made at check time, so no
+    real "cut immediately following a draft pick" example existed yet to
+    validate against).
+  - **Leaguewide visibility, not just the user's own roster** — the same
+    endpoint returns every team's transactions, not just the user's,
+    which `RT-20`'s snapshot design has no equivalent for (it only ever
+    diffs the user's own roster). Could show what other teams are doing
+    during the draft (real drops/adds leaguewide) as a genuinely new
+    signal, not just a more-reliable version of `RT-20`'s existing one —
+    worth scoping as its own feature rather than folding entirely into
+    `RT-20`'s drop-attribution problem.
+  Revisit ahead of next year's rookie draft, with time to verify the
+  unconfirmed assumptions above against a real draft in progress before
+  committing to a design — not urgent mid-draft the way `RT-20` was.
 - [ ] **RT-10: FAAB bid-threshold modeling** (deferred from the free-agent
   evaluator v1 above, 2026-08-02) — `free_agent_board()` shows remaining
   FAAB (`league["settings"]["waiver_budget"] - roster["settings"].
