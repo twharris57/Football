@@ -384,3 +384,39 @@ feature caps or ranks a list built from week-indexed data (the planned
 `RT-9` free-agent monitor is a likely next case) — check whether "current
 week" needs to be a parameter before the list is capped, the same way
 `roster_tab.py` already had to for its own bye-impact view.
+
+## "First time seen in this narrower pool" is not "first time this ever happened"
+
+`pickup_snapshots._diff()` (RT-9, 2026-08-08 review) treats a player
+absent from the tracked snapshot as a "just signed with {team}" event —
+correct when the player is genuinely new to Sleeper's NFL player data
+(a rookie signing their first contract, a true free-agent signing after
+being teamless). But the snapshot only ever tracks `free_agent_pool()`'s
+membership — anyone currently on a fantasy roster is excluded from it
+entirely. So the dominant real-world way a veteran gets a `prior is None`
+entry isn't a new NFL signing at all: it's a fantasy manager dropping them
+mid-season, while they've sat on the same real NFL roster the whole time.
+The diff can't tell these apart, because it was never given the
+information to — it only ever saw the narrower, fantasy-roster-filtered
+pool, never the player's real attribute history independent of that
+filter. The result is a plausible-looking, wrong causal claim ("just
+signed with the Chiefs" for a three-year Chiefs veteran) presented as fact
+in an alert meant to prompt a real roster action — the same shape as
+`valuation_principles.md`'s "composite label" rule (RT-18), but the
+mismatch here is between two different *populations* being silently
+treated as one, not two string formats.
+
+**The rule**: before treating "no entry in a tracked/cached history" as
+"this is the first time this attribute-holder has ever had this
+attribute" (a signing, a status change, a first appearance), check whether
+the tracked population is itself a filtered subset of the real-world
+population the claim is about. If a member can leave and re-enter the
+*tracked subset* for reasons that have nothing to do with the attribute
+being diffed (here: fantasy-roster status, unrelated to real NFL-team
+status), a first sighting in the subset is not evidence of a first
+real-world occurrence — it's only evidence of a first sighting *within
+that filter*. Either track the broader unfiltered population so a real
+baseline exists regardless of subset membership (alerting can still stay
+scoped to the narrower, actionable subset), or weaken the claim to what
+the data actually supports ("newly available" rather than "just signed")
+when no real prior baseline exists.

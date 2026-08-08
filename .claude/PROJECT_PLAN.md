@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-21`, `VA-5`, `CQ-5`, `DL-8`.
+below): `NB-2`, `RT-22`, `VA-5`, `CQ-5`, `DL-8`.
 
 ## Short list — actively prioritized right now
 
@@ -49,9 +49,6 @@ active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `RT-9` — free-agent pickup monitor (`RT-20`'s
-  `dynasty_core/draft_snapshots.py` persistence layer is done and worth
-  reusing/extending rather than building a second one from scratch).
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
@@ -67,21 +64,39 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty — the one finding from reviewing `feature/summary-tab` (PR #30,
-2026-08-08) is fixed.
+Findings from reviewing `feature/free-agent-pickup-monitor` (PR #32,
+2026-08-08):
 
-`build_attention_digest()`'s weekly-gaps line listed gap weeks in raw
-chronological order with no current-week filtering, then capped to `top_n`
-— an already-passed gap week could crowd out a real upcoming one out of the
-capped slots, silently, in a tab whose entire purpose is "what needs
-attention right now." Fixed by threading a new required `current_week`
-parameter through `build_attention_digest()` and filtering
-`roster_weekly_gaps` to `week >= current_week` before computing/capping
-lines; `state.py` passes `league["settings"].get("leg", 1)`, the same
-field/fallback `roster_tab.py`'s `_render_bye_impact()` already uses for
-"already happened" vs. "still ahead." New tests cover a past gap week being
-excluded entirely and the cap applying only after that exclusion (not
-before, which would still let a stale week silently displace a real one).
+- **`RT-22` — a pickup alert's "just signed with {team}" label was asserted
+  for every player's first appearance in the tracked snapshot, not just
+  real NFL signings — fixed.** `pickup_snapshots._diff()` treated any
+  player absent from `previous_players` as a `kind: "team", old: None`
+  event, rendered unconditionally as `"{name} ({pos}) just signed with
+  {new}"`. The snapshot was only ever given `free_agent_pool()`'s output,
+  which excludes any player currently on a fantasy roster — so the
+  dominant way a veteran got a `prior is None` entry was a fantasy manager
+  dropping them mid-season while they stayed on the same real NFL team the
+  whole time, misreported as a fresh signing. Fixed by tracking the
+  broader population instead: new `fantasy_relevant_teamed_players()`
+  (`player_pools.py`, factored out of `free_agent_pool`'s own filter) is
+  every fantasy-relevant player with a real NFL team *regardless* of
+  fantasy-roster status; `state.py` now passes that to
+  `reconcile_pickup_snapshot()` instead of the free-agent-only pool, so a
+  rostered player already has real team/depth-chart/status history on file
+  the moment they're dropped, and a `prior is None` entry now only means a
+  genuine first-time appearance in Sleeper's teamed-player data (a true
+  signing or rookie debut). Alerts still only fire for players in the
+  actual free-agent pool — `pickup_changes` is filtered down to
+  `available_free_agents` in `state.py` before ranking, since
+  `rank_by_marginal_value` assumes its candidates are addable, not still on
+  someone else's roster. New tests: `TestFantasyRelevantTeamedPlayers` in
+  `test_player_pools.py` covers the new function directly (includes
+  rostered players, unlike `free_agent_pool`), and
+  `test_a_player_only_newly_available_but_already_tracked_is_not_a_false_signing`
+  in `test_pickup_snapshots.py` reproduces the exact confounding case (a
+  dropped-but-not-re-signed veteran) and confirms it no longer fires.
+  Durable rule filed in `valuation_principles.md`'s "'First time seen in
+  this narrower pool' is not 'first time this ever happened'."
 
 ## Now — blocking
 
@@ -194,8 +209,9 @@ Deliberately out of v1, not forgotten:
   about accumulating rookies (this project's whole existing purpose);
   year 2 should shift toward smart trades, continuing to find promising
   talent opportunistically — not just rookies, but free agents with a
-  sudden uptick in opportunity/fortune (this is exactly RT-9's
-  in-season pickup monitoring, once that lands) — and dropping deadweight with limited
+  sudden uptick in opportunity/fortune (this is exactly what the in-season
+  pickup monitor now surfaces via the Summary tab's "Pickup alerts") — and
+  dropping deadweight with limited
   future payoff (already partly modeled by `roster_value_analysis`'s
   `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
   either). Would need an explicit "what phase of the rebuild are we in"
@@ -278,27 +294,6 @@ Deliberately out of v1, not forgotten:
   both functions; this is "verify the real rule and flip candidates that
   qualify to `taxi_eligible=True` on a per-candidate basis," not a
   rearchitecture.
-- [ ] **RT-9: In-season "something changed" pickup monitoring**
-  (deferred from the free-agent evaluator v1 above, 2026-08-02) —
-  `free_agent_board()` is a real-time snapshot, recomputed fresh every
-  refresh like every other feature here, not an alerting system. Actually
-  flagging when a free agent's situation changes materially (signs with a
-  new team, wins a starting job, a depth-chart move opens up volume)
-  needs some week-over-week delta signal this project has nowhere to
-  store — `CLAUDE.md`: "everything is pulled fresh... each run," no
-  persistence layer anywhere. A depth-chart delta would probably be
-  enough to start (no news/transactions feed needed on day one), but it's
-  a real architecture addition (state that survives between refreshes),
-  not a v1-scope change. Referenced by `RT-4`'s phase-aware rebuild-year
-  work, which assumed this would ship alongside the free-agent evaluator.
-  `RT-2` (the trade evaluator, reframed as an on-demand two-sided/multi-asset
-  check rather than a monitor) no longer depends on this.
-  Re-flagged 2026-08-06 ("we need a free agent pickup monitor") — same
-  scope, no new requirements, just renewed priority. `RT-20` (draft-plan
-  drop tracking, done) already built a persistence layer for a related
-  problem (`dynasty_core/draft_snapshots.py`) — worth checking whether it
-  can be reused/extended here rather than building a second one from
-  scratch.
 - [ ] **RT-21: Sleeper's transaction log as a secondary data source —
   revisit before next year's draft** (assistant-flagged 2026-08-07, filed
   while scoping `RT-20`, user-flagged as worth keeping for later rather

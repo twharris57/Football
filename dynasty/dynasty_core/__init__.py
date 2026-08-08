@@ -8,7 +8,7 @@ dashboard (`streamlit_app.py`) so the two stay in sync on one code path.
 Split into submodules by concern (pick ownership, player pools, roster
 needs, power/timeline, capacity, roster value, byes/handcuffs, lineup,
 drop recommendation, trade evaluation, draft planning, attention digest,
-orchestration).
+in-season pickup tracking, orchestration).
 This file just re-exports the combined public surface so `import
 dynasty_core` behaves exactly as it did as a single file.
 """
@@ -75,10 +75,12 @@ from .picks import (
     resolve_user_roster_id,
     team_name_by_roster_id,
 )
+from .pickup_snapshots import reconcile_pickup_snapshot
 from .player_pools import (
     POSITION_VALUE_MULTIPLIER,
     _resolve_multiplier,
     build_big_board,
+    fantasy_relevant_teamed_players,
     fc_value_by_sleeper_id,
     free_agent_pool,
     rookie_pool,
@@ -168,6 +170,7 @@ __all__ = [
     "bye_week_by_team",
     "compute_pick_ownership",
     "evaluate_trade",
+    "fantasy_relevant_teamed_players",
     "fantasycalc",
     "fc_value_by_sleeper_id",
     "find_trade_offers",
@@ -192,6 +195,7 @@ __all__ = [
     "positional_strength_summary",
     "rank_by_marginal_value",
     "recent_complete_seasons_weekly_data",
+    "reconcile_pickup_snapshot",
     "reconcile_snapshot",
     "recommend_drop",
     "resolve_user_roster_id",
