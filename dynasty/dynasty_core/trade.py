@@ -186,16 +186,29 @@ def _pick_context_callouts(pick_names: list[str], pick_value_table: pd.DataFrame
     `pick_value_table` is `pick_trade_values()`'s leaguewide output (every
     owner's picks, one row per pick) - ranked here within the pick's own
     season ("class"), not the whole table, so "the #2 pick" means #2 among
-    that year's picks specifically.
+    that year's picks specifically. The leading 4-digit year is the only
+    season anchor common to both of `pick_trade_values()`'s name formats -
+    this season's slot-specific "2026 Pick 1.01" and next season's
+    round-only "2027 1st" (no real draft object yet to assign a slot).
+    Splitting on " Pick " instead would leave a next-season pick's "season"
+    as its own full name, putting it alone in a one-pick class that always
+    ranks #1 - fixed after verifying live (RT-18 fix-before-merge review,
+    2026-08-07 - see `.claude/conventions/valuation_principles.md`).
     """
     if not pick_names or pick_value_table is None or pick_value_table.empty:
         return []
     ranked = pick_value_table.dropna(subset=["value"]).copy()
     if ranked.empty:
         return []
-    ranked["season"] = ranked["pick"].str.split(" Pick ").str[0]
+    # A name with no leading year (never a real pick_trade_values() output,
+    # but happens in tests using placeholder pick names) falls back to its
+    # own full name as "season" - an isolated one-row group, same graceful
+    # degradation a real but literally unparseable name would need, rather
+    # than a NaN group that breaks the int cast below.
+    ranked["season"] = ranked["pick"].str.extract(r"^(\d{4})")[0].fillna(ranked["pick"])
     ranked["rank"] = ranked.groupby("season")["value"].rank(ascending=False, method="min").astype(int)
     rank_by_pick = dict(zip(ranked["pick"], zip(ranked["rank"], ranked["value"])))
+    season_by_pick = dict(zip(ranked["pick"], ranked["season"]))
 
     callouts = []
     for pick_name in pick_names:
@@ -203,7 +216,7 @@ def _pick_context_callouts(pick_names: list[str], pick_value_table: pd.DataFrame
         if info is None:
             continue
         rank, value = info
-        season = pick_name.split(" Pick ")[0]
+        season = season_by_pick.get(pick_name, pick_name)
         callouts.append(f"{pick_name} is currently the #{rank} remaining pick in the {season} class (value {value:.0f})")
     return callouts
 
@@ -364,9 +377,10 @@ def find_trade_offers(
     `TRADE_OFFER_PARTNER_TOLERANCE_PCT` of zero - the one hard acceptance
     gate. Combos touching one of the partner's current `need_positions`
     (today's roster, not post-trade) rank ahead of otherwise-equal
-    alternatives, as a tiebreaker only. Ranked best-for-you first, then
-    need-match, then fewest assets. Returns up to `top_n`, empty if
-    nothing clears the bar.
+    alternatives, as a tiebreaker only - each offer's `partner_need_match`
+    (bool) and `partner_need_positions` (which position(s) specifically)
+    reflect this. Ranked best-for-you first, then need-match, then fewest
+    assets. Returns up to `top_n`, empty if nothing clears the bar.
 
     `combos_considered`/`combos_evaluated` are the raw and post-prefilter
     combo counts, so an empty result can say something concrete.
@@ -468,15 +482,18 @@ def find_trade_offers(
         if partner_side["asset_value_delta"] < -tolerance:
             continue
 
-        partner_need_match = any(
-            c["kind"] == "player" and players.get(c["id"], {}).get("position") in partner_needs for c in combo
+        partner_need_positions = frozenset(
+            players.get(c["id"], {}).get("position")
+            for c in combo
+            if c["kind"] == "player" and players.get(c["id"], {}).get("position") in partner_needs
         )
         offers.append(
             {
                 "combo": list(combo),
                 "your_side": your_side,
                 "partner_side": partner_side,
-                "partner_need_match": partner_need_match,
+                "partner_need_match": bool(partner_need_positions),
+                "partner_need_positions": partner_need_positions,
             }
         )
 

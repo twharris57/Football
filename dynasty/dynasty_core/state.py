@@ -14,7 +14,7 @@ import sleeper_api as sleeper
 from .byes import bye_week_by_team
 from .draft_plan import multi_round_plan
 from .draft_snapshots import reconcile_snapshot
-from .handcuffs import handcuff_map
+from .handcuffs import handcuff_map, handcuff_targets
 from .picks import (
     compute_pick_ownership,
     format_your_picks,
@@ -125,12 +125,7 @@ def gather_state(
     team_names = team_name_by_roster_id(rosters, users)
     user_roster = next(r for r in rosters if r["roster_id"] == user_roster_id)
 
-    user_rb_ids = {pid for pid in (user_roster.get("players") or []) if players.get(pid, {}).get("position") == "RB"}
-    handcuff_targets = {
-        backup_id: players.get(starter_id, {}).get("full_name", "")
-        for starter_id, backup_id in handcuffs.items()
-        if starter_id in user_rb_ids
-    }
+    user_handcuff_targets = handcuff_targets(user_roster.get("players") or [], players, handcuffs)
 
     ownership = compute_pick_ownership(draft, traded_picks, league["season"])
     picked_player_ids = {p["player_id"] for p in draft_picks if p.get("player_id")}
@@ -222,7 +217,7 @@ def gather_state(
         )
 
     big_board = build_big_board(
-        board_pool, fc_by_sleeper_id, user_analysis["need_positions"], handcuff_targets, draft_attribution
+        board_pool, fc_by_sleeper_id, user_analysis["need_positions"], user_handcuff_targets, draft_attribution
     )
 
     return {

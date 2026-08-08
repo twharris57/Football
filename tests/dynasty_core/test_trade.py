@@ -444,6 +444,59 @@ class TestEvaluateTradeCallouts:
             for c in result["callouts"]
         )
 
+    def test_pick_context_callout_handles_next_seasons_round_only_pick_name_format(self):
+        # pick_trade_values() names next-season picks "{season} {round}st/nd/..."
+        # (e.g. "2027 1st") since there's no real draft object yet to assign
+        # a slot - no " Pick " substring, unlike this season's slot-specific
+        # "2026 Pick R.SS" names. Splitting on " Pick " to derive "season"
+        # would leave a next-season pick's season as its own full name,
+        # stranding it alone in a one-pick class that always ranks #1 with a
+        # garbled season label - this locks in the leading-year-based fix.
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": [], "taxi": [], "reserve": []}
+        players: dict[str, dict] = {}
+        fc_by_id: dict[str, dict] = {}
+        pick_value_table = pd.DataFrame(
+            [
+                {"pick": "2027 1st", "owner": "x", "owner_roster_id": 1, "value": 400},
+                {"pick": "2027 2nd", "owner": "x", "owner_roster_id": 1, "value": 250},
+                {"pick": "2026 Pick 1.01", "owner": "x", "owner_roster_id": 1, "value": 500},
+            ]
+        )
+
+        result = dc.evaluate_trade(
+            roster, [], [], players, fc_by_id, {}, league,
+            outgoing_pick_value=250, outgoing_pick_names=["2027 2nd"], pick_value_table=pick_value_table,
+        )
+
+        # #2 within the 2027 class (400 > 250), not stranded alone at #1 in
+        # a one-row class named after its own full pick name.
+        assert any(
+            "2027 2nd is currently the #2 remaining pick in the 2027 class (value 250)" in c
+            for c in result["callouts"]
+        )
+
+    def test_pick_context_callout_does_not_crash_on_a_pick_name_with_no_leading_year(self):
+        # A pick name with nothing matching the leading-year pattern (never
+        # a real pick_trade_values() output, but shouldn't be able to crash
+        # this) must fall back gracefully - its own name as an isolated
+        # "season" - rather than leaving a NaN season that breaks the
+        # int-cast rank column for every other pick's callout too.
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"players": [], "taxi": [], "reserve": []}
+        players: dict[str, dict] = {}
+        fc_by_id: dict[str, dict] = {}
+        pick_value_table = pd.DataFrame(
+            [{"pick": "weird_pick_name", "owner": "x", "owner_roster_id": 1, "value": 100}]
+        )
+
+        result = dc.evaluate_trade(
+            roster, [], [], players, fc_by_id, {}, league,
+            outgoing_pick_value=100, outgoing_pick_names=["weird_pick_name"], pick_value_table=pick_value_table,
+        )
+
+        assert any("weird_pick_name is currently the #1 remaining pick" in c for c in result["callouts"])
+
 
 class TestFindTradeOffers:
     """find_trade_offers should answer 'is this target worth pursuing' by direct reuse of
@@ -616,6 +669,7 @@ class TestFindTradeOffers:
         best = result["offers"][0]
         assert [asset["id"] for asset in best["combo"]] == ["rb_offer"]
         assert best["partner_need_match"] is True
+        assert best["partner_need_positions"] == frozenset({"RB"})
 
     def test_pool_and_combo_size_bounds_cap_the_search_regardless_of_pool_size(self):
         # 30 owned picks, no sellable players at all - the pool must still

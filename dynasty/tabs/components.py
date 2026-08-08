@@ -181,5 +181,7 @@ def team_selectbox(
 
 
 def format_drop(drop: dict) -> str:
-    """"Name (Pos)", tagged "— starter" if the drop is a current starter."""
-    return f"{drop['name']} ({drop['pos']})" + (" — starter" if drop["is_starter"] else "")
+    """"Name (Pos, value: X)", tagged "— starter" if the drop is a current starter."""
+    value = drop.get("adj_value")
+    value_str = f", value: {value:.0f}" if value is not None else ""
+    return f"{drop['name']} ({drop['pos']}{value_str})" + (" — starter" if drop["is_starter"] else "")

@@ -57,28 +57,18 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Findings from reviewing `feature/trade-callouts` (PR #29), reviewed 2026-08-07.
-
-- **`_pick_context_callouts()`'s season/class grouping breaks for every next-season
-  pick** (`dynasty_core/trade.py`) — `ranked["season"] = ranked["pick"].str.split(" Pick
-  ").str[0]` assumes every pick name contains the literal substring `" Pick "`, true for
-  this season's slot-specific names (`"2026 Pick 1.01"`) but not for next season's
-  round-only names — `pick_trade_values()`'s own second format,
-  `f"{future_season} {ROUND_ORDINAL[...]}"` (e.g. `"2027 1st"`). Splitting on an absent
-  substring returns the string unchanged, so a next-season pick's "season" becomes its
-  own full name — verified live: every next-season pick lands alone in a one-row
-  "class" and therefore always ranks `#1`, with the callout's `{season}` label
-  rendering as the garbled full pick name instead of the year (e.g. *"2027 2nd is
-  currently the #1 remaining pick in the 2027 2nd class (value 250)"*). Next-season
-  picks are this rebuild-strategy league's most common trade asset (`CLAUDE.md`), and
-  `pick_value_table` (`state["pick_trade_values"]`) flows into this code from both the
-  manual evaluator and the trade-target optimizer, so this fires on ordinary trade
-  activity, not an edge case. Untested: `test_pick_context_callout_ranks_within_the_picks_own_class`
-  only exercises the current-season `"2026 Pick R.SS"` format. Fix: derive `season` from
-  a format-independent anchor — the leading 4-digit year (e.g.
-  `ranked["pick"].str.extract(r"^(\d{4})")`) — works for both name shapes, plus a test
-  mixing a current- and a next-season pick in the same `pick_value_table`. New durable
-  rule filed in `valuation_principles.md`.
+Empty — the one finding from reviewing `feature/trade-callouts` (PR #29,
+2026-08-07: `_pick_context_callouts()`'s season/class grouping breaking for
+every next-season pick name) is fixed. `season` is now derived from the
+leading 4-digit year rather than splitting on `" Pick "` — handles both
+`pick_trade_values()` name formats, with a fallback to the pick's own name
+for the (never-real, but test-exercised) case of a name with no leading
+year at all, so a malformed/placeholder name degrades gracefully instead of
+crashing the rank computation. New tests cover the next-season format, the
+malformed-name fallback, and the original current-season case. Durable
+rule filed in `.claude/conventions/valuation_principles.md`'s "A composite
+label needs a parser that handles every format its own source can
+produce."
 
 ## Now — blocking
 
@@ -588,18 +578,15 @@ methodology.
   has to stay a string match; this is about not re-deriving *this codebase's own*
   already-known structure from a string it built. Cleanup scope, not urgent — no
   known live bug beyond the one already fixed above.
-- [ ] **CQ-4: `gather_state()`'s inline handcuff-target computation for the user's own
-  roster duplicates the new `handcuff_targets()` helper** (assistant valuation review,
-  2026-08-07) — `dynasty_core/handcuffs.py`'s `handcuff_targets()` was extracted this
-  branch (RT-18) specifically so `draft_plan.py` and `trade.py` share one
-  implementation instead of two. `state.py`'s `gather_state()` (its `handcuff_targets`
-  local, built from `user_rb_ids`/`handcuffs.items()`) still has its own,
-  textually-identical inline version for the user's own roster, predating the
-  extraction and not updated to call it. Not a correctness bug — the two computations
-  are byte-for-byte the same — but it's now a third copy of a computation this
-  refactor was meant to collapse to one, and will silently drift the next time either
-  copy changes without the other. Swap `state.py`'s inline block for a call to
-  `handcuff_targets(user_roster.get("players") or [], players, handcuffs)`.
+**CQ-4 (`gather_state()`'s duplicated handcuff-target computation) is
+fixed** — `state.py` now calls the shared `handcuff_targets()` helper
+directly instead of its own inline copy. Caught in the same pass: the
+local variable this replaced was itself named `handcuff_targets`, shadowing
+the imported function of the same name — renamed to `user_handcuff_targets`
+and fixed the one other call site (`build_big_board(...)`) that had been
+silently about to receive the function object instead of the computed dict
+once the shadowing local was removed.
+
 ## Deferred / low priority
 
 Judged not worth the time right now; revisit only if the underlying

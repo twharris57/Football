@@ -17,9 +17,12 @@ def _trade_player_options(roster: dict, players: dict) -> list[str]:
     ]
 
 
-def _trade_player_label(pid: str, players: dict) -> str:
+def _trade_player_label(pid: str, players: dict, fc_by_sleeper_id: dict) -> str:
     info = players.get(pid, {})
-    return f"{info.get('full_name')} ({info.get('position')})"
+    entry = fc_by_sleeper_id.get(pid)
+    value = entry.get("adj_value") if entry else None
+    value_str = f"{value:.0f}" if bool(pd.notna(value)) else "unknown"
+    return f"{info.get('full_name')} ({info.get('position')}, value: {value_str})"
 
 
 def _trade_pick_options(roster_id: int, pick_values: pd.DataFrame) -> list[str]:
@@ -102,7 +105,7 @@ def _render_manual_evaluator(
         outgoing_players = st.multiselect(
             "Players you'd give up",
             _trade_player_options(your_trade_roster, trade_players),
-            format_func=lambda pid: _trade_player_label(pid, trade_players),
+            format_func=lambda pid: _trade_player_label(pid, trade_players, state["fc_by_sleeper_id"]),
             key="trade_outgoing_players",
         )
         outgoing_picks = st.multiselect(
@@ -115,7 +118,7 @@ def _render_manual_evaluator(
         incoming_players = st.multiselect(
             "Players you'd receive",
             _trade_player_options(partner_trade_roster, trade_players),
-            format_func=lambda pid: _trade_player_label(pid, trade_players),
+            format_func=lambda pid: _trade_player_label(pid, trade_players, state["fc_by_sleeper_id"]),
             key="trade_incoming_players",
         )
         incoming_picks = st.multiselect(
@@ -219,7 +222,7 @@ def _render_trade_optimizer(
             target_player_id = st.selectbox(
                 f"Asset on {partner_name}'s roster",
                 partner_player_options,
-                format_func=lambda pid: _trade_player_label(pid, trade_players),
+                format_func=lambda pid: _trade_player_label(pid, trade_players, state["fc_by_sleeper_id"]),
                 key="optimizer_target_player",
             )
     else:
@@ -237,7 +240,11 @@ def _render_trade_optimizer(
     if not (target_player_id or target_pick_name):
         return
 
-    target_label = _trade_player_label(target_player_id, trade_players) if target_player_id else target_pick_name
+    target_label = (
+        _trade_player_label(target_player_id, trade_players, state["fc_by_sleeper_id"])
+        if target_player_id
+        else _trade_pick_label(target_pick_name, pick_value_by_name)
+    )
     offer_result = dynasty_core.find_trade_offers(
         your_trade_roster,
         partner_trade_roster,
@@ -269,7 +276,7 @@ def _render_trade_optimizer(
         )
     else:
         for i, offer in enumerate(offers):
-            combo_label = ", ".join(a["label"] for a in offer["combo"])
+            combo_label = ", ".join(f"{a['label']} (value: {a['value']:.0f})" for a in offer["combo"])
             title = f"{'Best offer' if i == 0 else f'Alternative {i}'}: give {combo_label} → receive {target_label}"
             with st.expander(title, expanded=(i == 0)):
                 st.caption(f"**You give:** {combo_label}  \n**You receive:** {target_label}")
@@ -279,7 +286,8 @@ def _render_trade_optimizer(
                 with off_col2:
                     _show_trade_side(f"{partner_name}'s side", offer["partner_side"])
                 if offer["partner_need_match"]:
-                    st.caption(f"Also addresses a flagged need on {partner_name}'s roster.")
+                    positions = ", ".join(sorted(offer["partner_need_positions"]))
+                    st.caption(f"Also addresses a flagged need at {positions} on {partner_name}'s roster.")
 
 
 def render_trade_tab(state: dict) -> None:
