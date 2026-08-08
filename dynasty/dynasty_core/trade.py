@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+from collections.abc import Sequence
 from typing import Any
 
 import pandas as pd
@@ -235,6 +236,7 @@ def evaluate_trade(
     outgoing_pick_names: list[str] | None = None,
     incoming_pick_names: list[str] | None = None,
     pick_value_table: pd.DataFrame | None = None,
+    compute_callouts: bool = True,
 ) -> dict[str, Any]:
     """Evaluate one side of a proposed multi-asset trade (players + picks) for one roster.
 
@@ -268,7 +270,13 @@ def evaluate_trade(
     `incoming_pick_names`/`pick_value_table` are optional so existing
     callers/tests that don't have pick or handcuff context on hand keep
     working unchanged; omitting them just means those specific callouts
-    don't fire.
+    don't fire. `compute_callouts=False` skips all four entirely (`callouts`
+    comes back `[]`) - for a caller like `find_trade_offers()` that runs
+    this in a combinatorial search loop and only needs callouts for the
+    handful of combos it actually surfaces, computing them for every combo
+    explored is pure waste (verified live: ~90% of this function's cost
+    with callouts on, for a combo that gets filtered out or ranked below
+    `top_n` and never shown).
     """
     current_ids = list(roster.get("players") or [])
     outgoing_set = set(outgoing_player_ids)
@@ -311,16 +319,18 @@ def evaluate_trade(
         else after_value
     )
 
-    after_roster = {**roster, "players": roster_after_drops}
-    callouts = (
-        _bye_gap_callouts(roster, after_roster, players, byes, league)
-        + _handcuff_callouts(current_ids, outgoing_set, incoming_player_ids, players, handcuffs or {})
-        + _buried_to_starter_callouts(
-            current_ids, roster_after_drops, outgoing_player_ids, incoming_player_ids,
-            players, fc_by_sleeper_id, ineligible_ids, league,
+    callouts: list[str] = []
+    if compute_callouts:
+        after_roster = {**roster, "players": roster_after_drops}
+        callouts = (
+            _bye_gap_callouts(roster, after_roster, players, byes, league)
+            + _handcuff_callouts(current_ids, outgoing_set, incoming_player_ids, players, handcuffs or {})
+            + _buried_to_starter_callouts(
+                current_ids, roster_after_drops, outgoing_player_ids, incoming_player_ids,
+                players, fc_by_sleeper_id, ineligible_ids, league,
+            )
+            + _pick_context_callouts((outgoing_pick_names or []) + (incoming_pick_names or []), pick_value_table)
         )
-        + _pick_context_callouts((outgoing_pick_names or []) + (incoming_pick_names or []), pick_value_table)
-    )
 
     return {
         "lineup_delta": after_value - before_value,
@@ -457,9 +467,7 @@ def find_trade_offers(
                 continue
             prefiltered.append(combo)
 
-    tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * target_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)
-    offers = []
-    for combo in prefiltered:
+    def _evaluate_combo(combo: Sequence[dict], compute_callouts: bool) -> tuple[dict, dict]:
         combo_player_ids = [c["id"] for c in combo if c["kind"] == "player"]
         combo_pick_names = [c["id"] for c in combo if c["kind"] == "pick"]
         combo_pick_value = sum(c["value"] for c in combo if c["kind"] == "pick")
@@ -476,14 +484,26 @@ def find_trade_offers(
             your_roster, combo_player_ids, your_incoming, players, fc_by_sleeper_id, byes, league,
             outgoing_pick_value=combo_pick_value, incoming_pick_value=your_incoming_pick_value,
             handcuffs=handcuffs, outgoing_pick_names=combo_pick_names, incoming_pick_names=your_incoming_pick_names,
-            pick_value_table=pick_value_table,
+            pick_value_table=pick_value_table, compute_callouts=compute_callouts,
         )
         partner_side = evaluate_trade(
             partner_roster, partner_outgoing, combo_player_ids, players, fc_by_sleeper_id, byes, league,
             outgoing_pick_value=partner_outgoing_pick_value, incoming_pick_value=combo_pick_value,
             handcuffs=handcuffs, outgoing_pick_names=partner_outgoing_pick_names, incoming_pick_names=combo_pick_names,
-            pick_value_table=pick_value_table,
+            pick_value_table=pick_value_table, compute_callouts=compute_callouts,
         )
+        return your_side, partner_side
+
+    tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * target_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)
+    offers = []
+    for combo in prefiltered:
+        # compute_callouts=False here: this loop runs for every prefiltered
+        # combo just to filter/rank them, and only `top_n` ever get shown -
+        # computing full callouts (bye-gap/handcuff/buried-bench/pick-rank)
+        # for every one of them was ~90% of this search's cost for value no
+        # caller ever saw. Recomputed with callouts on, below, for only the
+        # combos that actually make the cut.
+        your_side, partner_side = _evaluate_combo(combo, compute_callouts=False)
         if partner_side["asset_value_delta"] < -tolerance:
             continue
 
@@ -503,12 +523,15 @@ def find_trade_offers(
         )
 
     offers.sort(key=lambda o: (-o["your_side"]["asset_value_delta"], not o["partner_need_match"], len(o["combo"])))
+    offers = offers[:top_n]
+    for offer in offers:
+        offer["your_side"], offer["partner_side"] = _evaluate_combo(offer["combo"], compute_callouts=True)
 
     return {
         "target_value": target_value,
         "target_value_resolved": True,
         "target_read": target_read,
-        "offers": offers[:top_n],
+        "offers": offers,
         "combos_considered": combos_considered,
         "combos_evaluated": len(prefiltered),
     }

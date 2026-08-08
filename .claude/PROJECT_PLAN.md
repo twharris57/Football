@@ -89,6 +89,22 @@ Empty — every finding from reviewing `feature/trade-callouts` (PR #29,
   New `_combo_asset_label()` helper in `trade_tab.py` renders a combo asset
   in the same style as the target label, reused for both the give-side
   listing and the offer title.
+- The trade-target optimizer got noticeably slow after RT-18 landed —
+  user-observed live, not a synthetic benchmark. Traced to `evaluate_trade()`
+  unconditionally computing all four `callouts` for every prefiltered combo
+  in `find_trade_offers()`'s search loop, even though only `top_n` (default
+  3) offers are ever shown — measured live at ~90% of the search's total
+  cost (1.95s → 0.21s with callouts stripped, on a 40-player/170-combo
+  synthetic benchmark) for value discarded on every combo that didn't make
+  the cut. Fixed with a new `evaluate_trade(..., compute_callouts=True)`
+  parameter: `find_trade_offers()`'s search loop now runs with it `False`
+  (filter/rank only) and re-evaluates just the final `top_n` combos with it
+  `True` to get their real callouts — ~7.4x faster on the same benchmark
+  (1.95s → 0.26s), with no change in the returned data shape. New test
+  confirms a returned offer still carries real callouts, not the stripped
+  search-pass ones. Also added an `st.spinner()` around the search call in
+  `trade_tab.py`, since even the optimized search isn't instant on a large
+  roster.
 
 ## Now — blocking
 

@@ -564,6 +564,40 @@ class TestFindTradeOffers:
         assert len(result["offers"]) == 1
         assert [asset["id"] for asset in result["offers"][0]["combo"]] == ["depth_wr"]
 
+    def test_returned_offers_carry_real_callouts_not_the_stripped_search_pass(self):
+        # The search loop evaluates every prefiltered combo with
+        # compute_callouts=False (computing callouts for combos that get
+        # filtered out or don't make top_n was ~90% of this search's cost
+        # for value no caller ever saw) and only re-evaluates the final
+        # top_n combos with callouts on. This locks in that a returned
+        # offer carries real callouts, not the stripped search-pass ones -
+        # depth_wr is pure bench here (never a starter in a 1-WR league),
+        # so giving it up should surface the "wasn't even starting" callout.
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {"roster_id": 1, "players": ["starter_wr", "depth_wr"], "taxi": [], "reserve": []}
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "depth_wr": make_player("WR", full_name="Depth WR"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+        }
+        players["starter_wr"]["years_exp"] = 5
+        players["depth_wr"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("depth_wr", 100), fc_entry("target_wr", 100)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="target_wr",
+        )
+
+        assert any(
+            "Depth WR wasn't even starting for you" in c
+            for c in result["offers"][0]["your_side"]["callouts"]
+        )
+
     def test_lopsided_combo_is_filtered_even_when_cheap_for_you(self):
         # cheap_wr (120) for target_wr (200) looks great for you in
         # isolation (evaluate_trade's own asset_value_delta is positive),

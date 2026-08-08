@@ -256,19 +256,20 @@ def _render_trade_optimizer(
         if target_player_id
         else _trade_pick_label(target_pick_name, pick_value_by_name)
     )
-    offer_result = dynasty_core.find_trade_offers(
-        your_trade_roster,
-        partner_trade_roster,
-        trade_players,
-        state["fc_by_sleeper_id"],
-        state["byes"],
-        state["league"],
-        state["replacement_level"],
-        trade_pick_values,
-        handcuffs=state["handcuffs"],
-        target_player_id=target_player_id,
-        target_pick_name=target_pick_name,
-    )
+    with st.spinner("Searching for offers..."):
+        offer_result = dynasty_core.find_trade_offers(
+            your_trade_roster,
+            partner_trade_roster,
+            trade_players,
+            state["fc_by_sleeper_id"],
+            state["byes"],
+            state["league"],
+            state["replacement_level"],
+            trade_pick_values,
+            handcuffs=state["handcuffs"],
+            target_player_id=target_player_id,
+            target_pick_name=target_pick_name,
+        )
 
     _show_trade_side(f"If you acquired {target_label} for free", offer_result["target_read"])
 
