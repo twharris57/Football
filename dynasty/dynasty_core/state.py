@@ -28,6 +28,7 @@ from .picks import (
 from .pickup_snapshots import reconcile_pickup_snapshot
 from .player_pools import (
     build_big_board,
+    fantasy_relevant_teamed_players,
     fc_value_by_sleeper_id,
     free_agent_pool,
     rookie_pool,
@@ -202,16 +203,27 @@ def gather_state(
     draft_eligible_rookie_ids = frozenset() if current_pick_no > total_draft_picks else frozenset(available.keys())
     available_free_agents = free_agent_pool(players, rosters, draft_eligible_rookie_ids)
 
-    # Team/depth-chart/status changes in the free-agent pool since the last
-    # refresh (see pickup_snapshots.py) - independent of force_full_refresh,
-    # same rationale as draft_snapshot above: accumulated cross-refresh
-    # state, not a freshness cache. Ranked via rank_by_marginal_value()
-    # directly on just the (typically small) changed set, uncapped
-    # (top_n=len(...)), rather than filtering through user_analysis's own
-    # top-25-capped free_agent_board below - a real positive-value change
-    # ranked outside that cap would otherwise be silently indistinguishable
-    # from "not worth it."
-    _, pickup_changes = reconcile_pickup_snapshot(league_id, league["season"], available_free_agents)
+    # Team/depth-chart/status changes across every fantasy-relevant,
+    # NFL-teamed player since the last refresh (see pickup_snapshots.py) -
+    # deliberately the full population, not just this refresh's free-agent
+    # subset, so a real NFL-team change can be told apart from a player
+    # merely re-entering the free-agent pool via a fantasy-roster drop (see
+    # valuation_principles.md's "first time seen in this narrower pool"
+    # rule). Independent of force_full_refresh, same rationale as
+    # draft_snapshot above: accumulated cross-refresh state, not a
+    # freshness cache. Filtered down to the current free-agent pool before
+    # ranking - only an available player is an actionable pickup, and
+    # rank_by_marginal_value assumes its candidates are addable, not still
+    # on someone else's roster. Ranked via rank_by_marginal_value() directly
+    # on just the (typically small) changed set, uncapped (top_n=len(...)),
+    # rather than filtering through user_analysis's own top-25-capped
+    # free_agent_board below - a real positive-value change ranked outside
+    # that cap would otherwise be silently indistinguishable from "not
+    # worth it."
+    _, pickup_changes = reconcile_pickup_snapshot(
+        league_id, league["season"], fantasy_relevant_teamed_players(players)
+    )
+    pickup_changes = [c for c in pickup_changes if c["player_id"] in available_free_agents]
     pickup_alerts = []
     if pickup_changes:
         changed_ids = [c["player_id"] for c in pickup_changes]

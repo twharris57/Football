@@ -67,34 +67,36 @@ below as a normal backlog item, same as any other deferred work.
 Findings from reviewing `feature/free-agent-pickup-monitor` (PR #32,
 2026-08-08):
 
-- **`RT-22` — a pickup alert's "just signed with {team}" label is asserted
+- **`RT-22` — a pickup alert's "just signed with {team}" label was asserted
   for every player's first appearance in the tracked snapshot, not just
-  real NFL signings.** `pickup_snapshots._diff()` treats any player absent
-  from `previous_players` as a `kind: "team", old: None` event, and
-  `summary._pickup_alert_lines()` renders that unconditionally as
-  `"{name} ({pos}) just signed with {new}"`. But `pool` is
-  `free_agent_pool()`'s output, which excludes any player currently on a
-  fantasy roster — so the dominant way a veteran (not a first-ever-tracked
-  rookie or a genuinely new NFL signee) gets a `prior is None` entry is a
-  fantasy manager dropping them mid-season, while they've been on the same
-  real NFL team the whole time. The alert then tells the user "Player X
-  just signed with the Chiefs" when nothing about their NFL team changed at
-  all — a real, actionable-looking, but wrong causal claim, same shape as
-  the pick-label bug filed under `valuation_principles.md`'s "A composite
-  label needs a parser that handles every format its own source can
-  produce." `test_first_appearance_in_an_already_initialized_snapshot_is_a_flaggable_team_change`
-  and `test_pickup_alerts_formats_a_brand_new_pool_entrant` both bake this
-  reading in as the expected/correct behavior and never construct the
-  confounding case (a player who's been on the same NFL roster all along,
-  just newly dropped by a fantasy manager). Fix direction: track
-  team/depth-chart/status for every fantasy-relevant NFL-rostered player
-  regardless of fantasy-roster status (not just the free-agent subset), so
-  a `prior` lookup has a real baseline even for a player who was previously
-  excluded from `pool` only because someone else rostered them — keep
-  *alerting* scoped to players currently in the free-agent pool (only they
-  are actionable pickups), but stop treating "no tracked history because
-  they were never a free agent before" as equivalent to "no NFL team
-  history at all."
+  real NFL signings — fixed.** `pickup_snapshots._diff()` treated any
+  player absent from `previous_players` as a `kind: "team", old: None`
+  event, rendered unconditionally as `"{name} ({pos}) just signed with
+  {new}"`. The snapshot was only ever given `free_agent_pool()`'s output,
+  which excludes any player currently on a fantasy roster — so the
+  dominant way a veteran got a `prior is None` entry was a fantasy manager
+  dropping them mid-season while they stayed on the same real NFL team the
+  whole time, misreported as a fresh signing. Fixed by tracking the
+  broader population instead: new `fantasy_relevant_teamed_players()`
+  (`player_pools.py`, factored out of `free_agent_pool`'s own filter) is
+  every fantasy-relevant player with a real NFL team *regardless* of
+  fantasy-roster status; `state.py` now passes that to
+  `reconcile_pickup_snapshot()` instead of the free-agent-only pool, so a
+  rostered player already has real team/depth-chart/status history on file
+  the moment they're dropped, and a `prior is None` entry now only means a
+  genuine first-time appearance in Sleeper's teamed-player data (a true
+  signing or rookie debut). Alerts still only fire for players in the
+  actual free-agent pool — `pickup_changes` is filtered down to
+  `available_free_agents` in `state.py` before ranking, since
+  `rank_by_marginal_value` assumes its candidates are addable, not still on
+  someone else's roster. New tests: `TestFantasyRelevantTeamedPlayers` in
+  `test_player_pools.py` covers the new function directly (includes
+  rostered players, unlike `free_agent_pool`), and
+  `test_a_player_only_newly_available_but_already_tracked_is_not_a_false_signing`
+  in `test_pickup_snapshots.py` reproduces the exact confounding case (a
+  dropped-but-not-re-signed veteran) and confirms it no longer fires.
+  Durable rule filed in `valuation_principles.md`'s "'First time seen in
+  this narrower pool' is not 'first time this ever happened'."
 
 ## Now — blocking
 

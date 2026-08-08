@@ -8,6 +8,43 @@ import dynasty_core as dc
 from tests.dynasty_core.helpers import fc_entry, make_player
 
 
+class TestFantasyRelevantTeamedPlayers:
+    """fantasy_relevant_teamed_players should be every fantasy-relevant, real-NFL-team
+    player regardless of fantasy-roster status - the broader population free_agent_pool
+    narrows down further, and what pickup_snapshots.py tracks so a fantasy-roster drop
+    can't masquerade as a real NFL-team signing (see RT-22 in PROJECT_PLAN.md)."""
+
+    def test_includes_rostered_players_unlike_free_agent_pool(self):
+        players = {
+            "rostered_wr": make_player("WR", full_name="Rostered WR"),
+            "free_wr": make_player("WR", full_name="Free WR"),
+        }
+
+        universe = dc.fantasy_relevant_teamed_players(players)
+
+        assert set(universe.keys()) == {"rostered_wr", "free_wr"}
+
+    def test_excludes_players_with_no_real_nfl_team(self):
+        players = {
+            "no_team": {"position": "WR", "team": None, "full_name": "No Team"},
+            "on_team": make_player("WR", full_name="On Team"),
+        }
+
+        universe = dc.fantasy_relevant_teamed_players(players)
+
+        assert set(universe.keys()) == {"on_team"}
+
+    def test_excludes_non_fantasy_positions(self):
+        players = {
+            "kicker": {"position": "K", "team": "AAA", "full_name": "A Kicker"},
+            "wr": make_player("WR", full_name="A WR"),
+        }
+
+        universe = dc.fantasy_relevant_teamed_players(players)
+
+        assert set(universe.keys()) == {"wr"}
+
+
 class TestFreeAgentPool:
     """free_agent_pool should be every fantasy-relevant, real-NFL-team player not on any roster."""
 

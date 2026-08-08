@@ -53,6 +53,29 @@ def rookie_pool(players: dict[str, dict], season: str) -> dict[str, dict]:
     }
 
 
+def fantasy_relevant_teamed_players(players: dict[str, dict]) -> dict[str, dict]:
+    """Return every fantasy-relevant player on a real NFL roster, regardless of fantasy-roster status.
+
+    The broader population `free_agent_pool` narrows down further (to just
+    the non-rostered subset) - shared here so a caller that needs to track
+    a player's real NFL-team/depth-chart/status history (`pickup_snapshots.py`)
+    can do so across the *whole* population, not just whoever happens to be
+    a free agent this refresh. That distinction matters: if history were
+    only tracked for the free-agent subset, a player re-entering it via a
+    fantasy-roster drop (not an NFL-team change) would look identical to a
+    real first-time signing - see `.claude/conventions/valuation_principles.md`'s
+    "first time seen in this narrower pool" rule. `team` must be truthy (on
+    an actual NFL roster) since Sleeper's player dataset also carries
+    retired/practice-squad-only/no-team entries that would otherwise flood
+    the pool with irrelevant results.
+    """
+    return {
+        player_id: info
+        for player_id, info in players.items()
+        if info.get("position") in FANTASY_POSITIONS and info.get("team")
+    }
+
+
 def free_agent_pool(
     players: dict[str, dict], rosters: list[dict], draft_eligible_rookie_ids: frozenset[str] = frozenset()
 ) -> dict[str, dict]:
@@ -60,25 +83,20 @@ def free_agent_pool(
 
     Sleeper has no dedicated "free agents" endpoint - this is the same
     approach `rookie_pool` uses, generalized to every player, not just this
-    year's class. `team` must be truthy (on an actual NFL roster) since
-    Sleeper's player dataset also carries retired/practice-squad-only/no-team
-    entries that would otherwise flood the pool with irrelevant results.
-    `draft_eligible_rookie_ids` (`gather_state`'s own undrafted-rookie pool,
-    `frozenset()` once the draft is complete) excludes this year's
-    not-yet-drafted class while the startup draft is still active - an
-    undrafted rookie mid-draft is a draft prospect, not a waiver-wire pickup,
-    even though they aren't in `rostered_player_ids` either. Once the draft
-    ends, any still-undrafted rookie is a real free agent again and this
-    exclusion naturally stops applying (the caller passes an empty set).
+    year's class. `draft_eligible_rookie_ids` (`gather_state`'s own
+    undrafted-rookie pool, `frozenset()` once the draft is complete)
+    excludes this year's not-yet-drafted class while the startup draft is
+    still active - an undrafted rookie mid-draft is a draft prospect, not a
+    waiver-wire pickup, even though they aren't in `rostered_player_ids`
+    either. Once the draft ends, any still-undrafted rookie is a real free
+    agent again and this exclusion naturally stops applying (the caller
+    passes an empty set).
     """
     rostered = rostered_player_ids(rosters)
     return {
         player_id: info
-        for player_id, info in players.items()
-        if info.get("position") in FANTASY_POSITIONS
-        and info.get("team")
-        and player_id not in rostered
-        and player_id not in draft_eligible_rookie_ids
+        for player_id, info in fantasy_relevant_teamed_players(players).items()
+        if player_id not in rostered and player_id not in draft_eligible_rookie_ids
     }
 
 
