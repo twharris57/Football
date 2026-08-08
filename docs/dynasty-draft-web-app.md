@@ -167,7 +167,7 @@ the image wasn't actually built by CI.
 
 Streamlit reruns the whole script top-to-bottom on any widget interaction,
 so a naive port would refetch on every unrelated click. `st.cache_data` is
-keyed on an explicit `refresh_token` in `st.session_state`, bumped only by
+keyed on an explicit `refresh_token` in `st.session_state`, set only by
 the Refresh button or the Advanced-refresh "Apply" button — mirroring the
 CLI's Enter-vs-`f` prompt. A button/checkbox's own value can't be the cache
 key directly — it's only current on the exact run it was clicked, so a
@@ -175,6 +175,23 @@ later rerun (e.g. opening an expander) would see a stale/default value and
 get a different key, silently missing cache and re-fetching for no reason.
 `st.session_state.force_refresh_pending`/`force_scoring_pending` hold the
 durable versions instead, set once per click and stable across reruns.
+
+`refresh_token` is a real timestamp (`dt.datetime.now().timestamp()`), not
+an incrementing counter — found live during a draft (2026-08-08):
+`st.cache_data`'s cache is shared across the *whole server process*, not
+per session, but `st.session_state.refresh_token` resets to `0` for every
+new/reconnected session (a page reload, a phone backgrounding the tab). A
+counter restarting at `0` on each session can land on a small integer some
+*other* session already used earlier in the same draft, silently hitting
+that session's stale cached snapshot instead of actually re-fetching —
+Refresh looked like it wasn't picking up a just-made pick, when it was
+actually serving an old cache hit under a collided key. A sub-second
+timestamp can't collide with a prior click's value the way a small
+per-session counter can. The initial default (before any click) is still a
+fixed `0` deliberately — different sessions loading around the same time
+with no click yet *should* share one cache entry rather than each hitting
+Sleeper/FantasyCalc independently; only the value a click sets needs to be
+collision-proof.
 
 Refresh is always manual — there is no polling or background auto-refresh
 anywhere in this app or the CLI. A sidebar caption ("Last refreshed:
