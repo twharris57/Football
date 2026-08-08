@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-22`, `VA-5`, `CQ-5`, `DL-9`.
+below): `NB-2`, `RT-24`, `VA-5`, `CQ-5`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -64,9 +64,34 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty — every finding from reviewing `feature/free-agent-pickup-monitor`
-(PR #32, 2026-08-08) is fixed and merged. No formal review pass has run
-yet on the current branch (`feature/rt-15-suggested-trades`).
+**`feature/rt-15-suggested-trades` (PR #34), reviewed 2026-08-08:**
+
+- [ ] `suggested_trades()` (`dynasty_core/trade.py`) never checks whether
+  the trade it's about to recommend is actually good for the user before
+  showing it. Stage 1 (`leaguewide_trade_candidates()`) correctly filters
+  to `marginal_value > 0` before a candidate is even considered — matching
+  `free_agent_board`/`pickup_alerts`' "worth surfacing at all" convention
+  — but Stage 2 doesn't carry that standard forward: it only requires
+  `find_trade_offers()`'s `offers` list to be non-empty (some combo
+  cleared the *partner's* plausibility bar), then sorts survivors by
+  `your_side["lineup_delta_after_drops"]` and shows the top 3 with no
+  floor at zero. A candidate whose only viable offer is net-neutral, or
+  actually negative, for the user's own lineup can still be ranked and
+  shown as a "Suggested Trade" — the branch's own new test proves this
+  directly (`TestSuggestedTrades::test_drops_candidates_with_no_viable_offer_and_ranks_survivors_by_lineup_gain`
+  constructs `target_a` with `lineup_delta_after_drops == 0.0` and asserts
+  it survives into the result list, ranked #2, rather than being dropped).
+  This is a new risk specific to this feature's automation: the manual
+  trade-target optimizer it replaces always showed a human the target's
+  own `target_read` ("worth pursuing," computed for free) before the
+  human decided to run a search at all; Suggested Trades removes that
+  checkpoint by auto-selecting candidates and auto-presenting the ranked
+  results as the feature's whole value proposition. Fix: filter `results`
+  in `suggested_trades()` to `your_side["lineup_delta_after_drops"] > 0`
+  before sorting/capping to `top_n`, mirroring Stage 1's own filter — and
+  update the test above, since a `0.0`-delta candidate should now be
+  dropped rather than ranked. Captured as a durable rule in
+  `valuation_principles.md`'s new "worth surfacing" filter section.
 
 ## Now — blocking
 
@@ -153,6 +178,23 @@ Deliberately out of v1, not forgotten:
   now that leaguewide scanning itself is built and the section's filter UI
   exists to extend (see `docs/rookie-draft-big-board.md`'s "Suggested
   Trades" section).
+- [ ] **RT-24: Suggested Trades' cached scan results go stale across a
+  refresh, with no invalidation** (assistant valuation review, 2026-08-08)
+  — `trade_tab.py`'s "Scan the league for offers" button stores its result
+  in `st.session_state["suggested_trades_results"]` specifically so it
+  survives an unrelated rerun without re-scanning (per its own docstring:
+  "rather than needing a re-click on every unrelated page interaction").
+  But nothing clears or recomputes it when the user clicks the page's own
+  "Refresh" and pulls a fresh `gather_state()` snapshot — every other
+  field in `state` is rebuilt from scratch on refresh, but this one result
+  silently keeps showing whichever combo/target a *previous* refresh
+  computed, even after a real roster change elsewhere (another manager's
+  trade, a waiver claim) could have made it stale or outright impossible.
+  Low severity for a single-user personal tool — a stale suggestion just
+  fails obviously the moment it's acted on for real in Sleeper — but worth
+  clearing `suggested_trades_results` from session state whenever a fresh
+  refresh runs, so a scan can never outlive the snapshot it was computed
+  against.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all
