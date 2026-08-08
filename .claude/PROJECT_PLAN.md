@@ -42,8 +42,6 @@ too, per the convention above), don't let this become a history log.
 - [ ] `RT-9` — free-agent pickup monitor (`RT-20`'s
   `dynasty_core/draft_snapshots.py` persistence layer is done and worth
   reusing/extending rather than building a second one from scratch).
-- [ ] `RT-17` — confirmed test-coverage/scope gap in
-  `best_position_relevant_drop()`'s superflex handling.
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
@@ -202,50 +200,24 @@ where possible, instead of always showing the live-guess heuristic; see
   marginal value is clearly not worth pursuing at all) to keep a
   whole-roster scan responsive - not decided yet, scope during
   implementation.
-- [ ] **RT-17: `best_position_relevant_drop()`'s slot-type restriction is a
-  no-op in this league's actual superflex format** (user-flagged
-  2026-08-06, investigated) — its whole value over the cheap
-  `recommend_drop()` heuristic is restricting the drop search to "players
-  who share a slot type with the candidate" (own position, plus FLEX/
-  SUPER_FLEX-eligible positions if the league has those slots). But
-  `SUPERFLEX_ELIGIBLE_POSITIONS` is all four fantasy positions by
-  definition, so for *any* candidate in a league with a `SUPER_FLEX` slot
-  (this league, always), `eligible_positions` expands to {QB, RB, WR, TE}
-  — every fantasy-relevant player on the roster, not a restricted pool.
-  Confirmed via the existing test suite: `TestBestPositionRelevantDrop`'s
-  only "restricts to same slot type" test deliberately uses a league with
-  no FLEX/SUPER_FLEX ("No FLEX/SUPER_FLEX in this league" per its own
-  comment) — there is no coverage of this function's behavior in the
-  league format the whole project is actually built for.
-  Doesn't appear to produce a *wrong* answer: the function still runs the
-  real `season_average_starter_value()` simulation over the (unintentionally
-  unrestricted) pool and returns whichever candidate empirically maximizes
-  marginal value, so a nonsensical drop (cutting a strong bench WR to make
-  room for a mediocre backup QB) should simply lose to the sensible one on
-  real value — the same way `assign_starters()` already lets the
-  highest-*value* eligible player win a SUPER_FLEX slot regardless of
-  position, correctly reflecting "QBs are the practical SUPER_FLEX
-  occupant" through market value rather than a hardcoded rule. The cost is
-  scope, not correctness: the docstring's "restricts the search" claim
-  doesn't hold here, and every on-demand lookup (Draft Plan tab's
-  player-projection dropdown) searches the *entire* bench instead of a
-  realistically narrowed one.
-  Worth a deliberate decision, not an immediate fix: either (a) document
-  that the restriction is intentionally a no-op in a superflex league and
-  correctness rests entirely on the simulation, or (b) add a real
-  SUPER_FLEX-aware narrowing (e.g., only fold in RB/WR/TE once the
-  candidate's own position genuinely runs out of meaningful bench
-  competitors) if the search-space cost ever matters at scale. Add a
-  superflex-league test case either way — confirmed gap in the current
-  suite. Checked whether this same naive "SUPER_FLEX = any of 4 positions
-  equally" assumption shows up anywhere else with real consequence (not
-  just search-space cost) and didn't find one: `_position_starter_demand()`
-  already models SUPER_FLEX as QB-specific demand for replacement-level/VOR
-  purposes (`.claude/conventions/valuation_principles.md`'s "superflex
-  inflates QB value" rule), and `assign_starters()`'s greedy value-based
-  fill already lets real market value decide who wins the slot — this
-  function is the one place the "equally eligible" framing leaked into
-  code without a value-simulation backstop.
+
+**RT-17 (`best_position_relevant_drop()`'s superflex slot-type restriction)
+is resolved as documentation + test coverage, not a code change** — went
+with option (a) from the investigation: the "restrict to a shared slot
+type" narrowing is confirmed a no-op in this league's actual superflex
+format (`SUPERFLEX_ELIGIBLE_POSITIONS` is all four fantasy positions), but
+correctness never depended on that narrowing — the real
+`season_average_starter_value()` simulation already decides the right
+answer over whatever pool it's given. Added a docstring paragraph stating
+this explicitly (`dynasty_core/marginal_value.py`), and a superflex-league
+test case (`TestBestPositionRelevantDrop::test_superflex_league_still_finds_the_correct_cross_position_drop`,
+a cross-position bye-overlap scenario — a bench QB correctly beats a
+higher-raw-value bench WR) that closes the confirmed coverage gap. Real
+SUPER_FLEX-aware narrowing was deliberately not built: the search-space
+cost this would address isn't demonstrated to matter at this league's
+roster/bench sizes — solving it now would be building for a hypothetical,
+not an observed, problem.
+
 **RT-18 (trade evaluator/optimizer non-obvious-value callouts) is done** —
 see `docs/rookie-draft-big-board.md`'s "Trade evaluator"/"Trade-target
 optimizer" sections. `evaluate_trade()` now returns a `callouts` list

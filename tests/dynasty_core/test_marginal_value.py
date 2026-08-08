@@ -376,6 +376,49 @@ class TestBestPositionRelevantDrop:
 
         assert best["player_id"] == "bench_b"
 
+    def test_superflex_league_still_finds_the_correct_cross_position_drop(self):
+        # RT-17: with a SUPER_FLEX slot (this league, always),
+        # SUPERFLEX_ELIGIBLE_POSITIONS is all four fantasy positions, so the
+        # "restrict to a shared slot type" narrowing is a no-op - a WR
+        # candidate's search pool includes a bench QB too, not just other
+        # WRs. Confirmed correctness (not just a no-op) rests on the real
+        # simulation: same bye-overlap trick as the test above (a lower-raw-
+        # value bench player who uniquely covers a week the higher-value one
+        # doesn't), but across positions - bench_qb (not another WR) is the
+        # one worth keeping. starter_flex fills the SUPER_FLEX slot on its
+        # own, ahead of both bench_qb/bench_wr, so both genuinely start on
+        # the bench before the candidate is even considered - otherwise
+        # bench_wr (60 > 40) would already be a real starter itself and
+        # never enter the drop search in the first place.
+        league = {"roster_positions": ["WR", "SUPER_FLEX"], "settings": {}}
+        players = {
+            "starter_wr": make_player("WR", team="T1", full_name="Starter WR"),
+            "starter_flex": make_player("RB", team="T5", full_name="Starter Flex"),
+            "bench_qb": make_player("QB", team="T3", full_name="Bench QB"),
+            "bench_wr": make_player("WR", team="T4", full_name="Bench WR"),
+            "candidate": make_player("WR", team="T2", full_name="Candidate"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [
+                fc_entry("starter_wr", 200, position="WR"),
+                fc_entry("starter_flex", 150, position="RB"),
+                fc_entry("bench_qb", 40, position="QB"),  # lower raw value...
+                fc_entry("bench_wr", 60, position="WR"),  # ...but this outranks it if compared naively
+                fc_entry("candidate", 1000, position="WR"),
+            ]
+        )
+        # T1/T2/T4/T5 share bye week 1 (bench_wr provides zero unique
+        # coverage that week - it's out right alongside everyone else); T3
+        # (bench_qb) is out a different week (5), when the others are
+        # already covering both slots anyway. Keeping bench_qb strictly
+        # beats keeping bench_wr on season-average value.
+        byes = {"T1": 1, "T2": 1, "T3": 5, "T4": 1, "T5": 1}
+        hypothetical_ids = ["starter_wr", "starter_flex", "bench_qb", "bench_wr"]
+
+        best = dc.best_position_relevant_drop("candidate", hypothetical_ids, players, fc_by_id, byes, league)
+
+        assert best["player_id"] == "bench_wr"
+
 
 class TestSeasonAverageStarterValue:
     """Bye weeks should reduce the season average proportionally, not distort it."""
