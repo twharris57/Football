@@ -66,31 +66,30 @@ below as a normal backlog item, same as any other deferred work.
 
 **`feature/rt-15-suggested-trades` (PR #34), reviewed 2026-08-08:**
 
-- [ ] `suggested_trades()` (`dynasty_core/trade.py`) never checks whether
-  the trade it's about to recommend is actually good for the user before
-  showing it. Stage 1 (`leaguewide_trade_candidates()`) correctly filters
-  to `marginal_value > 0` before a candidate is even considered — matching
-  `free_agent_board`/`pickup_alerts`' "worth surfacing at all" convention
-  — but Stage 2 doesn't carry that standard forward: it only requires
-  `find_trade_offers()`'s `offers` list to be non-empty (some combo
-  cleared the *partner's* plausibility bar), then sorts survivors by
-  `your_side["lineup_delta_after_drops"]` and shows the top 3 with no
-  floor at zero. A candidate whose only viable offer is net-neutral, or
-  actually negative, for the user's own lineup can still be ranked and
-  shown as a "Suggested Trade" — the branch's own new test proves this
-  directly (`TestSuggestedTrades::test_drops_candidates_with_no_viable_offer_and_ranks_survivors_by_lineup_gain`
-  constructs `target_a` with `lineup_delta_after_drops == 0.0` and asserts
-  it survives into the result list, ranked #2, rather than being dropped).
-  This is a new risk specific to this feature's automation: the manual
-  trade-target optimizer it replaces always showed a human the target's
-  own `target_read` ("worth pursuing," computed for free) before the
-  human decided to run a search at all; Suggested Trades removes that
-  checkpoint by auto-selecting candidates and auto-presenting the ranked
-  results as the feature's whole value proposition. Fix: filter `results`
-  in `suggested_trades()` to `your_side["lineup_delta_after_drops"] > 0`
-  before sorting/capping to `top_n`, mirroring Stage 1's own filter — and
-  update the test above, since a `0.0`-delta candidate should now be
-  dropped rather than ranked. Captured as a durable rule in
+- [x] `suggested_trades()` (`dynasty_core/trade.py`) never checked whether
+  the trade it was about to recommend was actually good for the user
+  before showing it. Stage 1 (`leaguewide_trade_candidates()`) correctly
+  filters to `marginal_value > 0` before a candidate is even considered —
+  matching `free_agent_board`/`pickup_alerts`' "worth surfacing at all"
+  convention — but Stage 2 didn't carry that standard forward: it only
+  required `find_trade_offers()`'s `offers` list to be non-empty (some
+  combo cleared the *partner's* plausibility bar), then sorted survivors
+  by `your_side["lineup_delta_after_drops"]` and showed the top 3 with no
+  floor at zero. A candidate whose only viable offer was net-neutral, or
+  actually negative, for the user's own lineup could still be ranked and
+  shown as a "Suggested Trade" — the branch's own new test proved this
+  directly (`target_a`'s `lineup_delta_after_drops == 0.0` offer survived
+  into the result list, ranked #2, instead of being dropped). A new risk
+  specific to this feature's automation: the manual trade-target optimizer
+  it replaces always showed a human the target's own `target_read` ("worth
+  pursuing," computed for free) before the human decided to run a search
+  at all; Suggested Trades removes that checkpoint by auto-selecting
+  candidates and auto-presenting the ranked results as the feature's whole
+  value proposition. **Fixed 2026-08-08** (`daf24f0`): `suggested_trades()`
+  now filters `results` to `your_side["lineup_delta_after_drops"] > 0`
+  before sorting/capping to `top_n`, mirroring Stage 1's own filter; the
+  test that encoded the old behavior now asserts the `0.0`-delta candidate
+  is dropped instead. Captured as a durable rule in
   `valuation_principles.md`'s new "worth surfacing" filter section.
 
 ## Now — blocking
