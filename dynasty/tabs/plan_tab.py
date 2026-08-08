@@ -22,8 +22,12 @@ def render_plan_tab(state: dict) -> None:
             "between (\"if these were your only remaining picks, back to back, on the board "
             "right now\").\n"
             "- **⚠️** — the suggested drop is a current starter.\n"
-            "- **Drop suggestion** — a live suggestion even for a completed round; Sleeper has no "
-            "record of whether it was actually dropped.\n"
+            "- **Drop status** for a completed round — **✅ DROPPED** is a real drop, recovered by "
+            "checking your roster across refreshes; a plain **DROP** with no checkmark is still a "
+            "live guess (nothing's been checked yet); **❓ drop unclear** means more than one of your "
+            "picks completed between refreshes, so which real drop paired with which pick can't be "
+            "isolated; no drop text at all means it's confirmed none was needed. For rounds where the "
+            "roster wasn't checked between your picks, this still has to guess.\n"
             "- **Bye weeks** are folded into the season average, not handled separately.\n"
             "- **Nothing here refreshes on its own** — no polling, no auto-refresh, in this app "
             "or the CLI. Hit the sidebar's Refresh button right before your own pick, not just "
@@ -47,7 +51,19 @@ def render_plan_tab(state: dict) -> None:
         hypothetical_ids_by_pick = plan["hypothetical_ids_by_pick"]
         for _, row in rounds.iterrows():
             status_icon = "✅" if row["status"] == "completed" else "🔜"
-            drop_part = f" · DROP {row['drop_name']} ({row['drop_pos']})" if pd.notna(row["drop_name"]) else ""
+            drop_status = row["drop_status"]
+            if drop_status == "confirmed_none":
+                drop_part = ""
+            elif drop_status == "confirmed":
+                drop_part = f" · ✅ DROPPED {row['drop_name']} ({row['drop_pos']})"
+            elif drop_status == "ambiguous":
+                drop_part = (
+                    f" · ❓ drop unclear — guessing {row['drop_name']} ({row['drop_pos']})"
+                    if pd.notna(row["drop_name"])
+                    else " · ❓ drop unclear"
+                )
+            else:
+                drop_part = f" · DROP {row['drop_name']} ({row['drop_pos']})" if pd.notna(row["drop_name"]) else ""
             warn_icon = " ⚠️" if row["drop_is_starter"] else ""
             label = (
                 f"{status_icon} Round {row['round']}, pick {row['overall_pick']}: "
@@ -56,6 +72,11 @@ def render_plan_tab(state: dict) -> None:
             )
             with st.expander(label):
                 st.write(row["reason"])
+                if drop_status == "ambiguous":
+                    st.info(
+                        "More than one of your picks completed between refreshes, so which real drop "
+                        "paired with which pick can't be isolated — this is still a guess."
+                    )
                 if row["drop_is_starter"]:
                     st.warning(f"{row['drop_name']} is a current starter.")
                 alternates = alternates_by_pick.get(row["overall_pick"])

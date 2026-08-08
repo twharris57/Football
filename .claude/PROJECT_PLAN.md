@@ -36,18 +36,15 @@ it's stopped being a "short" list — thin it back out to what's actually
 active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
-**Must clear (this weekend / live draft):**
-- [ ] `RT-20` — draft-plan past-round drop tracking, needed for the live
-  draft. Next up (`NB-2` done — see "Now — blocking").
-
 **Nice to have (no deadline, worth doing when there's room):**
 - [ ] `RT-18` — trade evaluator/optimizer callouts for non-obvious value
   (bye-gap closing, pick value in context, handcuffs, buried-bench-to-
   starter swaps).
 - [ ] `RT-19` — a summary/digest tab surfacing what needs attention
   instead of reviewing every tab.
-- [ ] `RT-9` — free-agent pickup monitor (needs the same persistence
-  layer as `RT-20` — worth scoping together if either is picked up).
+- [ ] `RT-9` — free-agent pickup monitor (`RT-20`'s
+  `dynasty_core/draft_snapshots.py` persistence layer is done and worth
+  reusing/extending rather than building a second one from scratch).
 - [ ] `RT-17` — confirmed test-coverage/scope gap in
   `best_position_relevant_drop()`'s superflex handling.
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
@@ -202,6 +199,13 @@ this could still feed into.
 **Trade-target optimizer is done** — see `docs/rookie-draft-big-board.md`'s
 "Trade-target optimizer" section. Follow-ups below: `RT-14`, `RT-15`.
 
+**RT-20 (real draft-pick drop tracking) is done** — see
+`docs/rookie-draft-big-board.md`'s "Draft plan" section and
+`dynasty_core/draft_snapshots.py`. A completed round's drop is now recovered
+from the real roster (diffed across refreshes and persisted per draft)
+where possible, instead of always showing the live-guess heuristic; see
+`DL-8` for the deferred cleanup of orphaned snapshot files.
+
 - [ ] **RT-14: Evaluate and improve an offer someone else has already made
   *to* us** (user-flagged 2026-08-02, filed while scoping `RT-12`) — a
   third, distinct question alongside the trade evaluator (`RT-2`: score a
@@ -239,60 +243,6 @@ this could still feed into.
   caveat that this tiebreaker assumes every partner is need-reading the
   same way a rebuilding team would, or reconsidering what "need" should
   mean when read on someone else's roster.
-- [ ] **RT-20: Past-round "drop suggestion" is a live guess, not a real
-  record — but the real record may actually be derivable** — **next up,
-  needed for the live draft** (user-flagged 2026-08-06, priority
-  confirmed same day: "we need this to work for the draft"). Questioning
-  `multi_round_plan`'s own docstring/UI copy: "Sleeper has no record of
-  whether it was actually dropped" — investigated directly. True that
-  Sleeper has no API field tying a specific drop to a specific pick, but
-  the project already pulls the user's *live* roster fresh on every
-  refresh (`streamlit_app.py`: "Refresh button... re-pulls
-  league/rosters/draft/picks — cheap, always live," no TTL on that call,
-  unlike the players/values/scoring caches; confirmed both the CLI and web
-  app only refresh *manually* — an Enter-key prompt / a "Refresh" button,
-  never an automatic background poll). So a real drop made any time during
-  the draft *is* visible on the next refresh, just not automatically
-  attributable to a round, because nothing today persists a "roster as it
-  stood before" snapshot to diff against. The user's proposed fix is
-  sound: snapshot the roster's player list once at draft start (keyed by
-  `league["draft_id"]`, the same stable identifier `sleeper.get_draft()`/
-  `get_draft_picks()` already use, following the existing
-  `.cache/{thing}_{season}.json` naming convention), then on each refresh
-  diff the current roster against that snapshot to recover which players
-  actually left the roster since the draft began.
-  Two real limitations to design around before building this, not just a
-  straight snapshot-and-diff:
-  - **Per-round attribution, not just an aggregate list.** A single
-    draft-start snapshot tells you the *set* of real drops since the
-    draft began, not which round each one was "for" — if the user drops
-    three different bench players across five completed rounds, a
-    start-only diff can't cleanly say which drop paired with which pick,
-    only that three drops happened. Matching the current UI's per-round
-    `DROP {name}` display would need a snapshot reconciled at each
-    newly-completed round, not one fixed point-in-time snapshot — a
-    materially bigger design than "cache the roster once."
-  - **No per-pick time limit — this league's draft can span multiple
-    days.** Confirmed in the league rules; nothing here assumes real-time
-    pacing today. A day-plus-scale, write-once-then-diff cache is a
-    different shape than anything currently in `.cache/` (all of which is
-    either short-TTL-and-freely-refetchable or explicitly no-TTL-but-safely-
-    idempotent) — this would be the first "capture this exact historical
-    moment and never silently overwrite it" cache in the project. Needs
-    explicit handling for: the snapshot never being taken (tool not opened
-    until mid-draft), the cache file going missing (a fresh deploy without
-    volume persistence, a manually cleared `.cache/`), or the draft
-    outliving whatever this snapshot's own retention policy turns out to
-    be. In every one of those cases, this should fall back to today's
-    live-guess behavior, clearly labeled as an estimate rather than a
-    confirmed drop — the same "silent degradation must surface as a
-    warning" pattern `data_warnings` already establishes elsewhere
-    (`.claude/conventions/valuation_principles.md`), not a new failure
-    mode to invent.
-  Shares its core missing piece — a persistence layer that survives
-  between refreshes — with `RT-9`'s free-agent monitoring; worth scoping
-  both together rather than building two independent ad hoc stores if
-  `RT-9` is picked up around the same time.
 - [ ] **RT-15: Scan a partner's whole roster for viable trade opportunities,
   not one target at a time** (user-flagged 2026-08-02, filed while
   reviewing `RT-12`) — the trade-target optimizer only ever evaluates one
@@ -547,8 +497,10 @@ this could still feed into.
   check rather than a monitor) no longer depends on this.
   Re-flagged 2026-08-06 ("we need a free agent pickup monitor") — same
   scope, no new requirements, just renewed priority. `RT-20` (draft-plan
-  drop tracking) needs the same underlying persistence layer this does;
-  worth scoping both together if either is picked up.
+  drop tracking, done) already built a persistence layer for a related
+  problem (`dynasty_core/draft_snapshots.py`) — worth checking whether it
+  can be reused/extended here rather than building a second one from
+  scratch.
 - [ ] **RT-10: FAAB bid-threshold modeling** (deferred from the free-agent
   evaluator v1 above, 2026-08-02) — `free_agent_board()` shows remaining
   FAAB (`league["settings"]["waiver_budget"] - roster["settings"].
@@ -749,3 +701,10 @@ assumption changes.
   related columns (Value + Adj. Value into one, raw number as a hover
   detail — the pattern the Trade Evaluator's `lineup_delta`/
   `lineup_delta_after_drops` already uses).
+- [ ] **DL-8: Orphaned `draft_snapshots_{draft_id}.json` files are never
+  cleaned up** (deferred from `RT-20`, user-flagged as fine to defer,
+  2026-08-06) — once a season's rookie draft is fully over, its snapshot
+  file is simply never read again (next season gets a new `draft_id` from
+  Sleeper), so it's harmless to leave behind, just permanent clutter in
+  `.cache/`. No retention/cleanup logic was built in `RT-20`'s first pass.
+  Revisit only if `.cache/` growth ever actually matters.

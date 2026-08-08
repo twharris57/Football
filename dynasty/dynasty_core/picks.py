@@ -176,6 +176,11 @@ def pick_trade_values(
     return pd.DataFrame(rows).sort_values("value", ascending=False, na_position="last").reset_index(drop=True)
 
 
+def own_draft_picks(ownership: list[DraftPickSlot], user_roster_id: int) -> list[DraftPickSlot]:
+    """Return the user's own picks in this draft, in overall-pick order."""
+    return sorted((p for p in ownership if p.owner_roster_id == user_roster_id), key=lambda p: p.overall_pick)
+
+
 def picks_until_turn(ownership: list[DraftPickSlot], user_roster_id: int, current_pick_no: int) -> int | None:
     """Return how many picks (by anyone) happen before the user's next pick.
 

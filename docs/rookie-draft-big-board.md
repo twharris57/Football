@@ -487,16 +487,29 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   simulated assuming **no other team's picks happen in between** — "if
   these were your only remaining picks, back to back, on the board right
   now." This can't account for the other ~11 teams' behavior, so it's
-  recomputed fresh on every refresh. Up to 2 backup alternates are computed
-  per upcoming round, checked for whether picking one instead would open a
-  weekly gap the primary pick doesn't (`alternate_gap_note` — a plain
-  string, deliberately, so more note types can be added later without a
-  redesign). Finally compares the plan's resulting roster's weekly gaps
-  against the current roster's, flagging any week the full plan would newly
-  break. In Streamlit, each pick is its own collapsible section — collapsed
-  shows the pick, drop, and marginal value with a ✅/🔜 cue for completed vs.
-  upcoming and a ⚠️ if the suggested drop is a current starter; expanded
-  holds the full reasoning and that pick's own backup options.
+  recomputed fresh on every refresh. A completed round's drop is one of four
+  `drop_status` states, recovered by diffing the user's real roster across
+  refreshes and persisted per draft (`dynasty_core/draft_snapshots.py`,
+  `.cache/draft_snapshots_{draft_id}.json`, keyed by `league["draft_id"]`):
+  **confirmed** (a real recovered drop), **confirmed_none** (confirmed the
+  roster had room, nothing was dropped), **ambiguous** (two or more of the
+  user's own picks completed in the same refresh gap, so which drop paired
+  with which pick can't be isolated — sticky once set, never retroactively
+  resolved), or **guessed** (the frontier hasn't reached this pick yet, or
+  it's an upcoming round — the same cheap heuristic as before). Once a
+  pick's real post-drop roster is known, later rounds simulate forward from
+  that real state instead of a chain of guesses, bounding simulation drift
+  to only the unconfirmed tail of the plan. Up to 2 backup alternates are
+  computed per upcoming round, checked for whether picking one instead
+  would open a weekly gap the primary pick doesn't (`alternate_gap_note` —
+  a plain string, deliberately, so more note types can be added later
+  without a redesign). Finally compares the plan's resulting roster's
+  weekly gaps against the current roster's, flagging any week the full plan
+  would newly break. In Streamlit, each pick is its own collapsible
+  section — collapsed shows the pick, drop, and marginal value with a
+  ✅/🔜 cue for completed vs. upcoming and a ⚠️ if the suggested drop is a
+  current starter; expanded holds the full reasoning and that pick's own
+  backup options.
 
 ## Performance
 
@@ -516,6 +529,13 @@ the raw ~475-entry list on every call. Full `gather_state()` completes in
 
 - Draft-plan simulation assumes no other team picks in between the user's
   own picks — genuinely can't be predicted.
+- Real drop attribution (`drop_status`) only cleanly isolates a single drop
+  when exactly one of the user's own picks completes between two refreshes
+  — the roster diff can't otherwise tell which drop paired with which pick.
+  Two or more own-picks in the same refresh gap are marked `"ambiguous"`
+  permanently (sticky, never retroactively resolved by a later refresh) —
+  a real limitation, not a bug, given Sleeper never records which drop was
+  "for" which pick.
 - `roster_weekly_gaps` doesn't model FLEX/SUPER_FLEX, only dedicated slots.
 - Lineup and handcuff logic have no injury-status awareness.
 - Handcuffs are RB-only — the standard fantasy usage of the term.

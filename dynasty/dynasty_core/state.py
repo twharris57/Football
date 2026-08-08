@@ -13,10 +13,12 @@ import sleeper_api as sleeper
 
 from .byes import bye_week_by_team
 from .draft_plan import multi_round_plan
+from .draft_snapshots import reconcile_snapshot
 from .handcuffs import handcuff_map
 from .picks import (
     compute_pick_ownership,
     format_your_picks,
+    own_draft_picks,
     pick_trade_values,
     picks_until_turn,
     resolve_user_roster_id,
@@ -176,6 +178,17 @@ def gather_state(
         p["pick_no"]: p["player_id"] for p in draft_picks if p.get("roster_id") == user_roster_id and p.get("player_id")
     }
 
+    # Reconciles the real roster (diffed across refreshes) against what's
+    # already recorded for this draft, to recover which drop actually
+    # happened for a completed round instead of only ever showing a live
+    # guess - see draft_snapshots.py. Independent of force_full_refresh:
+    # this isn't market-data freshness, and shouldn't be silently wiped
+    # mid-draft by an unrelated refresh flag.
+    own_picks = own_draft_picks(ownership, user_roster_id)
+    draft_snapshot = reconcile_snapshot(
+        league["draft_id"], own_picks, current_pick_no, user_roster.get("players") or [], real_picks_by_overall
+    )
+
     # Undrafted rookies are draft prospects, not waiver-wire pickups, for as
     # long as this startup draft still has picks remaining - excluded from
     # free agents via the same `available` pool already computed above for
@@ -277,6 +290,7 @@ def gather_state(
             byes,
             handcuffs,
             real_picks_by_overall,
+            draft_snapshot,
         ),
         "team_names": team_names,
         "data_warnings": data_warnings,
