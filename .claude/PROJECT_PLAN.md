@@ -1,30 +1,42 @@
 # Project Plan
 
 Grouped by theme; within each group, items are ordered by priority (most
-important first). When a task is completed, write it up as a design doc in
-`docs/` (what was built and why, key decisions) and remove it from this list.
-Durable background (league identity, rebuild strategy, valuation methodology)
-lives in `CLAUDE.md` and `docs/`, not here — this file is only what's left to do.
+important first). When a task is completed, remove its entry from this list
+immediately — the commit/PR that closed it is the historical record (the
+same principle the "Current branch — fix before merge" section already
+applies, generalized to every item here). A durable design decision or
+methodology worth keeping belongs in `CLAUDE.md`, `docs/`, or
+`.claude/conventions/valuation_principles.md`, not in a completed item's
+write-up here — this file is only what's left to do.
 
 **Item IDs**: every open item carries a permanent `<SECTION>-<n>` tag in its
 own heading (`NB` = Now — blocking, `RT` = Roster & trade tooling, `VA` =
 Valuation & data accuracy, `CQ` = Code quality/tests/UX, `DL` = Deferred/low
 priority) — e.g. `RT-3`. Assigned once, in document order, and never reused
-or renumbered, even after the item it names is completed and removed —
-matching how `VA`'s items were already informally lettered A-E before this
-convention was written down (`A`/`B`/`E` are done and gone; `D` survives as
-`VA-1`). Cross-reference other items by this tag (`see RT-3`), never by list
-position (`item 2`) — a positional reference silently points at the wrong
-item the moment anything above it is inserted, reordered, or removed. A new
-item gets the next unused number for its section's prefix, appended wherever
-priority order actually puts it in the list — position and ID are
-independent. Each item is a plain bullet (`- [ ]`), never a numbered list
+or renumbered, even after the item it names is completed and its entry
+deleted — matching how `VA`'s items were already informally lettered A-E
+before this convention was written down (`A`/`B`/`E` are done and gone; `D`
+survives as `VA-1`). Cross-reference other items by this tag (`see RT-3`),
+never by list position (`item 2`) — a positional reference silently points
+at the wrong item the moment anything above it is inserted, reordered, or
+removed. A new item gets the next unused number for its section's prefix,
+appended wherever priority order actually puts it in the list — position and
+ID are independent. Since a completed item's entry is deleted rather than
+archived, the next-unused number per prefix can't be found by scanning the
+file once nothing with that prefix remains — it's tracked explicitly in the
+**ID tracker** below instead; bump the matching entry there the moment a new
+item is filed, regardless of whether the file currently shows any item with
+that prefix. Each item is a plain bullet (`- [ ]`), never a numbered list
 entry — a numeric list marker is exactly the kind of position-dependent
 detail this convention exists to avoid; the bold `<SECTION>-<n>:` lead-in is
 the only identifier that matters, and it never needs renumbering when an
 item above it is added or removed. The ephemeral "Current branch — fix
 before merge" section is exempt from ID tagging (cleared on every merge, so
 nothing outlives it to cross-reference) but still uses plain bullets.
+
+**ID tracker** (last number assigned per prefix — bump this the moment a new
+item is filed, whether or not any item with that prefix still appears
+below): `NB-2`, `RT-21`, `VA-5`, `CQ-5`, `DL-8`.
 
 ## Short list — actively prioritized right now
 
@@ -73,18 +85,7 @@ before, which would still let a stale week silently displace a real one).
 
 ## Now — blocking
 
-`NB-1` (Synology NAS deploy + live-draft verification) is done: the user
-confirmed the NAS deployment and live-draft verification steps completed
-successfully. The dashboard is fully deployed; the CLI
-(`dynasty/rookie_draft.py`, no Docker) remains the documented fallback
-regardless.
-
-`NB-2` (refresh clarity) is done — see `docs/dynasty-draft-web-app.md`'s
-"Refresh model" section. The Draft Plan tab's "How this works" now states
-plainly that nothing refreshes automatically and calls out doing so right
-before your own pick; a sidebar caption ("Last refreshed: HH:MM:SS")
-stamped inside `load_state()` (frozen at cache-write time, not read fresh
-on every rerun) makes staleness visible for the first time.
+Empty right now — nothing blocking.
 
 ## Roster & trade tooling
 
@@ -96,16 +97,6 @@ and team-power foundations it needs would produce a weak tool that has to
 be redone once those land, so the foundations come first. Still bumped
 ahead of Valuation & data accuracy below, which remains explicitly not
 deadline-driven.
-
-**Positional-value foundation (VOR/replacement-level, SUPER_FLEX-aware QB
-demand), the league-wide power/timeline read (`power_score`, split into
-independent `quality_score`/`timeline_score` axes), and small-sample
-shrinkage on that read's `win_pct` are done** — see
-`docs/rookie-draft-big-board.md`'s "Roster needs" and "Team timeline /
-power-timeline read" sections for the full methodology.
-
-**Trade targets & sells v1 is done** — see `docs/rookie-draft-big-board.md`'s
-"Trade targets & sells" section.
 
 Deliberately out of v1, not forgotten:
 - **Selling starters, not just depth** — the "sellable vs. just
@@ -130,25 +121,6 @@ Deliberately out of v1, not forgotten:
   against a specific offer, not a recommendation — but worth a deliberate
   decision (extend the exclusion, or leave it and rely on the human)
   rather than an unexamined inconsistency between the two features.
-
-**Free agent / roster-moves evaluator v1 is done** — see
-`docs/rookie-draft-big-board.md`'s "Free agents" section. Open follow-ups:
-`RT-8` (real taxi eligibility), `RT-9` (in-season change monitoring),
-`RT-10` (FAAB bid-sizing).
-
-**Trade evaluator is done** — see `docs/rookie-draft-big-board.md`'s
-"Trade evaluator" section. `RT-6` below is the contextual-research idea
-this could still feed into.
-
-**Trade-target optimizer is done** — see `docs/rookie-draft-big-board.md`'s
-"Trade-target optimizer" section. Follow-ups below: `RT-14`, `RT-15`.
-
-**RT-20 (real draft-pick drop tracking) is done** — see
-`docs/rookie-draft-big-board.md`'s "Draft plan" section and
-`dynasty_core/draft_snapshots.py`. A completed round's drop is now recovered
-from the real roster (diffed across refreshes and persisted per draft)
-where possible, instead of always showing the live-guess heuristic; see
-`DL-8` for the deferred cleanup of orphaned snapshot files.
 
 - [ ] **RT-14: Evaluate and improve an offer someone else has already made
   *to* us** (user-flagged 2026-08-02, filed while scoping `RT-12`) — a
@@ -211,64 +183,6 @@ where possible, instead of always showing the live-guess heuristic; see
   marginal value is clearly not worth pursuing at all) to keep a
   whole-roster scan responsive - not decided yet, scope during
   implementation.
-
-**RT-17 (`best_position_relevant_drop()`'s superflex slot-type restriction)
-is resolved as documentation + test coverage, not a code change** — went
-with option (a) from the investigation: the "restrict to a shared slot
-type" narrowing is confirmed a no-op in this league's actual superflex
-format (`SUPERFLEX_ELIGIBLE_POSITIONS` is all four fantasy positions), but
-correctness never depended on that narrowing — the real
-`season_average_starter_value()` simulation already decides the right
-answer over whatever pool it's given. Added a docstring paragraph stating
-this explicitly (`dynasty_core/marginal_value.py`), and a superflex-league
-test case (`TestBestPositionRelevantDrop::test_superflex_league_still_finds_the_correct_cross_position_drop`,
-a cross-position bye-overlap scenario — a bench QB correctly beats a
-higher-raw-value bench WR) that closes the confirmed coverage gap. Real
-SUPER_FLEX-aware narrowing was deliberately not built: the search-space
-cost this would address isn't demonstrated to matter at this league's
-roster/bench sizes — solving it now would be building for a hypothetical,
-not an observed, problem.
-
-**RT-18 (trade evaluator/optimizer non-obvious-value callouts) is done** —
-see `docs/rookie-draft-big-board.md`'s "Trade evaluator"/"Trade-target
-optimizer" sections. `evaluate_trade()` now returns a `callouts` list
-(free-text, matching `multi_round_plan`'s `reason` field precedent) built
-from four composed primitives: `gap_delta()` in both directions for a bye
-gap opened/closed, the new `handcuff_targets()` (extracted from
-`draft_plan.py`'s `hypothetical_needs_and_handcuffs` into
-`dynasty_core/handcuffs.py` so both callers share it — no duplicated
-logic) for an incoming handcuff to a kept RB, `assign_starters()` +
-`ineligible_ids` filtering (`recommend_drop()`'s pattern) for a buried
-bench player given up or an instant starter received, and
-`pick_trade_values()`'s output ranked within each pick's own season for
-pick-in-context. All four new parameters (`handcuffs`/
-`outgoing_pick_names`/`incoming_pick_names`/`pick_value_table`) are
-optional, so every pre-existing call site/test keeps working unchanged.
-`find_trade_offers()` threads its own `handcuffs`/`pick_value_table`
-through to every `evaluate_trade()` call it makes.
-**RT-19 (a "summary" tab surfacing what actually needs attention) is done**
-(user-flagged 2026-08-06) — new "Summary" tab, `dynasty_core/summary.py`'s
-`build_attention_digest()` composing four already-computed
-`gather_state()` fields into short, capped one-liner lists (flagged roster
-needs, weekly gap risk, sellable-veteran candidates, positive-marginal-value
-free agents) — no new signal or valuation model, matching `evaluate_trade()`'s
-`callouts`/`multi_round_plan`'s `reason` precedent. Two of the original
-five candidate categories were dropped during design, not forgotten:
-upcoming pick timing and `data_warnings` are both already surfaced globally
-above every tab (the "On the clock" banner and warning banners in
-`streamlit_app.py`), so repeating either here would just duplicate an
-always-visible banner; in-season "what changed since last checked" stays
-out of scope pending `RT-9`'s persistence layer, named explicitly in the
-tab's own "How this works" text rather than left silently absent. Tab
-order is conditional, not fixed (user-flagged during review): Draft Plan
-still leads while a draft is ongoing/upcoming (`NB-2`'s live-draft flow
-depends on it), Summary leads instead once the draft is complete, reusing
-the same `current_pick_no > total_picks` check already driving the
-existing "Draft complete." banner rather than an unverified
-`league["status"]` value. `tests/dynasty_core/test_summary.py` covers all
-four categories' formatting/capping, the `adj_value`-vs-`value` column trap,
-and a `free_agent_board`'s columnless-empty-DataFrame edge case that would
-otherwise raise `KeyError` on an empty free-agent pool.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all
@@ -314,10 +228,10 @@ otherwise raise `KeyError` on an empty free-agent pool.
   `dynasty_core.team_roster_analysis()` already runs this exact per-team
   analysis for any roster on demand; this is "call it for all ~12 teams
   and lay out a summary row," not new analysis logic. A natural
-  lighter-weight complement to the power/timeline read above (done
-  2026-08-01) — this surfaces raw stats per team, not a rebuild-vs-contend
-  classification, but both answer "what does this team look like" at a
-  glance.
+  lighter-weight complement to the power/timeline read
+  (`team_power_timeline_scores()`) — this surfaces raw stats per team, not a
+  rebuild-vs-contend classification, but both answer "what does this team
+  look like" at a glance.
 - [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
   (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
   unconfirmed) — a rare, explicitly user-triggered lookup (not a
@@ -439,10 +353,7 @@ otherwise raise `KeyError` on an empty free-agent pool.
 
 Not deadline-driven the way the group above now is (see 2026-07-30 note) —
 this is about improving accuracy for ongoing dynasty decisions, not a hard
-cutoff. E (multiplier data pooled across 3 seasons), B (full per-player
-scoring recompute), and A (finer position/play-style multiplier buckets,
-rescoped to rookies only) are done — see `docs/rookie-draft-big-board.md` for
-methodology.
+cutoff.
 
 - [ ] **VA-1 (formerly "D"): blend in KeepTradeCut as a second market source**, time
   permitting. `import_ids()` only gives a `ktc_id` crosswalk column, not
@@ -587,15 +498,6 @@ methodology.
   has to stay a string match; this is about not re-deriving *this codebase's own*
   already-known structure from a string it built. Cleanup scope, not urgent — no
   known live bug beyond the one already fixed above.
-
-**CQ-4 (`gather_state()`'s duplicated handcuff-target computation) is
-fixed** — `state.py` now calls the shared `handcuff_targets()` helper
-directly instead of its own inline copy. Caught in the same pass: the
-local variable this replaced was itself named `handcuff_targets`, shadowing
-the imported function of the same name — renamed to `user_handcuff_targets`
-and fixed the one other call site (`build_big_board(...)`) that had been
-silently about to receive the function object instead of the computed dict
-once the shadowing local was removed.
 
 ## Deferred / low priority
 
