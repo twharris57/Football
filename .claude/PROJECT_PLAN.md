@@ -37,8 +37,6 @@ active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `RT-19` — a summary/digest tab surfacing what needs attention
-  instead of reviewing every tab.
 - [ ] `RT-9` — free-agent pickup monitor (`RT-20`'s
   `dynasty_core/draft_snapshots.py` persistence layer is done and worth
   reusing/extending rather than building a second one from scratch).
@@ -281,21 +279,29 @@ pick-in-context. All four new parameters (`handcuffs`/
 optional, so every pre-existing call site/test keeps working unchanged.
 `find_trade_offers()` threads its own `handcuffs`/`pick_value_table`
 through to every `evaluate_trade()` call it makes.
-- [ ] **RT-19: A "summary" tab surfacing what actually needs attention,
-  instead of reviewing every tab** (user-flagged 2026-08-06) — five tabs,
-  each thorough for its own question, but nothing today answers "what do I
-  actually need to look at right now" in one place. Distinct from `RT-5`'s
-  all-teams league view (that's about scanning *other* teams; this is
-  about the user's own situation across everything the app already
-  knows). A first cut could pull entirely from data `gather_state()`
-  already computes, no new signals: current flagged roster needs, any
-  weekly-gap alerts, sellable-veteran candidates worth shopping, any
-  free-agent board entries with strongly positive marginal value, upcoming
-  pick timing, and (once `RT-9` lands) anything that changed since last
-  checked. Scope during design: this is a "so what" digest, which means
-  picking a small number of genuinely actionable items rather than
-  restating every tab's full table — the opposite instinct from every
-  other tab in the app, worth being deliberate about.
+**RT-19 (a "summary" tab surfacing what actually needs attention) is done**
+(user-flagged 2026-08-06) — new "Summary" tab, `dynasty_core/summary.py`'s
+`build_attention_digest()` composing four already-computed
+`gather_state()` fields into short, capped one-liner lists (flagged roster
+needs, weekly gap risk, sellable-veteran candidates, positive-marginal-value
+free agents) — no new signal or valuation model, matching `evaluate_trade()`'s
+`callouts`/`multi_round_plan`'s `reason` precedent. Two of the original
+five candidate categories were dropped during design, not forgotten:
+upcoming pick timing and `data_warnings` are both already surfaced globally
+above every tab (the "On the clock" banner and warning banners in
+`streamlit_app.py`), so repeating either here would just duplicate an
+always-visible banner; in-season "what changed since last checked" stays
+out of scope pending `RT-9`'s persistence layer, named explicitly in the
+tab's own "How this works" text rather than left silently absent. Tab
+order is conditional, not fixed (user-flagged during review): Draft Plan
+still leads while a draft is ongoing/upcoming (`NB-2`'s live-draft flow
+depends on it), Summary leads instead once the draft is complete, reusing
+the same `current_pick_no > total_picks` check already driving the
+existing "Draft complete." banner rather than an unverified
+`league["status"]` value. `tests/dynasty_core/test_summary.py` covers all
+four categories' formatting/capping, the `adj_value`-vs-`value` column trap,
+and a `free_agent_board`'s columnless-empty-DataFrame edge case that would
+otherwise raise `KeyError` on an empty free-agent pool.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all

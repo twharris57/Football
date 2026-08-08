@@ -7,7 +7,8 @@ dashboard (`streamlit_app.py`) so the two stay in sync on one code path.
 
 Split into submodules by concern (pick ownership, player pools, roster
 needs, power/timeline, capacity, roster value, byes/handcuffs, lineup,
-drop recommendation, trade evaluation, draft planning, orchestration).
+drop recommendation, trade evaluation, draft planning, attention digest,
+orchestration).
 This file just re-exports the combined public surface so `import
 dynasty_core` behaves exactly as it did as a single file.
 """
@@ -109,6 +110,7 @@ from .roster_value import (
     roster_value_analysis,
 )
 from .state import gather_state
+from .summary import build_attention_digest
 from .team_analysis import team_roster_analysis
 from .trade import (
     TRADE_OFFER_MAX_COMBO_SIZE,
@@ -160,6 +162,7 @@ __all__ = [
     "alternate_gap_note",
     "assign_starters",
     "best_position_relevant_drop",
+    "build_attention_digest",
     "build_big_board",
     "bye_for_row",
     "bye_week_by_team",
