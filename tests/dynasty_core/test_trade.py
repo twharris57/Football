@@ -1018,8 +1018,10 @@ class TestLeaguewideTradeCandidates:
 
 class TestSuggestedTrades:
     """suggested_trades should search only the given (already-capped) candidates via the
-    existing find_trade_offers() - no new valuation logic - drop any with no viable offer,
-    and rank survivors by their best offer's lineup-value gain."""
+    existing find_trade_offers() - no new valuation logic - drop any with no viable offer
+    or a non-positive best-offer lineup gain (find_trade_offers()'s only hard gate is the
+    partner's own tolerance, nothing about whether the trade actually helps the user), and
+    rank survivors by their best offer's lineup-value gain."""
 
     LEAGUE = {"roster_positions": ["WR", "BN", "BN", "BN"]}
 
@@ -1035,14 +1037,15 @@ class TestSuggestedTrades:
         players["depth_wr2"]["years_exp"] = 3
         return your_roster, players, {"QB": 0.0, "RB": 0.0, "WR": 10.0, "TE": 0.0}
 
-    def test_drops_candidates_with_no_viable_offer_and_ranks_survivors_by_lineup_gain(self):
+    def test_drops_candidates_with_no_viable_offer_or_non_positive_lineup_gain(self):
         your_roster, players, replacement_level = self._base_roster_and_players()
         # target_a (100): matches depth_wr (100) almost exactly and stays
-        # below starter_wr (150) - a viable, no-op-for-your-lineup offer
-        # (lineup_delta_after_drops == 0, since it never beats the starter).
+        # below starter_wr (150) - a viable, but no-op-for-your-lineup offer
+        # (lineup_delta_after_drops == 0, since it never beats the starter) -
+        # dropped despite being viable, since it wouldn't actually help.
         # target_c (220): only depth_wr+depth_wr2 combined (100+110=210) is
         # close enough to clear target_c's tolerance band - and 220 beats
-        # starter_wr (150), a real +70 lineup gain.
+        # starter_wr (150), a real +70 lineup gain - the only real survivor.
         # target_huge (100000): no combo of the user's 2-asset sellable pool
         # could ever be within its tolerance band - no viable offer at all.
         partner_a = {"roster_id": 2, "players": ["target_a"]}
@@ -1072,23 +1075,26 @@ class TestSuggestedTrades:
             your_roster, rosters_by_id, players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS, candidates
         )
 
-        # target_huge dropped entirely (no viable offer); target_c ranks
-        # first (real +70 lineup gain beats target_a's 0).
-        assert [r["target_player_id"] for r in results] == ["target_c", "target_a"]
+        # target_huge dropped (no viable offer); target_a also dropped
+        # (viable, but a zero-gain offer isn't worth suggesting); only
+        # target_c (a real +70 lineup gain) survives.
+        assert [r["target_player_id"] for r in results] == ["target_c"]
         assert results[0]["offers"][0]["your_side"]["lineup_delta_after_drops"] == pytest.approx(70.0)
-        assert results[1]["offers"][0]["your_side"]["lineup_delta_after_drops"] == pytest.approx(0.0)
         assert results[0]["roster_id"] == 3
-        assert results[1]["roster_id"] == 2
 
     def test_respects_top_n(self):
         your_roster, players, replacement_level = self._base_roster_and_players()
         rosters_by_id = {1: your_roster}
-        fc_entries = [fc_entry("starter_wr", 150), fc_entry("depth_wr", 100), fc_entry("depth_wr2", 50)]
+        # Same shape as target_c above (starter_wr=150, depth_wr=100,
+        # depth_wr2=110, target=220): a viable offer with a real +70
+        # lineup gain, so the positive-lineup-gain filter doesn't wipe out
+        # every candidate before top_n even gets a chance to matter.
+        fc_entries = [fc_entry("starter_wr", 150), fc_entry("depth_wr", 100), fc_entry("depth_wr2", 110)]
         candidates = []
         for i in range(2, 6):  # 4 viable, equally-easy targets
             pid = f"target_{i}"
             players[pid] = make_player("WR", full_name=pid)
-            fc_entries.append(fc_entry(pid, 80))
+            fc_entries.append(fc_entry(pid, 220))
             rosters_by_id[i] = {"roster_id": i, "players": [pid]}
             candidates.append({"player_id": pid, "roster_id": i, "marginal_value": 1.0, "drop": None})
         fc_by_id = dc.fc_value_by_sleeper_id(fc_entries)

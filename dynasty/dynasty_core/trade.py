@@ -668,8 +668,15 @@ def suggested_trades(
 
     Candidates with no viable offer (`find_trade_offers()`'s `offers` comes
     back empty - nothing clears the partner's plausibility bar) are dropped
-    entirely rather than shown empty. Survivors are ranked by their best
-    offer's `your_side["lineup_delta_after_drops"]` - the same number
+    entirely rather than shown empty. A viable offer still isn't necessarily
+    a good one for the user - `find_trade_offers()`'s only hard gate is the
+    *partner's* `asset_value_delta` staying in tolerance, nothing about the
+    user's own lineup impact - so survivors are further filtered to a
+    positive best-offer `your_side["lineup_delta_after_drops"]` (matches
+    `leaguewide_trade_candidates()`'s own `marginal_value > 0` "worth
+    surfacing at all" filter one stage earlier; see
+    `.claude/conventions/valuation_principles.md`'s "worth surfacing" filter
+    rule) before being ranked by that same number - the same number
     `_show_trade_side()` already surfaces per offer today, not a new
     metric - and capped to `top_n`. Each returned entry is a
     `find_trade_offers()` result dict with `roster_id`/`target_player_id`
@@ -690,7 +697,7 @@ def suggested_trades(
             handcuffs=handcuffs,
             target_player_id=candidate["player_id"],
         )
-        if offer_result["offers"]:
+        if offer_result["offers"] and offer_result["offers"][0]["your_side"]["lineup_delta_after_drops"] > 0:
             results.append(
                 {**offer_result, "roster_id": candidate["roster_id"], "target_player_id": candidate["player_id"]}
             )
