@@ -183,6 +183,30 @@ Deliberately out of v1, not forgotten:
   marginal value is clearly not worth pursuing at all) to keep a
   whole-roster scan responsive - not decided yet, scope during
   implementation.
+  **Refined 2026-08-08** (user-flagged): expand scope from one
+  hand-picked partner's roster to leaguewide - show the top 3 suggested
+  trades by default with no target pre-selected, scanning across every
+  potential partner, then an optional filter *within that same section*
+  to narrow to one target player if the user wants that. Also rename the
+  section (currently "Trade-target optimizer") to something clearer, e.g.
+  "Suggested Trades," since "optimizer" undersells what a target-free,
+  leaguewide-by-default view actually does. A real, deliberate side
+  effect worth keeping: this decouples the section's own partner scope
+  from `render_trade_tab()`'s single shared `partner_team_id` selector,
+  currently used by both the manual evaluator above it and this section -
+  "who do I want to manually evaluate one specific trade with" and "what
+  are my best opportunities across the whole league" are intuitively
+  unrelated questions, and coupling them through one selector doesn't
+  reflect that. Real cost implication to scope carefully during design:
+  RT-15's own per-partner whole-roster scan was already flagged as
+  expensive enough to need a button trigger rather than running
+  reactively; a leaguewide version multiplies that by roughly the number
+  of teams in the league (~11-12x here), so this needs its own explicit
+  design pass on how to keep a "scan everyone" action responsive (a
+  cheaper first-pass filter across partners before running the full
+  per-candidate combinatorial search, not just within one partner's
+  roster as RT-15 already considered) - not a small extension of RT-15's
+  existing scope, a real architecture question of its own.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all
