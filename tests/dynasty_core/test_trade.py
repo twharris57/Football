@@ -774,6 +774,42 @@ class TestFindTradeOffers:
         assert result["offers"] == []
         assert not math.isnan(result["target_read"]["asset_value_delta"])
 
+    def test_unmatched_sellable_player_falls_back_to_zero_value_not_nan(self):
+        # unmatched_wr has no FantasyCalc entry, so sellable_players()'s
+        # adj_value for it comes back as real NaN once its row goes through
+        # a DataFrame (not a None a bare `or 0.0` would catch - NaN is
+        # truthy in Python). The pool must fall back to 0.0 for it, like
+        # every other possibly-missing-value spot in this codebase, rather
+        # than letting a NaN combo value slip into a displayed offer.
+        league = {"roster_positions": ["WR", "BN"]}
+        your_roster = {
+            "roster_id": 1,
+            "players": ["starter_wr", "priced_wr", "unmatched_wr"],
+            "taxi": [],
+            "reserve": [],
+        }
+        partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "priced_wr": make_player("WR", full_name="Priced WR"),
+            "unmatched_wr": make_player("WR", full_name="Unmatched WR"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+        }
+        players["priced_wr"]["years_exp"] = 3
+        players["unmatched_wr"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("priced_wr", 150), fc_entry("target_wr", 150)]
+        )  # unmatched_wr deliberately has no FantasyCalc entry
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+
+        result = dc.find_trade_offers(
+            your_roster, partner_roster, players, fc_by_id, {}, league, replacement_level, EMPTY_PICKS,
+            target_player_id="target_wr",
+        )
+
+        assert any(a["id"] == "unmatched_wr" for offer in result["offers"] for a in offer["combo"])
+        assert not any(math.isnan(a["value"]) for offer in result["offers"] for a in offer["combo"])
+
     def test_handcuffs_and_pick_value_table_pass_through_to_target_read_callouts(self):
         # RT-18: find_trade_offers() should thread its own handcuffs/
         # pick_value_table into evaluate_trade()'s callouts, not just use

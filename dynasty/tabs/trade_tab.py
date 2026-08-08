@@ -34,6 +34,17 @@ def _trade_pick_label(pick_name: str, pick_value_by_name: dict) -> str:
     return f"{pick_name} (value: {value:.0f})" if bool(pd.notna(value)) else f"{pick_name} (value: unknown)"
 
 
+def _combo_asset_label(asset: dict, players: dict) -> str:
+    """Render one find_trade_offers() combo asset - same "Name (POS, value: X)"/
+    "Pick (value: X)" style _trade_player_label()/_trade_pick_label() use for the
+    target, so a suggested offer's give side reads consistently with its receive side."""
+    value_str = f"{asset['value']:.0f}" if bool(pd.notna(asset["value"])) else "unknown"
+    if asset["kind"] == "player":
+        position = players.get(asset["id"], {}).get("position")
+        return f"{asset['label']} ({position}, value: {value_str})"
+    return f"{asset['label']} (value: {value_str})"
+
+
 def _show_trade_side(label: str, result: dict) -> None:
     st.markdown(f"**{label}**")
     drops = result["recommended_drops"]
@@ -276,7 +287,7 @@ def _render_trade_optimizer(
         )
     else:
         for i, offer in enumerate(offers):
-            combo_label = ", ".join(f"{a['label']} (value: {a['value']:.0f})" for a in offer["combo"])
+            combo_label = ", ".join(_combo_asset_label(a, trade_players) for a in offer["combo"])
             title = f"{'Best offer' if i == 0 else f'Alternative {i}'}: give {combo_label} → receive {target_label}"
             with st.expander(title, expanded=(i == 0)):
                 st.caption(f"**You give:** {combo_label}  \n**You receive:** {target_label}")

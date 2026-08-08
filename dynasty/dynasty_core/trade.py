@@ -424,7 +424,12 @@ def find_trade_offers(
 
     your_sellable = sellable_players(your_roster, players, fc_by_sleeper_id, replacement_level, league, byes)
     pool = [
-        {"kind": "player", "id": row["player_id"], "label": row["name"], "value": row["adj_value"] or 0.0}
+        {
+            "kind": "player",
+            "id": row["player_id"],
+            "label": row["name"],
+            "value": row["adj_value"] if pd.notna(row["adj_value"]) else 0.0,
+        }
         for _, row in your_sellable.iterrows()
     ]
     your_picks = pick_value_table[pick_value_table["owner_roster_id"] == your_roster["roster_id"]]

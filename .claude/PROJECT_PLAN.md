@@ -57,18 +57,38 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty — the one finding from reviewing `feature/trade-callouts` (PR #29,
-2026-08-07: `_pick_context_callouts()`'s season/class grouping breaking for
-every next-season pick name) is fixed. `season` is now derived from the
-leading 4-digit year rather than splitting on `" Pick "` — handles both
-`pick_trade_values()` name formats, with a fallback to the pick's own name
-for the (never-real, but test-exercised) case of a name with no leading
-year at all, so a malformed/placeholder name degrades gracefully instead of
-crashing the rank computation. New tests cover the next-season format, the
-malformed-name fallback, and the original current-season case. Durable
-rule filed in `.claude/conventions/valuation_principles.md`'s "A composite
-label needs a parser that handles every format its own source can
-produce."
+Empty — every finding from reviewing `feature/trade-callouts` (PR #29,
+2026-08-07) is fixed.
+
+- `_pick_context_callouts()`'s season/class grouping broke for every
+  next-season pick name. `season` is now derived from the leading 4-digit
+  year rather than splitting on `" Pick "` — handles both
+  `pick_trade_values()` name formats, with a fallback to the pick's own name
+  for the (never-real, but test-exercised) case of a name with no leading
+  year at all, so a malformed/placeholder name degrades gracefully instead
+  of crashing the rank computation. New tests cover the next-season format,
+  the malformed-name fallback, and the original current-season case. Durable
+  rule filed in `.claude/conventions/valuation_principles.md`'s "A composite
+  label needs a parser that handles every format its own source can
+  produce."
+- `find_trade_offers()`'s sellable-player pool used a bare
+  `row["adj_value"] or 0.0`, which doesn't catch `NaN` (a missing
+  `adj_value` becomes real `NaN`, not `None`, once `sellable_players()`'s
+  rows go through a `pd.DataFrame` — `NaN` is truthy in Python, so `or 0.0`
+  never fires). An unmatched sellable player's combo value silently stayed
+  `NaN` through the rest of the search instead of falling back to `0.0` like
+  every other missing-value spot in this codebase — same shape as
+  `valuation_principles.md`'s existing NaN rule, a new instance of it. Fixed
+  with an explicit `pd.notna()` check; new test confirms an unmatched
+  player's pool entry is `0.0`, not `NaN`.
+- The trade-target optimizer's "give" side (offer titles and the "You
+  give:" caption) showed only a bare player name and value with no
+  position, while the "receive" side showed `"Name (POS, value: X)"` via
+  `_trade_player_label()` — spotted live by the user
+  (`"J.J. McCarthy (value: 2400) → receive Rashee Rice (WR, value: 4292)"`).
+  New `_combo_asset_label()` helper in `trade_tab.py` renders a combo asset
+  in the same style as the target label, reused for both the give-side
+  listing and the offer title.
 
 ## Now — blocking
 
@@ -578,6 +598,7 @@ methodology.
   has to stay a string match; this is about not re-deriving *this codebase's own*
   already-known structure from a string it built. Cleanup scope, not urgent — no
   known live bug beyond the one already fixed above.
+
 **CQ-4 (`gather_state()`'s duplicated handcuff-target computation) is
 fixed** — `state.py` now calls the shared `handcuff_targets()` helper
 directly instead of its own inline copy. Caught in the same pass: the
