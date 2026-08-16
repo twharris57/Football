@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-24`, `VA-5`, `CQ-5`, `DL-9`.
+below): `NB-2`, `RT-24`, `VA-5`, `CQ-6`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -454,6 +454,46 @@ cutoff.
   `:latest`/`:<short-sha>` tags, and the footer showing the version number
   with the short SHA alongside it for the precise-commit case, not instead
   of it.
+- [ ] **CQ-6: Document, and likely refactor, the data model into an import/cache
+  layer vs. a deterministic UI-facing calc layer** (user-flagged 2026-08-16,
+  while investigating the Synology "forgets recent picks/rounds" bug —
+  `fix/synology-refresh-bugfixes`) — right now "state" is spread across three
+  uncoordinated persistence mechanisms with no documented schema anywhere: (1)
+  `st.cache_data`'s in-process, un-TTL'd memory cache on `load_state` (the
+  entire `gather_state()` output, including things that are cheap/always-live
+  by design — league/rosters/draft/picks — and things that are genuinely
+  expensive to recompute — scoring multipliers, market values); (2) two disk
+  TTL caches (`sleeper_api.py`'s `players.json`, `fantasycalc_api.py`'s
+  `fantasycalc_values_*.json`, both 12h, both under the `.cache/` Docker
+  volume); (3) two hand-rolled JSON "snapshot" files with their own bespoke
+  reconcile logic (`draft_snapshots.py`, `pickup_snapshots.py`, sharing only
+  `snapshot_io.py`'s load/write shell). None of these share a schema, a
+  freshness model, or an invalidation story, which is exactly the gap that
+  let the Synology refresh bug hide: `load_state`'s cache key can silently
+  serve a days-old full snapshot with no error and no visual difference from
+  a real refresh (see this session's diagnosis above/in the PR).
+  Directionally, the user wants: an **import/ingest layer** that pulls from
+  Sleeper/FantasyCalc/nfl_data_py and computes+caches the stable derived
+  values every consumer needs (`adj_value`, replacement levels, etc.) once,
+  on a real freshness/TTL policy; and a separate **UI-facing calc layer**
+  (trade evaluation, free-agent/trade search, suggestions) that is purely a
+  deterministic function of "the database as it currently stands" — fast,
+  side-effect-free, safely re-run on every interaction without re-hitting any
+  external API. Also worth a look: whether the Synology deployment's `.cache/`
+  volume (or a future real DB there) has actually drifted from what the code
+  expects, and what could be precomputed at import time to make the UI-layer
+  calcs cheaper (`gather_state` today already does some of this —
+  `replacement_level`/`team_power_timeline` computed once per refresh rather
+  than per-tab — but it's an emergent pattern, not a designed boundary).
+  Overlaps and should absorb `DL-8` (orphaned snapshot files, never cleaned
+  up), `DL-9` (non-fantasy-position filtering done per-consumer instead of at
+  ingest), `CQ-5` (pick identity re-parsed from a display string downstream
+  instead of carried as structured fields), and `RT-24` (Suggested Trades'
+  cached scan results not invalidated on refresh) — all four are instances of
+  the same missing boundary, not independent bugs. Large enough to need its
+  own design pass (a real schema doc, a decision on whether the JSON
+  snapshots become a real embedded DB e.g. SQLite) before implementation —
+  not scoped further here.
 - [ ] **CQ-5: Represent draft-pick identity as structured fields at ingestion, not a
   display string re-parsed downstream** (user-suggested, 2026-08-07, filed while
   reviewing the RT-18 pick-callout season bug above) — `pick_trade_values()` already
