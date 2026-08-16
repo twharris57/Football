@@ -64,19 +64,29 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-**`fix/refresh-cache-token-collision` (PR #35), reviewed 2026-08-08:**
+**`fix/refresh-cache-key-underscore-exclusion`, in progress 2026-08-16:**
 
-No findings. The branch's only change is to `dynasty/streamlit_app.py`'s
-`refresh_token` cache-busting key (counter → timestamp) and its accompanying
-doc note — it doesn't touch `dynasty_core/`, `player_scoring.py`, or
-`fantasycalc_api.py`, so there's no valuation/roster-analysis logic in scope
-for this review. Confirmed the root-cause narrative in the PR description
-against the code: `load_state`'s `@st.cache_data` has no `ttl`, so it caches
-indefinitely by exact argument tuple — a per-session counter resetting to
-`0` on reconnect really can collide with another session's earlier token and
-silently return that session's stale snapshot, and a sub-second timestamp
-key closes that off. 188 tests pass, unaffected (expected — the bug lives
-entirely in Streamlit session/cache wiring with no test seam in `dynasty_core`).
+Third fix attempt at the same reported symptom ("Refresh doesn't pick up new
+picks on the Synology deployment"). Both prior attempts — `fix/refresh-cache-
+token-collision` (PR #35, 2026-08-08: counter → timestamp) and
+`fix/synology-refresh-bugfixes` (PR #36, 2026-08-16: fixed `0` default →
+minute-bucketed default + `ttl="1h"`) — **did not actually fix the bug.**
+Both changed the *value* passed as `load_state`'s cache-busting token without
+noticing its name, `_token`, made the value irrelevant: Streamlit's
+`st.cache_data` silently excludes any leading-underscore argument from the
+cache key entirely (confirmed against the installed `streamlit` source and a
+live repro — see `docs/dynasty-draft-web-app.md`'s "Refresh model" section
+for the full writeup). `load_state`'s real cache key was only ever
+`(league_id, username, force_full_refresh, force_scoring_refresh)` — a plain
+Refresh leaves all four unchanged, so it has never busted the cache at all,
+on any of the three branches. This fix renames `_token` → `token`, which is
+the actual root-cause fix; the minute-bucketed default and `ttl="1h"` from
+PR #36 are harmless and kept, but were never what fixed (or could have
+fixed) the reported symptom. Added `tests/test_streamlit_refresh_cache.py` —
+first real test coverage of `streamlit_app.py`'s cache wiring (this class of
+bug had no test seam before now, which is why two prior "live-verified"
+fixes both shipped without actually working) — confirmed it fails against
+the old `_token` name and passes against the rename.
 
 ## Now — blocking
 
