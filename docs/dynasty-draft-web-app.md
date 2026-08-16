@@ -176,6 +176,39 @@ get a different key, silently missing cache and re-fetching for no reason.
 `st.session_state.force_refresh_pending`/`force_scoring_pending` hold the
 durable versions instead, set once per click and stable across reruns.
 
+**`load_state`'s cache-busting argument must never be named with a leading
+underscore.** This is the actual root cause of a "Refresh doesn't pick up
+new picks" bug that took three attempts to actually fix (found live on the
+Synology deployment, 2026-08-16) — worth stating first and plainly, since
+the two earlier, incomplete fixes below are easy to misread as the real
+story. Streamlit's `st.cache_data` silently excludes any argument whose name
+starts with `_` from the cache key entirely (a real, documented convention
+for genuinely unhashable arguments, like a DB connection) — confirmed
+directly against the installed `streamlit` source
+(`streamlit.runtime.caching.cache_utils._make_value_key`) and by a live
+repro. `load_state`'s token parameter used to be named `_token`: a plain
+`float`, always hashable, that never needed the underscore. Its *value*
+never mattered to caching at all — only `league_id`, `username`,
+`force_full_refresh`, and `force_scoring_refresh` were ever actually part of
+the cache key. A plain Refresh click leaves all four of those unchanged, so
+**a plain Refresh has never busted the cache** — it silently returned
+whatever was cached under `(league_id, username, False, False)` from the
+first time that combination was ever called in the process's lifetime.
+Advanced refresh *did* work (it flips `force_full_refresh`, a real, hashed
+argument), which is exactly why "Advanced refresh fixes it, then the very
+next plain Refresh reverts" was the reported symptom every time — the two
+force flags select a genuinely different cache entry, and a plain Refresh
+right after switches back to the older one. Fixed by simply renaming the
+parameter to `token` (no leading underscore), restoring it to the hash.
+`tests/test_streamlit_refresh_cache.py` is a regression test for this
+specific hazard — it drives the real app via `streamlit.testing.v1.AppTest`
+and asserts a repeated Refresh click produces a repeated real fetch, not one
+cached value forever; it fails against a reintroduced `_token`.
+
+The two earlier attempts, left below for the record since neither was wrong
+so much as incomplete — both changed the token's *value* without ever
+addressing that the *name* made the value irrelevant to caching:
+
 `refresh_token` is a real timestamp (`dt.datetime.now().timestamp()`) when a
 click sets it, not an incrementing counter — found live during a draft
 (2026-08-08): `st.cache_data`'s cache is shared across the *whole server
@@ -184,27 +217,25 @@ every new/reconnected session (a page reload, a phone backgrounding the
 tab). A counter restarting at a small integer on each session could land on
 a value some *other* session already used earlier in the same draft,
 silently hitting that session's stale cached snapshot instead of actually
-re-fetching — Refresh looked like it wasn't picking up a just-made pick,
-when it was actually serving an old cache hit under a collided key. A
-sub-second timestamp can't collide with a prior click's value the way a
-small per-session counter can.
+re-fetching — the working theory at the time. A sub-second timestamp can't
+collide with a prior click's value the way a small per-session counter can
+— true, but moot while the token wasn't part of the cache key at all.
 
 The pre-click default (before the user has ever clicked Refresh this
 session) is `dt.datetime.now().timestamp() // 60` — "now, rounded down to
 the minute" — not the fixed `0` used right after the fix above shipped.
-Found live again on the NAS deployment (2026-08-16): a fixed `0` default
-never expires, so *any* reconnect (not just the first load) falls back to
-whatever got cached under key `0` — on a container that runs for days
-(`restart: unless-stopped`), that could be an arbitrarily old snapshot, with
-no visible sign anything was wrong (the app appeared to "forget" which
-round the draft was on, reverting after Advanced refresh temporarily fixed
-it). Minute-bucketing keeps the original intent — sessions loading within
-the same minute (e.g. two of your own devices opening the page at once)
-still share one fetch — while guaranteeing a reconnect any later than that
-gets a real, unseen cache key instead of an arbitrarily old one.
-`load_state`'s `@st.cache_data` also now sets `ttl="1h"` as a backstop, so a
-long-lived NAS process can't accumulate an unbounded number of cache
-entries (one per minute-bucket/click, forever) with no ttl to evict them.
+Found live again on the NAS deployment (2026-08-16, the same investigation
+that found the underscore issue above): a fixed `0` default never expires,
+so *any* reconnect (not just the first load) would fall back to whatever
+got cached under key `0` — the working theory at the time was that this
+explained the NAS-specific staleness on its own. Minute-bucketing keeps a
+reasonable property regardless (sessions loading within the same minute,
+e.g. two of your own devices opening the page at once, still share one
+fetch) and is harmless to keep, but with the token now actually part of the
+cache key, a plain Refresh no longer depends on this default at all — it
+always sets a fresh, real timestamp on click. `load_state`'s `@st.cache_data`
+also sets `ttl="1h"` as a backstop, so a long-lived NAS process can't
+accumulate an unbounded number of cache entries with no ttl to evict them.
 
 Refresh is always manual — there is no polling or background auto-refresh
 anywhere in this app or the CLI. A sidebar caption ("Last refreshed:

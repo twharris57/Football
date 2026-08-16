@@ -97,8 +97,21 @@ if refresh or apply_advanced:
 # minute bucket / click forever, since st.cache_data never evicts on its own
 # with no ttl set.
 def load_state(
-    league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool, _token: float
+    league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool, token: float
 ) -> dict:
+    # `token` must NOT be named `_token` (or any other leading-underscore
+    # name) - Streamlit's st.cache_data silently excludes any argument whose
+    # name starts with "_" from the cache key entirely (verified directly
+    # against the installed streamlit source, 2026-08-16). A prior version of
+    # this parameter was named `_token`, which meant its value never actually
+    # affected caching - a plain Refresh click looked like it was cache-busting
+    # (the button, the session_state write, the spinner all "worked") but
+    # silently kept returning whatever was cached under the first-ever
+    # (league_id, username, force_full_refresh, force_scoring_refresh) call in
+    # the process's lifetime. This is the actual root cause of the "Refresh
+    # doesn't pick up new picks" bug two earlier fixes (see PROJECT_PLAN.md)
+    # attempted and failed to fix, since both only changed the *value* being
+    # passed in, never the fact that the name made the value irrelevant.
     state = dynasty_core.gather_state(league_id, username, force_full_refresh, force_scoring_refresh)
     # Captured here, inside the cached function, so it's frozen at the
     # moment this data was actually fetched and reused verbatim on every
