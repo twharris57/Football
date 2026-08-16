@@ -39,7 +39,17 @@ league_id = st.sidebar.text_input("League ID", value=dynasty_core.DEFAULT_LEAGUE
 username = st.sidebar.text_input("Username", value=dynasty_core.DEFAULT_USERNAME)
 
 if "refresh_token" not in st.session_state:
-    st.session_state.refresh_token = 0
+    # "Now, rounded down to the minute" - not a fixed 0 (see below for why
+    # 0 was a bug, not just a stylistic choice). Streamlit resets
+    # session_state on every new/reconnected session (a page reload, a
+    # phone backgrounding and reconnecting the websocket), so a session
+    # that hasn't clicked Refresh yet always falls back to this default.
+    # Minute-bucketing keeps the one property a shared default is for -
+    # concurrent sessions loading within the same minute (e.g. two of your
+    # own devices opening the page at once) still share one fetch - while
+    # guaranteeing a reconnect after that window gets a real, unseen cache
+    # key instead of an arbitrarily old one.
+    st.session_state.refresh_token = dt.datetime.now().timestamp() // 60
 if "force_refresh_pending" not in st.session_state:
     st.session_state.force_refresh_pending = False
 if "force_scoring_pending" not in st.session_state:
@@ -57,16 +67,16 @@ with st.sidebar.expander("Advanced refresh"):
     apply_advanced = st.button("Apply advanced refresh")
 
 if refresh or apply_advanced:
-    # A real timestamp, not an incrementing counter - st.cache_data's cache
-    # is shared across the whole server process, not per-session, but
-    # st.session_state.refresh_token resets to 0 for every new/reconnected
-    # session (a page reload, a phone backgrounding the tab). A counter
-    # starting over at 0 can land on a small integer some *other* session
-    # already used earlier in the draft, silently hitting that session's
-    # stale cached snapshot instead of actually re-fetching - the exact bug
-    # this caused live (Refresh appeared to not pick up a just-made pick).
-    # A sub-second timestamp can't collide with a prior click's value the
-    # way a small per-session counter can.
+    # A raw, full-precision timestamp - not an incrementing counter, and not
+    # bucketed like the pre-click default above. st.cache_data's cache is
+    # shared across the whole server process, not per-session; a click is a
+    # deliberate "get me current data now," so its key must be unique enough
+    # to never collide with any prior click's value or a stale default
+    # bucket. A counter restarting at 0 on each new session could land on a
+    # small integer some *other* session already used earlier in the draft,
+    # silently hitting that session's stale cached snapshot instead of
+    # re-fetching (found live, 2026-08-08). A sub-second timestamp can't
+    # collide that way.
     st.session_state.refresh_token = dt.datetime.now().timestamp()
     # A widget button/checkbox's value is only current on the exact run it
     # was clicked - any later rerun (e.g. opening an expander) can see a
@@ -80,7 +90,12 @@ if refresh or apply_advanced:
     st.session_state.force_scoring_pending = apply_advanced and refresh_scoring
 
 
-@st.cache_data(show_spinner="Loading draft state...")
+@st.cache_data(show_spinner="Loading draft state...", ttl="1h")
+# ttl is a backstop, not the primary freshness mechanism (that's the minute-
+# bucketed default token above) - without it, a NAS deployment that stays up
+# for a whole multi-week draft would accumulate one cache entry per distinct
+# minute bucket / click forever, since st.cache_data never evicts on its own
+# with no ttl set.
 def load_state(
     league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool, _token: float
 ) -> dict:

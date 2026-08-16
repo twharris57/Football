@@ -176,22 +176,35 @@ get a different key, silently missing cache and re-fetching for no reason.
 `st.session_state.force_refresh_pending`/`force_scoring_pending` hold the
 durable versions instead, set once per click and stable across reruns.
 
-`refresh_token` is a real timestamp (`dt.datetime.now().timestamp()`), not
-an incrementing counter — found live during a draft (2026-08-08):
-`st.cache_data`'s cache is shared across the *whole server process*, not
-per session, but `st.session_state.refresh_token` resets to `0` for every
-new/reconnected session (a page reload, a phone backgrounding the tab). A
-counter restarting at `0` on each session can land on a small integer some
-*other* session already used earlier in the same draft, silently hitting
-that session's stale cached snapshot instead of actually re-fetching —
-Refresh looked like it wasn't picking up a just-made pick, when it was
-actually serving an old cache hit under a collided key. A sub-second
-timestamp can't collide with a prior click's value the way a small
-per-session counter can. The initial default (before any click) is still a
-fixed `0` deliberately — different sessions loading around the same time
-with no click yet *should* share one cache entry rather than each hitting
-Sleeper/FantasyCalc independently; only the value a click sets needs to be
-collision-proof.
+`refresh_token` is a real timestamp (`dt.datetime.now().timestamp()`) when a
+click sets it, not an incrementing counter — found live during a draft
+(2026-08-08): `st.cache_data`'s cache is shared across the *whole server
+process*, not per session, but `st.session_state.refresh_token` resets for
+every new/reconnected session (a page reload, a phone backgrounding the
+tab). A counter restarting at a small integer on each session could land on
+a value some *other* session already used earlier in the same draft,
+silently hitting that session's stale cached snapshot instead of actually
+re-fetching — Refresh looked like it wasn't picking up a just-made pick,
+when it was actually serving an old cache hit under a collided key. A
+sub-second timestamp can't collide with a prior click's value the way a
+small per-session counter can.
+
+The pre-click default (before the user has ever clicked Refresh this
+session) is `dt.datetime.now().timestamp() // 60` — "now, rounded down to
+the minute" — not the fixed `0` used right after the fix above shipped.
+Found live again on the NAS deployment (2026-08-16): a fixed `0` default
+never expires, so *any* reconnect (not just the first load) falls back to
+whatever got cached under key `0` — on a container that runs for days
+(`restart: unless-stopped`), that could be an arbitrarily old snapshot, with
+no visible sign anything was wrong (the app appeared to "forget" which
+round the draft was on, reverting after Advanced refresh temporarily fixed
+it). Minute-bucketing keeps the original intent — sessions loading within
+the same minute (e.g. two of your own devices opening the page at once)
+still share one fetch — while guaranteeing a reconnect any later than that
+gets a real, unseen cache key instead of an arbitrarily old one.
+`load_state`'s `@st.cache_data` also now sets `ttl="1h"` as a backstop, so a
+long-lived NAS process can't accumulate an unbounded number of cache
+entries (one per minute-bucket/click, forever) with no ttl to evict them.
 
 Refresh is always manual — there is no polling or background auto-refresh
 anywhere in this app or the CLI. A sidebar caption ("Last refreshed:
