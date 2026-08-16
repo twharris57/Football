@@ -119,6 +119,14 @@ def load_state(
     # would just report "now" on every rerun (tab switches, expanders),
     # not when the underlying data was last pulled.
     state["loaded_at"] = dt.datetime.now()
+    # A cheap, already-unique identity for "this particular fetch" - token is
+    # only ever a fresh, real timestamp on a genuine refetch (see above), so
+    # it doubles as a version stamp any on-demand, session_state-cached UI
+    # result can carry alongside itself and compare against later, to detect
+    # "this was computed against an earlier state" rather than silently
+    # displaying it as current (see trade_tab.py's suggested-trades scan for
+    # the first consumer of this, docs/data-model.md for the pattern).
+    state["version"] = token
     return state
 
 

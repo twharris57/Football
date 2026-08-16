@@ -173,23 +173,6 @@ Deliberately out of v1, not forgotten:
   now that leaguewide scanning itself is built and the section's filter UI
   exists to extend (see `docs/rookie-draft-big-board.md`'s "Suggested
   Trades" section).
-- [ ] **RT-24: Suggested Trades' cached scan results go stale across a
-  refresh, with no invalidation** (assistant valuation review, 2026-08-08)
-  — `trade_tab.py`'s "Scan the league for offers" button stores its result
-  in `st.session_state["suggested_trades_results"]` specifically so it
-  survives an unrelated rerun without re-scanning (per its own docstring:
-  "rather than needing a re-click on every unrelated page interaction").
-  But nothing clears or recomputes it when the user clicks the page's own
-  "Refresh" and pulls a fresh `gather_state()` snapshot — every other
-  field in `state` is rebuilt from scratch on refresh, but this one result
-  silently keeps showing whichever combo/target a *previous* refresh
-  computed, even after a real roster change elsewhere (another manager's
-  trade, a waiver claim) could have made it stale or outright impossible.
-  Low severity for a single-user personal tool — a stale suggestion just
-  fails obviously the moment it's acted on for real in Sleeper — but worth
-  clearing `suggested_trades_results` from session state whenever a fresh
-  refresh runs, so a scan can never outlive the snapshot it was computed
-  against.
 - [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
   evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
   now `roster_needs_summary`'s `need` flag is one fixed rule for all
@@ -464,46 +447,29 @@ cutoff.
   `:latest`/`:<short-sha>` tags, and the footer showing the version number
   with the short SHA alongside it for the precise-commit case, not instead
   of it.
-- [ ] **CQ-6: Document, and likely refactor, the data model into an import/cache
-  layer vs. a deterministic UI-facing calc layer** (user-flagged 2026-08-16,
-  while investigating the Synology "forgets recent picks/rounds" bug —
-  `fix/synology-refresh-bugfixes`) — right now "state" is spread across three
-  uncoordinated persistence mechanisms with no documented schema anywhere: (1)
-  `st.cache_data`'s in-process, un-TTL'd memory cache on `load_state` (the
-  entire `gather_state()` output, including things that are cheap/always-live
-  by design — league/rosters/draft/picks — and things that are genuinely
-  expensive to recompute — scoring multipliers, market values); (2) two disk
-  TTL caches (`sleeper_api.py`'s `players.json`, `fantasycalc_api.py`'s
-  `fantasycalc_values_*.json`, both 12h, both under the `.cache/` Docker
-  volume); (3) two hand-rolled JSON "snapshot" files with their own bespoke
-  reconcile logic (`draft_snapshots.py`, `pickup_snapshots.py`, sharing only
-  `snapshot_io.py`'s load/write shell). None of these share a schema, a
-  freshness model, or an invalidation story, which is exactly the gap that
-  let the Synology refresh bug hide: `load_state`'s cache key can silently
-  serve a days-old full snapshot with no error and no visual difference from
-  a real refresh (see this session's diagnosis above/in the PR).
-  Directionally, the user wants: an **import/ingest layer** that pulls from
-  Sleeper/FantasyCalc/nfl_data_py and computes+caches the stable derived
-  values every consumer needs (`adj_value`, replacement levels, etc.) once,
-  on a real freshness/TTL policy; and a separate **UI-facing calc layer**
-  (trade evaluation, free-agent/trade search, suggestions) that is purely a
-  deterministic function of "the database as it currently stands" — fast,
-  side-effect-free, safely re-run on every interaction without re-hitting any
-  external API. Also worth a look: whether the Synology deployment's `.cache/`
-  volume (or a future real DB there) has actually drifted from what the code
-  expects, and what could be precomputed at import time to make the UI-layer
-  calcs cheaper (`gather_state` today already does some of this —
-  `replacement_level`/`team_power_timeline` computed once per refresh rather
-  than per-tab — but it's an emergent pattern, not a designed boundary).
-  Overlaps and should absorb `DL-8` (orphaned snapshot files, never cleaned
-  up), `DL-9` (non-fantasy-position filtering done per-consumer instead of at
-  ingest), `CQ-5` (pick identity re-parsed from a display string downstream
-  instead of carried as structured fields), and `RT-24` (Suggested Trades'
-  cached scan results not invalidated on refresh) — all four are instances of
-  the same missing boundary, not independent bugs. Large enough to need its
-  own design pass (a real schema doc, a decision on whether the JSON
-  snapshots become a real embedded DB e.g. SQLite) before implementation —
-  not scoped further here.
+- [ ] **CQ-6: Consolidate `draft_snapshots.py`/`pickup_snapshots.py` into one
+  schematized store** (user-flagged 2026-08-16, while investigating the
+  Synology "forgets recent picks/rounds" bug — originally scoped much
+  larger, narrowed 2026-08-16 once the real root cause turned out to be
+  unrelated: a mis-named `st.cache_data` argument, see
+  `fix/refresh-cache-key-underscore-exclusion`). The "document the data
+  model" half of this item is **done** — see `docs/data-model.md`, the
+  current-state reference for every persistence layer, their freshness
+  policies, and why a real DB (SQLite or otherwise) isn't warranted yet.
+  The "fix the one real gap the doc surfaced" half is also **done**: the
+  versioned-on-demand-result pattern (`state["version"]`,
+  `trade_tab.py`'s `suggested_trades_results`) closes what was `RT-24`.
+  What's left, deliberately deferred as its own smaller follow-up rather
+  than blocking on a bigger redesign: `draft_snapshots.py` and
+  `pickup_snapshots.py` are two structurally-similar-but-independently-
+  reconciled JSON files (own schema, own diff logic, sharing only
+  `snapshot_io.py`'s load/write shell) — worth one consolidated,
+  explicitly-versioned store instead, but not urgent (both work correctly
+  today, per `docs/data-model.md`'s persistence-layer table). Absorbs
+  `DL-8` (orphaned snapshot files never cleaned up) when picked up. `DL-9`
+  and `CQ-5` remain their own separate items — related (same "document a
+  boundary explicitly" theme) but independently actionable, not blocked on
+  this one.
 - [ ] **CQ-5: Represent draft-pick identity as structured fields at ingestion, not a
   display string re-parsed downstream** (user-suggested, 2026-08-07, filed while
   reviewing the RT-18 pick-callout season bug above) — `pick_trade_values()` already
