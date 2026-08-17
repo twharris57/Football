@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 
 from dynasty_core import draft_snapshots as ds
-from dynasty_core.draft_snapshots import AMBIGUOUS, _reconcile, _snapshot_path, reconcile_snapshot
+from dynasty_core.draft_snapshots import AMBIGUOUS, _mark_orphaned_snapshots, _reconcile, _snapshot_path, reconcile_snapshot
 from dynasty_core.picks import DraftPickSlot
 
 EMPTY_SNAPSHOT = {"confirmed_through_pick": 0, "confirmed_roster": None, "confirmed_drops": {}}
@@ -130,3 +132,75 @@ class TestReconcileSnapshot:
         # rather than staying unstamped indefinitely.
         on_disk = json.loads(path.read_text(encoding="utf-8"))
         assert on_disk["schema_version"] == ds.SCHEMA_VERSION
+
+
+def _age_file(path, days: float) -> None:
+    old_time = time.time() - days * 86400
+    os.utime(path, (old_time, old_time))
+
+
+class TestMarkOrphanedSnapshots:
+    def test_marks_an_old_file_from_a_different_draft(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        old_path = _snapshot_path("old_draft")
+        old_path.write_text("{}", encoding="utf-8")
+        _age_file(old_path, ds.ORPHAN_AGE_DAYS + 1)
+
+        _mark_orphaned_snapshots("current_draft")
+
+        assert not old_path.exists()
+        assert (tmp_path / "draft_snapshots_old_draft.json.orphaned").exists()
+
+    def test_leaves_a_recent_file_alone(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        recent_path = _snapshot_path("recent_draft")
+        recent_path.write_text("{}", encoding="utf-8")
+
+        _mark_orphaned_snapshots("current_draft")
+
+        assert recent_path.exists()
+
+    def test_never_touches_the_current_draft_even_if_old(self, tmp_path, monkeypatch):
+        # Shouldn't happen in practice (an active draft's own file gets
+        # rewritten on every real pick), but the current-draft file must
+        # never be marked regardless of its age.
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        current_path = _snapshot_path("current_draft")
+        current_path.write_text("{}", encoding="utf-8")
+        _age_file(current_path, ds.ORPHAN_AGE_DAYS + 1)
+
+        _mark_orphaned_snapshots("current_draft")
+
+        assert current_path.exists()
+
+    def test_does_nothing_when_cache_dir_does_not_exist(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path / "does_not_exist")
+
+        _mark_orphaned_snapshots("current_draft")  # must not raise
+
+    def test_already_marked_files_are_left_alone_on_a_later_sweep(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        old_path = _snapshot_path("old_draft")
+        old_path.write_text("{}", encoding="utf-8")
+        _age_file(old_path, ds.ORPHAN_AGE_DAYS + 1)
+        _mark_orphaned_snapshots("current_draft")
+        marked_path = tmp_path / "draft_snapshots_old_draft.json.orphaned"
+        assert marked_path.exists()
+        _age_file(marked_path, ds.ORPHAN_AGE_DAYS + 1)
+
+        _mark_orphaned_snapshots("current_draft")  # second sweep
+
+        assert marked_path.exists()  # still there, untouched - not re-marked or deleted
+
+    def test_reconcile_snapshot_sweeps_orphans_as_a_side_effect(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        old_path = _snapshot_path("old_draft")
+        old_path.write_text("{}", encoding="utf-8")
+        _age_file(old_path, ds.ORPHAN_AGE_DAYS + 1)
+
+        reconcile_snapshot(
+            "current_draft", own_picks(1), current_pick_no=2, current_roster_ids=["a"], real_picks_by_overall={}
+        )
+
+        assert not old_path.exists()
+        assert (tmp_path / "draft_snapshots_old_draft.json.orphaned").exists()

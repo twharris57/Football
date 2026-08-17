@@ -53,6 +53,9 @@ too, per the convention above), don't let this become a history log.
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
   after live phone testing showed it's manageable today).
+- [ ] `DL-8` — Phase 2 (actual deletion of `.orphaned`-marked snapshot
+  files), gated on confirming Phase 1's marking step has run correctly
+  against real data at least once.
 
 ## Current branch — fix before merge
 
@@ -503,13 +506,24 @@ assumption changes.
   related columns (Value + Adj. Value into one, raw number as a hover
   detail — the pattern the Trade Evaluator's `lineup_delta`/
   `lineup_delta_after_drops` already uses).
-- [ ] **DL-8: Orphaned `draft_snapshots_{draft_id}.json` files are never
-  cleaned up** (deferred from `RT-20`, user-flagged as fine to defer,
-  2026-08-06) — once a season's rookie draft is fully over, its snapshot
-  file is simply never read again (next season gets a new `draft_id` from
-  Sleeper), so it's harmless to leave behind, just permanent clutter in
-  `.cache/`. No retention/cleanup logic was built in `RT-20`'s first pass.
-  Revisit only if `.cache/` growth ever actually matters.
+- [ ] **DL-8: Actually delete orphaned, `.orphaned`-marked
+  `draft_snapshots_{draft_id}.json` files** (deferred from `RT-20`,
+  2026-08-06; Phase 1 shipped 2026-08-17) — two-phase by deliberate
+  choice, not deletion logic that just happened to land half-built.
+  **Phase 1 (done):** `draft_snapshots.py`'s `_mark_orphaned_snapshots`,
+  called as a side effect of every `reconcile_snapshot()` call, renames
+  (never deletes) any `draft_snapshots_*.json` file older than
+  `ORPHAN_AGE_DAYS` (90) that isn't the draft currently being reconciled,
+  appending `.orphaned` — a soft, reversible, visibly-inspectable marker
+  instead of automated deletion on a hot path an active draft depends on.
+  Verified against a copy of this repo's own real `.cache/` file: the
+  current draft's file is left untouched, an aged copy gets marked
+  correctly, content otherwise fully preserved either way.
+  **Phase 2 (this item, still open):** actually delete `.orphaned` files
+  — user-requested as an explicit second step, gated on confirming Phase 1
+  has run correctly against real data in practice (the NAS deployment, a
+  real refresh cycle) at least once, not assumed correct from launch.
+  Revisit once that confirmation has happened.
 - [ ] **DL-9: Non-fantasy-position filtering happens per-consumer, not once
   at ingest** (user-flagged 2026-08-08, verified during the RT-15 planning
   pass) — `sleeper_api.get_players()` caches Sleeper's full ~14MB/~10k-player
