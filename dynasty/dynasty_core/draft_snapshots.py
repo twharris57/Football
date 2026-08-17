@@ -14,19 +14,33 @@ player_scoring.get_multipliers() (no TTL, only overwritten by an explicit
 condition), the only other non-refetch-if-stale cache in this project - and
 deliberately independent of force_full_refresh/force_scoring_refresh, since
 those are about market-data freshness and shouldn't silently wipe this
-mid-draft. No retention/cleanup: once a season's draft is over, its file is
-simply never read again (next season gets a new draft_id from Sleeper).
+mid-draft. Once a season's draft is over, its file is simply never read
+again (next season gets a new draft_id from Sleeper) - see
+_mark_orphaned_snapshots for how those old files are handled.
 """
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 from .constants import CACHE_DIR
 from .picks import DraftPickSlot
 from .snapshot_io import Migration, load_or_seed, write_if_changed
 
+logger = logging.getLogger(__name__)
+
 AMBIGUOUS = "AMBIGUOUS"
+
+# A draft's own snapshot file stops being written to the moment the draft
+# ends (write_if_changed no-ops once _reconcile finds nothing new), so its
+# mtime freezes at roughly end-of-draft - a reasonable proxy for "this
+# draft is over" without needing this module to track every draft_id a
+# league has ever used. 90 days comfortably clears a full rookie draft plus
+# any reasonable post-draft review window before a file is considered
+# orphaned.
+ORPHAN_AGE_DAYS = 90
 
 SCHEMA_VERSION = 1
 # 0 -> 1: adopting explicit schema_version stamping via snapshot_io.py -
@@ -39,6 +53,32 @@ _MIGRATIONS: dict[int, Migration] = {0: lambda d: d}
 
 def _snapshot_path(draft_id: str) -> Any:
     return CACHE_DIR / f"draft_snapshots_{draft_id}.json"
+
+
+def _mark_orphaned_snapshots(current_draft_id: str) -> None:
+    """Rename (never delete) old draft_snapshots_*.json files that look
+    orphaned - older than ORPHAN_AGE_DAYS and not the draft currently being
+    reconciled - by appending an `.orphaned` suffix.
+
+    Deliberately a soft, reversible marking step rather than deletion
+    (DL-8, .claude/PROJECT_PLAN.md): actually removing these files is a
+    deferred follow-up, to be added once this marking step has been
+    confirmed correct against real data, not assumed correct from launch.
+    A `.orphaned` file no longer matches the glob below, so a later sweep
+    leaves it alone rather than re-processing it every refresh.
+    """
+    if not CACHE_DIR.exists():
+        return
+    cutoff = time.time() - ORPHAN_AGE_DAYS * 86400
+    current_path = _snapshot_path(current_draft_id)
+    for path in CACHE_DIR.glob("draft_snapshots_*.json"):
+        if path == current_path:
+            continue
+        if path.stat().st_mtime >= cutoff:
+            continue
+        marked_path = path.with_name(path.name + ".orphaned")
+        path.rename(marked_path)
+        logger.info("Marked orphaned draft snapshot for future cleanup: %s -> %s", path.name, marked_path.name)
 
 
 def _reconcile(
@@ -97,6 +137,7 @@ def reconcile_snapshot(
     real_picks_by_overall: dict[int, str],
 ) -> dict[str, Any]:
     """Load, reconcile, persist-if-changed, return the updated snapshot."""
+    _mark_orphaned_snapshots(draft_id)
     path = _snapshot_path(draft_id)
     loaded = load_or_seed(
         path,

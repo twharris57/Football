@@ -44,6 +44,15 @@ persisted back to disk (stamped) the moment it's touched, even if nothing
 else about its content changed, so a file never sits indefinitely at an
 old/missing stamp once the current code has read it.
 
+`draft_snapshots.py` files specifically are also swept for orphans as a
+side effect of every `reconcile_snapshot()` call: any
+`draft_snapshots_*.json` file older than `ORPHAN_AGE_DAYS` and not the
+draft currently being reconciled gets renamed with an `.orphaned` suffix (a
+draft's own file stops being written to once the draft ends, so its mtime
+is a reasonable proxy for "this draft is over"). This is a soft,
+reversible marker, not deletion — actual removal of `.orphaned` files is
+still open, tracked as `DL-8`'s Phase 2 in `.claude/PROJECT_PLAN.md`.
+
 ## The conceptual split: import vs. cached-derived vs. cheap-derived vs. on-demand
 
 This is the split the app already follows in practice, made explicit:
