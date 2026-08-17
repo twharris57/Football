@@ -491,11 +491,14 @@ def get_multipliers(scoring_settings: dict[str, float], current_season: str, for
     Cached to disk with no TTL, unlike sleeper_api's players cache - the
     underlying data is entirely historical/complete seasons, so nothing
     changes between refreshes except once a year when a new season's stats
-    are published. `dynasty_core.gather_state` deliberately never passes
-    `force_refresh=True` here (a 1-2 minute synchronous pull, unsuitable to
-    trigger live mid-draft) - the only way this recomputes is running
-    `python scripts/derive_position_multipliers.py` directly, ahead of time,
-    to pre-warm the cache before draft day.
+    are published. A routine Refresh/Advanced-refresh-players-only click
+    never passes `force_refresh=True` here (a 1-2 minute synchronous pull,
+    unsuitable to trigger as a side effect of an ordinary click) - it's
+    wired only to the web UI's separate "Recompute scoring multipliers
+    (slow, 1-2 min)" checkbox under Advanced refresh
+    (`force_scoring_refresh` in `dynasty_core.gather_state`), or to running
+    `python scripts/derive_position_multipliers.py` directly, ahead of
+    time, to pre-warm the cache before draft day.
     """
     if not force_refresh and MULTIPLIERS_CACHE_PATH.exists():
         cached = json.loads(MULTIPLIERS_CACHE_PATH.read_text(encoding="utf-8"))

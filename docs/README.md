@@ -15,3 +15,4 @@ dated entry) and remove it from the plan's Active section.
 |---|---|
 | [`rookie-draft-big-board.md`](rookie-draft-big-board.md) | Valuation and ranking methodology: FantasyCalc + real-scoring correction, marginal-lineup-value ranking, all dashboard features, known limitations/gaps |
 | [`dynasty-draft-web-app.md`](dynasty-draft-web-app.md) | The Streamlit + Docker presentation layer on top of the above: tabs, refresh model, Docker/CI setup |
+| [`data-model.md`](data-model.md) | How state persists and stays fresh: the four caching/persistence layers, the raw-import/cached-derived/cheap-derived/on-demand split, and why not a real DB (yet) |

@@ -275,20 +275,35 @@ def _render_leaguewide_scan(state: dict, trade_players: dict, trade_pick_values:
 
     if st.button("Scan the league for offers"):
         with st.spinner("Scanning the league..."):
-            st.session_state["suggested_trades_results"] = dynasty_core.suggested_trades(
-                state["rosters_by_id"][state["user_roster_id"]],
-                state["rosters_by_id"],
-                trade_players,
-                state["fc_by_sleeper_id"],
-                state["byes"],
-                state["league"],
-                state["replacement_level"],
-                trade_pick_values,
-                candidates,
-                handcuffs=state["handcuffs"],
-            )
+            st.session_state["suggested_trades_results"] = {
+                "state_version": state["version"],
+                "results": dynasty_core.suggested_trades(
+                    state["rosters_by_id"][state["user_roster_id"]],
+                    state["rosters_by_id"],
+                    trade_players,
+                    state["fc_by_sleeper_id"],
+                    state["byes"],
+                    state["league"],
+                    state["replacement_level"],
+                    trade_pick_values,
+                    candidates,
+                    handcuffs=state["handcuffs"],
+                ),
+            }
 
-    results = st.session_state.get("suggested_trades_results")
+    cached = st.session_state.get("suggested_trades_results")
+    if cached is not None and cached["state_version"] != state["version"]:
+        # A scan from an earlier refresh - roster/market data has moved on
+        # since (another manager's trade, a waiver claim, a fresh Refresh
+        # click), so the offers it found are no longer guaranteed valid.
+        # Drop it rather than silently keep showing it; the button above is
+        # right there to re-scan (see docs/data-model.md's "versioned
+        # on-demand-result pattern").
+        del st.session_state["suggested_trades_results"]
+        cached = None
+        st.info("Data has changed since your last scan — press “Scan the league for offers” again for current results.")
+
+    results = cached["results"] if cached is not None else None
     if results is None:
         return
     if not results:
