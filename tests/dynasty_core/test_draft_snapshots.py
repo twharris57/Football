@@ -101,7 +101,7 @@ class TestReconcileSnapshot:
         assert first["confirmed_roster"] == ["a", "b"]
 
         on_disk = json.loads(_snapshot_path("draft123").read_text(encoding="utf-8"))
-        assert on_disk == first
+        assert on_disk == {**first, "schema_version": ds.SCHEMA_VERSION}
 
         # A second call with no newly-completed picks should reload the
         # same state from disk rather than resetting the baseline.
@@ -109,3 +109,24 @@ class TestReconcileSnapshot:
             "draft123", own_picks(1), current_pick_no=2, current_roster_ids=["a", "b"], real_picks_by_overall={}
         )
         assert second == first
+
+    def test_a_real_pre_versioning_file_on_disk_loads_and_gets_stamped(self, tmp_path, monkeypatch):
+        # Exactly the shape of every draft_snapshots_*.json file that
+        # exists today, written before schema_version was introduced.
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        path = _snapshot_path("draft123")
+        path.write_text(
+            json.dumps({"confirmed_through_pick": 5, "confirmed_roster": ["a", "b"], "confirmed_drops": {"5": None}}),
+            encoding="utf-8",
+        )
+
+        updated = reconcile_snapshot(
+            "draft123", own_picks(5), current_pick_no=6, current_roster_ids=["a", "b"], real_picks_by_overall={}
+        )
+
+        assert updated == {"confirmed_through_pick": 5, "confirmed_roster": ["a", "b"], "confirmed_drops": {"5": None}}
+        # Nothing new was reconciled (no picks completed since pick 5), but
+        # the file must still be rewritten with the current schema_version
+        # rather than staying unstamped indefinitely.
+        on_disk = json.loads(path.read_text(encoding="utf-8"))
+        assert on_disk["schema_version"] == ds.SCHEMA_VERSION

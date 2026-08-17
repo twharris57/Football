@@ -64,29 +64,7 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-**`fix/refresh-cache-key-underscore-exclusion`, in progress 2026-08-16:**
-
-Third fix attempt at the same reported symptom ("Refresh doesn't pick up new
-picks on the Synology deployment"). Both prior attempts — `fix/refresh-cache-
-token-collision` (PR #35, 2026-08-08: counter → timestamp) and
-`fix/synology-refresh-bugfixes` (PR #36, 2026-08-16: fixed `0` default →
-minute-bucketed default + `ttl="1h"`) — **did not actually fix the bug.**
-Both changed the *value* passed as `load_state`'s cache-busting token without
-noticing its name, `_token`, made the value irrelevant: Streamlit's
-`st.cache_data` silently excludes any leading-underscore argument from the
-cache key entirely (confirmed against the installed `streamlit` source and a
-live repro — see `docs/dynasty-draft-web-app.md`'s "Refresh model" section
-for the full writeup). `load_state`'s real cache key was only ever
-`(league_id, username, force_full_refresh, force_scoring_refresh)` — a plain
-Refresh leaves all four unchanged, so it has never busted the cache at all,
-on any of the three branches. This fix renames `_token` → `token`, which is
-the actual root-cause fix; the minute-bucketed default and `ttl="1h"` from
-PR #36 are harmless and kept, but were never what fixed (or could have
-fixed) the reported symptom. Added `tests/test_streamlit_refresh_cache.py` —
-first real test coverage of `streamlit_app.py`'s cache wiring (this class of
-bug had no test seam before now, which is why two prior "live-verified"
-fixes both shipped without actually working) — confirmed it fails against
-the old `_token` name and passes against the rename.
+Empty right now — nothing pending review.
 
 ## Now — blocking
 
@@ -447,29 +425,6 @@ cutoff.
   `:latest`/`:<short-sha>` tags, and the footer showing the version number
   with the short SHA alongside it for the precise-commit case, not instead
   of it.
-- [ ] **CQ-6: Consolidate `draft_snapshots.py`/`pickup_snapshots.py` into one
-  schematized store** (user-flagged 2026-08-16, while investigating the
-  Synology "forgets recent picks/rounds" bug — originally scoped much
-  larger, narrowed 2026-08-16 once the real root cause turned out to be
-  unrelated: a mis-named `st.cache_data` argument, see
-  `fix/refresh-cache-key-underscore-exclusion`). The "document the data
-  model" half of this item is **done** — see `docs/data-model.md`, the
-  current-state reference for every persistence layer, their freshness
-  policies, and why a real DB (SQLite or otherwise) isn't warranted yet.
-  The "fix the one real gap the doc surfaced" half is also **done**: the
-  versioned-on-demand-result pattern (`state["version"]`,
-  `trade_tab.py`'s `suggested_trades_results`) closes what was `RT-24`.
-  What's left, deliberately deferred as its own smaller follow-up rather
-  than blocking on a bigger redesign: `draft_snapshots.py` and
-  `pickup_snapshots.py` are two structurally-similar-but-independently-
-  reconciled JSON files (own schema, own diff logic, sharing only
-  `snapshot_io.py`'s load/write shell) — worth one consolidated,
-  explicitly-versioned store instead, but not urgent (both work correctly
-  today, per `docs/data-model.md`'s persistence-layer table). Absorbs
-  `DL-8` (orphaned snapshot files never cleaned up) when picked up. `DL-9`
-  and `CQ-5` remain their own separate items — related (same "document a
-  boundary explicitly" theme) but independently actionable, not blocked on
-  this one.
 - [ ] **CQ-5: Represent draft-pick identity as structured fields at ingestion, not a
   display string re-parsed downstream** (user-suggested, 2026-08-07, filed while
   reviewing the RT-18 pick-callout season bug above) — `pick_trade_values()` already

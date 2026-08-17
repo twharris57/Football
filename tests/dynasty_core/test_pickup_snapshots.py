@@ -128,7 +128,7 @@ class TestReconcilePickupSnapshot:
         assert updated["initialized"] is True
         assert updated["players"]["a"] == {"team": "KC", "depth_chart_order": 2, "status": "Active"}
         on_disk = json.loads(_snapshot_path("league1", "2026").read_text(encoding="utf-8"))
-        assert on_disk == updated
+        assert on_disk == {**updated, "schema_version": ps.SCHEMA_VERSION}
 
     def test_second_call_with_a_real_change_surfaces_it_and_leaves_others_untouched(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ps, "CACHE_DIR", tmp_path)
@@ -151,3 +151,21 @@ class TestReconcilePickupSnapshot:
 
         assert changes == []
         assert updated["players"]["b"] == {"team": "DAL", "depth_chart_order": 1, "status": "Active"}
+
+    def test_a_real_pre_versioning_file_on_disk_loads_and_gets_stamped(self, tmp_path, monkeypatch):
+        # Exactly the shape of every pickup_snapshots_*.json file that
+        # exists today, written before schema_version was introduced.
+        monkeypatch.setattr(ps, "CACHE_DIR", tmp_path)
+        path = _snapshot_path("league1", "2026")
+        path.write_text(
+            json.dumps({"initialized": True, "players": {"a": {"team": "KC", "depth_chart_order": 2, "status": "Active"}}}),
+            encoding="utf-8",
+        )
+
+        # Same pool as what's already on file - no real change to report.
+        updated, changes = reconcile_pickup_snapshot("league1", "2026", {"a": pool_player("KC", 2, "Active")})
+
+        assert changes == []
+        assert updated["players"]["a"] == {"team": "KC", "depth_chart_order": 2, "status": "Active"}
+        on_disk = json.loads(path.read_text(encoding="utf-8"))
+        assert on_disk["schema_version"] == ps.SCHEMA_VERSION
