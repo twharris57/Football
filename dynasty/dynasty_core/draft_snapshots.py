@@ -24,9 +24,17 @@ from typing import Any
 
 from .constants import CACHE_DIR
 from .picks import DraftPickSlot
-from .snapshot_io import load_or_seed, write_if_changed
+from .snapshot_io import Migration, load_or_seed, write_if_changed
 
 AMBIGUOUS = "AMBIGUOUS"
+
+SCHEMA_VERSION = 1
+# 0 -> 1: adopting explicit schema_version stamping via snapshot_io.py -
+# the business shape itself isn't changing in this migration, only the
+# stamp is being introduced, but it must still be registered or
+# load_or_seed refuses to read every real file already on disk (all of
+# them predate this mechanism and are implicitly version 0).
+_MIGRATIONS: dict[int, Migration] = {0: lambda d: d}
 
 
 def _snapshot_path(draft_id: str) -> Any:
@@ -90,7 +98,12 @@ def reconcile_snapshot(
 ) -> dict[str, Any]:
     """Load, reconcile, persist-if-changed, return the updated snapshot."""
     path = _snapshot_path(draft_id)
-    existing = load_or_seed(path, {"confirmed_through_pick": 0, "confirmed_roster": None, "confirmed_drops": {}})
-    updated = _reconcile(existing, own_picks, current_pick_no, current_roster_ids, real_picks_by_overall)
-    write_if_changed(path, existing, updated)
+    loaded = load_or_seed(
+        path,
+        {"confirmed_through_pick": 0, "confirmed_roster": None, "confirmed_drops": {}},
+        SCHEMA_VERSION,
+        migrations=_MIGRATIONS,
+    )
+    updated = _reconcile(loaded.content, own_picks, current_pick_no, current_roster_ids, real_picks_by_overall)
+    write_if_changed(path, loaded.content, updated, SCHEMA_VERSION, force=loaded.needs_rewrite)
     return updated

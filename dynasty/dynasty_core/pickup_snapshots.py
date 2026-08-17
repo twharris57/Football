@@ -35,9 +35,17 @@ from pathlib import Path
 from typing import Any
 
 from .constants import CACHE_DIR
-from .snapshot_io import load_or_seed, write_if_changed
+from .snapshot_io import Migration, load_or_seed, write_if_changed
 
 _TRACKED_FIELDS = ("team", "depth_chart_order", "status")
+
+SCHEMA_VERSION = 1
+# 0 -> 1: adopting explicit schema_version stamping via snapshot_io.py -
+# the business shape itself isn't changing in this migration, only the
+# stamp is being introduced, but it must still be registered or
+# load_or_seed refuses to read every real file already on disk (all of
+# them predate this mechanism and are implicitly version 0).
+_MIGRATIONS: dict[int, Migration] = {0: lambda d: d}
 
 
 def _snapshot_path(league_id: str, season: str) -> Path:
@@ -108,7 +116,8 @@ def reconcile_pickup_snapshot(
     again.
     """
     path = _snapshot_path(league_id, season)
-    existing = load_or_seed(path, {"initialized": False, "players": {}})
+    loaded = load_or_seed(path, {"initialized": False, "players": {}}, SCHEMA_VERSION, migrations=_MIGRATIONS)
+    existing = loaded.content
 
     current_players = {
         player_id: {field: info.get(field) for field in _TRACKED_FIELDS} for player_id, info in universe.items()
@@ -123,5 +132,5 @@ def reconcile_pickup_snapshot(
         changes = []
 
     updated = {"initialized": True, "players": {**existing["players"], **current_players}}
-    write_if_changed(path, existing, updated)
+    write_if_changed(path, existing, updated, SCHEMA_VERSION, force=loaded.needs_rewrite)
     return updated, changes

@@ -12,7 +12,7 @@ work belongs in `.claude/PROJECT_PLAN.md`, not here.
 | Streamlit process cache | The entire `gather_state()` output | In-process memory (`st.cache_data` on `load_state`, `streamlit_app.py`) | `ttl="1h"` backstop; otherwise keyed on exact args | A Refresh/Advanced-refresh click (changes `token`), or either force flag |
 | 12h TTL disk cache | Sleeper's players reference dataset; FantasyCalc dynasty values | `CACHE_DIR` (`.cache/`, the Docker named volume) — `players.json`, `fantasycalc_values_{num_qbs}_{num_teams}_{ppr}.json` | Age-checked on every read (`mtime` vs. TTL) | TTL expiry, or Advanced refresh's `force_full_refresh` |
 | No-TTL disk cache | Real-scoring multipliers (`player_scoring.py`) | `CACHE_DIR` — `scoring_multipliers.json` | Never auto-expires — historical data, changes only once a year | Only the Advanced-refresh "Recompute scoring multipliers" checkbox (`force_scoring_refresh`), or running `scripts/derive_position_multipliers.py` directly |
-| Ad hoc JSON accumulator snapshots | Cross-refresh diff state: real draft-drop attribution (`draft_snapshots.py`), player team/depth-chart/status history (`pickup_snapshots.py`) | `CACHE_DIR` — `draft_snapshots_{draft_id}.json`, `pickup_snapshots_{league_id}_{season}.json` | No TTL concept at all, by design — the whole point is remembering across refreshes | Never "busted" — only ever merged/appended to, via `snapshot_io.py`'s shared load/write shell |
+| Schema-versioned JSON accumulator snapshots | Cross-refresh diff state: real draft-drop attribution (`draft_snapshots.py`), player team/depth-chart/status history (`pickup_snapshots.py`) | `CACHE_DIR` — `draft_snapshots_{draft_id}.json`, `pickup_snapshots_{league_id}_{season}.json` | No TTL concept at all, by design — the whole point is remembering across refreshes | Never "busted" — only ever merged/appended to, via `snapshot_io.py`'s shared load/write shell |
 
 All four share one physical directory (`CACHE_DIR`, defined once in
 `cache_dir.py` and re-exported through `dynasty_core/constants.py`), mounted
@@ -20,6 +20,29 @@ as a single Docker named volume (`nfl_data_cache`) in both
 `docker-compose.deploy.yml` and `docker-compose.yml` — there is no real
 database anywhere in this stack today, just five-ish independently-managed
 JSON files sharing a folder.
+
+### Schema versioning and migrations for the accumulator snapshots
+
+`draft_snapshots.py` and `pickup_snapshots.py` are two separate files, kept
+separate deliberately: they have genuinely different natural keys and
+lifecycles (`draft_id`, one-and-done per draft, vs. `(league_id, season)`,
+ongoing all season), and merging them into one file would mean assuming a
+`draft_id` maps 1:1 to a `(league_id, season)` — true in practice for this
+league, but never verified, and not a coupling to bake in silently (see
+`valuation_principles.md`'s "opaque keys" rule).
+
+What they do share is a real, explicit schema: each module declares its own
+`SCHEMA_VERSION` and a `_MIGRATIONS` dict (version-migrated-from → a pure
+function producing the next version's shape), and `snapshot_io.py`'s shared
+`load_or_seed`/`write_if_changed` shell stamps/reads/migrates against it
+generically. A file is never silently misread — a version gap with no
+registered migration, or a file stamped *newer* than the running code
+understands, both raise rather than guess. A file with no `schema_version`
+key at all (every snapshot file written before this mechanism existed) is
+treated as version 0 and migrated up on first read; the migrated result is
+persisted back to disk (stamped) the moment it's touched, even if nothing
+else about its content changed, so a file never sits indefinitely at an
+old/missing stamp once the current code has read it.
 
 ## The conceptual split: import vs. cached-derived vs. cheap-derived vs. on-demand
 
