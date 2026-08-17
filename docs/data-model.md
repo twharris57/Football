@@ -1,14 +1,9 @@
 # Dynasty Data Model — Persistence & Freshness
 
-How state actually flows through the dynasty tools today: what's cached
-where, on what freshness policy, and which layer a new feature's data
-should live in. Written up as part of `CQ-6` (`.claude/PROJECT_PLAN.md`),
-prompted by a 2026-08-16 investigation into a "the app forgets recent picks"
-bug on the Synology deployment — the real root cause turned out to be a
-single mis-named Streamlit cache argument (see
-`dynasty-draft-web-app.md`'s "Refresh model" section for that story), but
-tracing it required reconstructing exactly this map, which didn't exist
-anywhere as a single reference before now.
+How state actually flows through the dynasty tools: what's cached where, on
+what freshness policy, and which layer a new feature's data should live in.
+Current-state reference only, per `docs/README.md`'s convention — active/open
+work belongs in `.claude/PROJECT_PLAN.md`, not here.
 
 ## The four persistence layers today
 
@@ -45,62 +40,61 @@ This is the split the app already follows in practice, made explicit:
    marginal-value rankings, team power/timeline, replacement levels,
    Suggested Trades' Stage 1 candidate list, the draft plan. This is
    already, in practice, "a deterministic function of the current raw
-   data" — confirmed this session: nothing in this bucket has its own
-   cache, and the whole `gather_state()` call (raw pulls plus all of this)
-   completes in ~4s (`.claude/PROJECT_PLAN.md`'s `DL-4`). The user-facing
+   data": nothing in this bucket has its own cache, and the whole
+   `gather_state()` call (raw pulls plus all of this) completes in ~4s. The
    goal of "UI calcs that are fast and deterministic given the current
-   state" is *already true* for this bucket — the bug that prompted this
-   doc was never about this layer being slow or nondeterministic, it was
-   about the process cache above it silently serving an old fetch.
+   state" is already true for this bucket — staleness bugs in this app have
+   come from the process cache above it silently serving an old fetch, not
+   from this layer being slow or nondeterministic.
 4. **Accumulated cross-refresh state** — `draft_snapshots.py`/
    `pickup_snapshots.py`. Structurally different from the other three: not
    re-derivable from a single snapshot, since the whole point is comparing
    against what was true on a *previous* refresh (which real draft-pick
    pairs with which real drop; which player just changed teams). Genuinely
    needs persistence, not just caching.
-5. **On-demand, UI-triggered, session-scoped results** — as of this
-   session, exactly one exists: Suggested Trades' leaguewide offer scan
-   (`trade_tab.py`'s `_render_leaguewide_scan`, stored in
+5. **On-demand, UI-triggered, session-scoped results** — currently exactly
+   one exists: Suggested Trades' leaguewide offer scan (`trade_tab.py`'s
+   `_render_leaguewide_scan`, stored in
    `st.session_state["suggested_trades_results"]`). Every other tab
-   recomputes everything fresh on every rerun with no session_state stash
-   (confirmed by an explicit search of `tabs/*.py` this session) — this
-   bucket is small today but is exactly where `RT-14` (evaluate/improve an
-   incoming offer) and any future on-demand search feature will land.
+   recomputes everything fresh on every rerun with no session_state stash.
+   This bucket is small today but is where any future on-demand
+   search/evaluation feature (e.g. evaluating an incoming trade offer)
+   would land.
 
 ## The versioned on-demand-result pattern
 
-Bucket 5 above has a real failure mode distinct from buckets 1-4: a result
+Bucket 5 has a real failure mode distinct from buckets 1-4: a result
 computed on demand and stashed in `st.session_state` has no natural
-connection to *which* fetch of bucket-1/2/3 data it was computed against.
-`RT-24` (`.claude/PROJECT_PLAN.md`) was exactly this: a Suggested Trades scan
-could silently keep showing offers computed against an earlier roster/market
-snapshot after a real refresh moved the world on.
+connection to *which* fetch of bucket-1/2/3 data it was computed against —
+a Suggested Trades scan, for instance, could otherwise silently keep
+showing offers computed against an earlier roster/market snapshot after a
+real refresh moved the world on.
 
-Fixed (this branch) by giving bucket-1's cached state a cheap identity:
-`load_state()` now stamps `state["version"] = token` — `token` is already a
-fresh, real timestamp on every genuine re-fetch (see `dynasty-draft-web-app.md`),
-so it's already exactly the right shape for this with no new mechanism
-needed. Any bucket-5 consumer stores its result as
-`{"state_version": state["version"], "results": ...}` instead of a bare
-value, and checks the stamp on read — a mismatch means "this was computed
-against a state that no longer exists," and the stale entry is dropped
-rather than silently displayed. `trade_tab.py`'s `_render_leaguewide_scan` is
-the reference implementation; any future bucket-5 feature (`RT-14`, a
-free-agent search result, etc.) should follow the same shape rather than
-inventing its own staleness convention.
+Guarded against by giving bucket-1's cached state a cheap identity:
+`load_state()` stamps `state["version"] = token` — `token` is already a
+fresh, real timestamp on every genuine re-fetch (see
+`dynasty-draft-web-app.md`), so it's already exactly the right shape for
+this with no separate mechanism needed. A bucket-5 consumer stores its
+result as `{"state_version": state["version"], "results": ...}` instead of
+a bare value, and checks the stamp on read — a mismatch means "this was
+computed against a state that no longer exists," and the stale entry is
+dropped rather than silently displayed. `trade_tab.py`'s
+`_render_leaguewide_scan` is the reference implementation; any future
+bucket-5 feature (a free-agent search result, an incoming-offer evaluation,
+etc.) should follow the same shape rather than inventing its own staleness
+convention.
 
-## Why not a real database (SQLite or otherwise) right now
+## Why not a real database (SQLite or otherwise)
 
-Worth stating explicitly since it was an open question going into this
-review, not an oversight: this app is a single Python process, run by one
-user, with no concurrent writers, modest data volumes (the largest file,
-`players.json`, is ~14MB and already isn't loaded into anything more
-structured than a dict), and no query need beyond simple key lookups —
-nothing here currently benefits from indexes, joins, or transactions. A real
-embedded DB would add a dependency, a migration story, and connection
-lifecycle management with no corresponding win yet. The JSON-file approach
-already in use for buckets 2-4 is the simpler correct tool for this scale
-(`code_conventions.md`'s "prefer the simplest correct solution").
+This app is a single Python process, run by one user, with no concurrent
+writers, modest data volumes (the largest file, `players.json`, is ~14MB and
+already isn't loaded into anything more structured than a dict), and no
+query need beyond simple key lookups — nothing here currently benefits from
+indexes, joins, or transactions. A real embedded DB would add a dependency,
+a migration story, and connection lifecycle management with no corresponding
+win. The JSON-file approach already in use for buckets 2-4 is the simpler
+correct tool for this scale (`code_conventions.md`'s "prefer the simplest
+correct solution").
 
 **Revisit this if:** the app ever needs genuine cross-season historical
 queries (not just "the current draft's snapshot"), multiple concurrent
@@ -108,17 +102,8 @@ writers (a second real user, not just multiple browser tabs), or the
 accumulator files in bucket 4 grow complex enough to need real joins between
 them — none of which is true today.
 
-## Open follow-up work (not attempted in this pass)
-
-Logged as `CQ-6` in `.claude/PROJECT_PLAN.md`, which this doc supersedes as
-the "what's the current state" reference (the backlog item tracks what's
-still open, not a duplicate description):
-
-- **Consolidate `draft_snapshots.py`/`pickup_snapshots.py`** into one
-  schematized store instead of two structurally-similar-but-independent
-  JSON files sharing only a load/write shell.
-- **`DL-9`**: move non-fantasy-position filtering from "every consumer
-  checks it" to a single ingest-time filter.
-- **`CQ-5`**: give draft-pick identity real structured fields at the point
-  `pick_trade_values()` produces them, instead of a display string
-  re-parsed downstream.
+Open work on this data model (consolidating the two accumulator snapshot
+files, ingest-time filtering, structured pick identity, etc.) is tracked in
+`.claude/PROJECT_PLAN.md` under `CQ-6`, `DL-9`, and `CQ-5` — not here; fold a
+finished item's outcome into the relevant section above when it lands,
+rather than describing planned-but-not-yet-true state in this doc.
