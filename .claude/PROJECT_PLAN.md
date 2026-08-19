@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-24`, `VA-5`, `CQ-6`, `DL-9`.
+below): `NB-2`, `RT-24`, `VA-5`, `CQ-7`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -67,7 +67,51 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty right now — nothing pending review.
+**Branch:** `feature/rt14-counter-offer-improvement` (PR #41, "RT-14:
+evaluate and improve a trade offer someone proposed to us") — reviewed
+2026-08-19.
+
+- [ ] **`improve_incoming_offer()`'s partner-tolerance gate uses a stale
+  anchor for "theirs"-side variants, letting through some counter-offers
+  meaningfully more unfair to the partner than the app's own established
+  fairness bar.** `trade.py`'s `tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT
+  * incoming_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)` is computed once,
+  from the *baseline proposal's* `incoming_value` (the value of what the
+  partner originally offered), and reused unchanged for every generated
+  variant on *both* sides. That's correct for `"yours"` variants (only your
+  outgoing package changes; what the partner gives — `incoming_value` — really
+  does stay fixed, exactly mirroring `find_trade_offers()`'s own formula,
+  where `target_value` is fixed and only your combo varies). It's wrong for
+  `"theirs"` variants: there, the swap/add move changes what the partner
+  would give you, so `incoming_value` is no longer the deal's fixed
+  reference — your own (unchanged) outgoing value is. Concrete failure case:
+  partner offers a 500-value target for your fixed 200-value outgoing
+  package (baseline `incoming_value = 500`, so `tolerance = max(0.15*500, 25)
+  = 75`). A `"theirs, swap"` neighbor replaces that target with a cheaper
+  250-value asset from the partner's own sellable pool. The real deal size
+  is now ~200–250, so a properly-calibrated tolerance would be ~`max(0.15*250,
+  25) = 37.5`, and the swap's real partner-side shortfall (`200 - 250 =
+  -50`) should fail that. But the code still uses the stale `75` anchor, so
+  `-50 > -75` passes, and the variant gets surfaced as a legitimate
+  `"counter"` suggestion — one the app's own convention would reject at a
+  smaller deal size. This isn't self-correcting via `_is_good()`: a variant
+  that shortchanges the partner is, by construction, a *good* deal for the
+  user (that's exactly the case the tolerance gate exists to catch), so
+  `_is_good(your_side)` passes easily and the tolerance gate is the only
+  thing standing between a fair suggestion and an unrealistic one. None of
+  the 7 new tests happen to combine a baseline `incoming_value` large enough
+  for the percentage term to dominate (`> ~167`) with a "theirs" swap/add
+  that shrinks value — the one test that does exercise `"theirs, add"`
+  (`test_counter_ranks_swap_and_add_variants_and_rejects_a_lopsided_drop`)
+  uses values low enough that the anchor mismatch doesn't move the outcome.
+  **Fix:** anchor tolerance on whichever side of the trade stays fixed for
+  the variant being evaluated — `incoming_value` (as today) for `"yours"`
+  variants, but the *outgoing* package's value (`your_outgoing_player_ids`/
+  `your_outgoing_pick_names`, summed the same way `incoming_value` already
+  is) for `"theirs"` variants — rather than one hardcoded anchor used for
+  both. Add a test with a baseline `incoming_value` above the ~167
+  percentage/floor crossover point and a `"theirs"` swap/add that shrinks
+  the incoming side, to lock in the corrected behavior.
 
 ## Now — blocking
 
@@ -433,6 +477,18 @@ cutoff.
   has to stay a string match; this is about not re-deriving *this codebase's own*
   already-known structure from a string it built. Cleanup scope, not urgent — no
   known live bug beyond the one already fixed above.
+- [ ] **CQ-7: `pick_value_by_name` dict-building + NaN-safe pick-value-sum
+  pattern duplicated between `find_trade_offers()` and
+  `improve_incoming_offer()`** (assistant valuation review, 2026-08-19) —
+  both build `dict(zip(pick_value_table["pick"], pick_value_table["value"]))`
+  and both sum a list of pick names against it with the same
+  `pd.notna()`-filtered pattern (`improve_incoming_offer()`'s `_pick_value_sum`
+  vs. `find_trade_offers()`'s inline `pick_value_by_name.get(...)` reads).
+  Minor — no behavioral risk, both copies are already NaN-safe per
+  `valuation_principles.md`'s NaN rule — but worth extracting a small shared
+  helper (e.g. `_pick_value_lookup(pick_value_table)` returning both the
+  dict and a `sum(names)` closure) next time either function is touched,
+  rather than a third copy appearing.
 
 ## Deferred / low priority
 
