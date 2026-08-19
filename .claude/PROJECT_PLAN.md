@@ -108,22 +108,6 @@ Deliberately out of v1, not forgotten:
   decision (extend the exclusion, or leave it and rely on the human)
   rather than an unexamined inconsistency between the two features.
 
-- [ ] **RT-14: Evaluate and improve an offer someone else has already made
-  *to* us** (user-flagged 2026-08-02, filed while scoping `RT-12`) — a
-  third, distinct question alongside the trade evaluator (`RT-2`: score a
-  fully-specified trade) and the trade-target optimizer (`RT-12`: given a
-  target, decide whether to pursue it and what to offer for it). Here the
-  *partner* has proposed a specific trade to us; this would (1) evaluate it
-  exactly like the manual trade evaluator already does — no new logic
-  needed for that half — and then (2) suggest how to *improve* it: a
-  counter-offer search, structurally close to `find_trade_offers()`'s
-  combinatorial search but starting from the partner's actual proposed
-  assets as a baseline to adjust (add/swap/drop an asset on either side)
-  rather than searching from scratch against a single target. Likely
-  reuses the bulk of `find_trade_offers()`'s search/scoring machinery
-  rather than inventing a second one — worth checking during scoping
-  whether the two can share a common search helper instead of duplicating
-  the combo-generation/plausibility-gate logic twice.
 - [ ] **RT-16: Need-match tiebreaker in `find_trade_offers()` reuses
   `roster_needs_summary`'s rebuild-timeline "need" flag on the *partner's*
   roster, which may not mean what it implies for a partner not running the

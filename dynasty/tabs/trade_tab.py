@@ -206,6 +206,128 @@ def _render_manual_evaluator(
     with partner_side_col:
         _show_trade_side(f"{trade_team_names[partner_team_id]}'s side", partner_result)
 
+    _render_improve_offer_section(
+        state,
+        your_team_id,
+        partner_team_id,
+        your_trade_roster,
+        partner_trade_roster,
+        trade_team_names[partner_team_id],
+        outgoing_players,
+        outgoing_picks,
+        incoming_players,
+        incoming_picks,
+        trade_players,
+        trade_pick_values,
+    )
+
+
+def _describe_improvement_move(improvement: dict, trade_players: dict) -> str:
+    move, side = improvement["move"], improvement["side"]
+    removed, added = improvement["removed"], improvement["added"]
+    if move == "drop":
+        return f"Don't include {_combo_asset_label(removed, trade_players)}"
+    if move == "add":
+        verb = "Also give" if side == "yours" else "Also ask for"
+        return f"{verb} {_combo_asset_label(added, trade_players)}"
+    verb = "give" if side == "yours" else "ask for"
+    return f"Instead of {_combo_asset_label(removed, trade_players)}, {verb} {_combo_asset_label(added, trade_players)}"
+
+
+def _render_improvement(improvement: dict, partner_name: str, trade_players: dict, expanded: bool) -> None:
+    with st.expander(_describe_improvement_move(improvement, trade_players), expanded=expanded):
+        col1, col2 = st.columns(2)
+        with col1:
+            _show_trade_side("Your side", improvement["your_side"])
+        with col2:
+            _show_trade_side(f"{partner_name}'s side", improvement["partner_side"])
+
+
+def _render_improve_offer_section(
+    state: dict,
+    your_team_id: int,
+    partner_team_id: int,
+    your_trade_roster: dict,
+    partner_trade_roster: dict,
+    partner_name: str,
+    outgoing_players: list[str],
+    outgoing_picks: list[str],
+    incoming_players: list[str],
+    incoming_picks: list[str],
+    trade_players: dict,
+    trade_pick_values: pd.DataFrame,
+) -> None:
+    """RT-14: someone proposed the trade above *to* us. Reuses the exact
+    assets already selected in the manual evaluator - no new selectors -
+    to either confirm it's worth taking, suggest a nearby adjustment, or
+    say plainly that no adjustment found makes it worth taking.
+
+    The result is tagged with a signature of everything it was computed
+    from (which teams, which assets, and state["version"]) and dropped on
+    a mismatch - the same versioned-on-demand-result pattern
+    docs/data-model.md documents for Suggested Trades (RT-24), extended
+    here to also cover the user's own selection changing, not just a
+    refresh. Unlike RT-24, no "data changed" message on invalidation -
+    the trigger here is the user's own edit to the selection, not a
+    background refresh, so it isn't surprising that the button needs a
+    fresh click.
+    """
+    current_signature = (
+        state["version"],
+        your_team_id,
+        partner_team_id,
+        tuple(sorted(outgoing_players)),
+        tuple(sorted(outgoing_picks)),
+        tuple(sorted(incoming_players)),
+        tuple(sorted(incoming_picks)),
+    )
+
+    st.divider()
+    if st.button("Suggest an improvement"):
+        with st.spinner("Checking for a better version of this trade..."):
+            st.session_state["improve_offer_result"] = {
+                "signature": current_signature,
+                "result": dynasty_core.improve_incoming_offer(
+                    your_trade_roster,
+                    partner_trade_roster,
+                    outgoing_players,
+                    outgoing_picks,
+                    incoming_players,
+                    incoming_picks,
+                    trade_players,
+                    state["fc_by_sleeper_id"],
+                    state["byes"],
+                    state["league"],
+                    state["replacement_level"],
+                    trade_pick_values,
+                    handcuffs=state["handcuffs"],
+                ),
+            }
+
+    cached = st.session_state.get("improve_offer_result")
+    if cached is not None and cached["signature"] != current_signature:
+        del st.session_state["improve_offer_result"]
+        cached = None
+    if cached is None:
+        return
+
+    result = cached["result"]
+    if result["verdict"] == "reject":
+        st.error(
+            "No adjustment found makes this proposal worth taking — the read above holds "
+            "regardless of a small tweak. Consider declining."
+        )
+    elif result["verdict"] == "accept":
+        st.success("This proposal is already worth taking as-is.")
+        if result["improvements"]:
+            st.caption("Optional upside — these would make it even better, if the partner's open to it:")
+            for improvement in result["improvements"]:
+                _render_improvement(improvement, partner_name, trade_players, expanded=False)
+    else:
+        st.info("Not quite worth it as proposed — here's how to make it work:")
+        for i, improvement in enumerate(result["improvements"]):
+            _render_improvement(improvement, partner_name, trade_players, expanded=(i == 0))
+
 
 def _render_offer_body(offer: dict, target_label: str, partner_name: str, trade_players: dict) -> None:
     combo_label = ", ".join(_combo_asset_label(a, trade_players) for a in offer["combo"])
