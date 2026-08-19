@@ -625,12 +625,20 @@ def improve_incoming_offer(
     A variant survives only if it clears both of the same gates already
     established elsewhere in this module: the partner's own
     `asset_value_delta` within `TRADE_OFFER_PARTNER_TOLERANCE_PCT`/
-    `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` of zero (anchored to the proposal's
-    own incoming value, mirroring `find_trade_offers()`'s tolerance
-    formula), and `_is_good()` in absolute terms - not merely "better than
-    an already-bad baseline." Nothing needs to separately forbid a
-    one-sided giveaway (e.g. dropping your only outgoing asset): that fails
-    the partner-tolerance gate on its own.
+    `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` of zero, and `_is_good()` in
+    absolute terms - not merely "better than an already-bad baseline."
+    The tolerance is anchored on whichever side of the trade stays *fixed*
+    for the variant being evaluated - the proposal's own incoming value for
+    a `"yours"` variant (only your outgoing package changes, mirroring
+    `find_trade_offers()`'s tolerance formula anchored on its fixed
+    target_value), the proposal's own outgoing value for a `"theirs"`
+    variant (the mirror image - your outgoing package stays fixed while
+    what you'd receive varies). Anchoring both on the same value would let
+    a "theirs" swap/add that shrinks a large baseline ask slip through
+    under a stale, too-generous tolerance sized for the original ask, not
+    the real (now smaller) deal the variant actually proposes. Nothing
+    needs to separately forbid a one-sided giveaway (e.g. dropping your
+    only outgoing asset): that fails the partner-tolerance gate on its own.
 
     Verdict logic:
     - `"accept"` - the baseline proposal, exactly as offered, already
@@ -712,8 +720,24 @@ def improve_incoming_offer(
     )
     baseline = {"your_side": baseline_your, "partner_side": baseline_partner}
 
+    # Tolerance is anchored on whichever side of the trade stays *fixed* for
+    # the variant being evaluated - not one anchor reused for both. A
+    # "yours" variant only changes your outgoing package; what the partner
+    # is set to give you (incoming_value) stays fixed, so that's the deal-
+    # size reference (mirrors find_trade_offers()'s own tolerance, anchored
+    # on its fixed target_value while your combo varies). A "theirs"
+    # variant is the mirror image - your outgoing package stays fixed while
+    # what you'd receive varies, so outgoing_value is the right anchor
+    # there. Using incoming_value for both (a bug found in review) let a
+    # "theirs" swap/add that shrinks a large baseline ask slip through
+    # under a stale, too-generous tolerance sized for the *original* ask,
+    # not the real (now much smaller) deal the variant actually proposes.
     incoming_value = sum(_player_asset(pid)["value"] for pid in incoming_player_ids) + _pick_value_sum(incoming_pick_names)
-    tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * incoming_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)
+    outgoing_value = sum(_player_asset(pid)["value"] for pid in your_outgoing_player_ids) + _pick_value_sum(your_outgoing_pick_names)
+    tolerance_by_side = {
+        "yours": max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * incoming_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE),
+        "theirs": max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * outgoing_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE),
+    }
 
     already_in_trade = set(your_outgoing_player_ids) | set(your_outgoing_pick_names) | set(incoming_player_ids) | set(incoming_pick_names)
     your_variants = _neighbor_variants(your_roster, your_outgoing_player_ids, your_outgoing_pick_names, already_in_trade)
@@ -731,7 +755,7 @@ def improve_incoming_offer(
             in_players, in_picks = variant["player_ids"], variant["pick_names"]
 
         your_side, partner_side = _evaluate(out_players, out_picks, in_players, in_picks, compute_callouts=False)
-        if partner_side["asset_value_delta"] < -tolerance:
+        if partner_side["asset_value_delta"] < -tolerance_by_side[side]:
             continue
         if not _is_good(your_side):
             continue

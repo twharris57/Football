@@ -113,6 +113,14 @@ evaluate and improve a trade offer someone proposed to us") — reviewed
   percentage/floor crossover point and a `"theirs"` swap/add that shrinks
   the incoming side, to lock in the corrected behavior.
 
+  **Fixed 2026-08-19**: `tolerance_by_side` now computes both anchors
+  (`incoming_value` for `"yours"`, `outgoing_value` for `"theirs"`) and the
+  filtering loop looks up the one matching each variant's `side`, instead
+  of one `tolerance` reused for both. Added
+  `test_theirs_side_tolerance_is_anchored_on_outgoing_value_not_the_stale_incoming_ask`
+  — confirmed it fails against the pre-fix code (`counter` when it should
+  be `reject`) and passes against the fix. 214 tests pass.
+
 ## Now — blocking
 
 Empty right now — nothing blocking.

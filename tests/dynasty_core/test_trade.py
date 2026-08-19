@@ -1416,3 +1416,48 @@ class TestImproveIncomingOffer:
 
         assert result["verdict"] == "counter"
         assert any(imp["move"] == "add" and imp["added"]["kind"] == "player" for imp in result["improvements"])
+
+    def test_theirs_side_tolerance_is_anchored_on_outgoing_value_not_the_stale_incoming_ask(self, monkeypatch):
+        # Regression test for a tolerance-anchor bug found in review: a
+        # "theirs" variant (what you'd receive changes) must be judged
+        # against your *fixed* outgoing value, not the baseline's original
+        # (much larger) incoming ask - otherwise a shrunk incoming side
+        # gets an unrealistically generous tolerance sized for the ask it
+        # replaced. incoming_value=300 puts the percentage term (0.15*300=45)
+        # above the $25 floor, so the two anchors genuinely disagree here.
+        your_roster = {"roster_id": 1, "players": ["wr_a"], "taxi": [], "reserve": []}
+        partner_roster = {"roster_id": 2, "players": ["big_target", "cheap_swap"], "taxi": [], "reserve": []}
+        players = {
+            "wr_a": make_player("WR", full_name="WR A"),
+            "big_target": make_player("WR", full_name="Big Target"),
+            "cheap_swap": make_player("WR", full_name="Cheap Swap"),
+        }
+        for p in players.values():
+            p["years_exp"] = 5
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr_a", 100), fc_entry("big_target", 300), fc_entry("cheap_swap", 130)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        script = {
+            # Baseline: give wr_a (100) for big_target (300) - bad for you,
+            # generous to the partner.
+            (1, ("wr_a",), (), ("big_target",), ()): {"lineup_delta_after_drops": -10.0, "asset_value_delta": -10.0},
+            (2, ("big_target",), (), ("wr_a",), ()): {"asset_value_delta": 200.0},
+            # "theirs" swap: ask for cheap_swap (130) instead of big_target.
+            # Real deal is now wr_a (100) for cheap_swap (130) - correctly
+            # anchored tolerance is max(0.15*100, 25)=25; the partner's
+            # delta here (100-130=-30) must fail that, not the stale
+            # max(0.15*300,25)=45 anchor a pre-fix version would have used.
+            (1, ("wr_a",), (), ("cheap_swap",), ()): {"lineup_delta_after_drops": 5.0, "asset_value_delta": 5.0},
+            (2, ("cheap_swap",), (), ("wr_a",), ()): {"asset_value_delta": -30.0},
+        }
+        monkeypatch.setattr(trade_module, "evaluate_trade", _scripted_evaluate_trade(script))
+
+        result = dc.improve_incoming_offer(
+            your_roster, partner_roster, ["wr_a"], [], ["big_target"], [],
+            players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS,
+        )
+
+        assert result["verdict"] == "reject"
+        assert result["improvements"] == []
