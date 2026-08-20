@@ -241,11 +241,18 @@ def gather_state(
             taxi_eligible=False,
             taxi_filled=len(user_roster.get("taxi") or []),
         )
-        value_by_id = {r["player_id"]: r["marginal_value"] for r in ranked}
+        ranked_by_id = {r["player_id"]: r for r in ranked}
         for change in pickup_changes:
-            value = value_by_id.get(change["player_id"])
+            ranked_row = ranked_by_id.get(change["player_id"])
+            value = ranked_row["marginal_value"] if ranked_row else None
             if value is not None and value > 0:
                 info = players.get(change["player_id"], {})
+                # drop_name/drop_is_starter mirror free_agent_board()'s own
+                # fields exactly (same rank_by_marginal_value() "drop" shape)
+                # so a pickup alert shows the same "what this would replace"
+                # context the Free agents board already does, not just that
+                # something changed.
+                drop = ranked_row["drop"]
                 pickup_alerts.append(
                     {
                         **change,
@@ -253,6 +260,8 @@ def gather_state(
                         "pos": info.get("position"),
                         "team": info.get("team"),
                         "marginal_value": value,
+                        "drop_name": drop["name"] if drop else None,
+                        "drop_is_starter": drop["is_starter"] if drop else None,
                     }
                 )
         pickup_alerts.sort(key=lambda a: a["marginal_value"], reverse=True)
