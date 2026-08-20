@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-24`, `VA-5`, `CQ-7`, `DL-9`.
+below): `NB-2`, `RT-24`, `VA-6`, `CQ-7`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -419,6 +419,33 @@ cutoff.
   `_derive_rookie_buckets`/multiplier machinery as additional features
   rather than requiring a new pipeline.
 
+- [ ] **VA-6: Pickup alerts can display "would add +0.0 to your lineup"
+  for a marginal value that's real but rounds away** (assistant valuation
+  review, 2026-08-19, `feature/pickup-alerts-impact`) —
+  `state.py`'s pickup-alert filter (`if value is not None and value > 0`)
+  tests `rank_by_marginal_value()`'s raw, unrounded `marginal_value`, then
+  passes that same raw value straight through to `summary.py`'s
+  `_impact_and_drop_note()`, which formats it to one decimal
+  (`f"{marginal_value:+.1f}"`). `free_agent_board()`
+  (`dynasty_core/marginal_value.py`) rounds to one decimal *before* an
+  identical `> 0` filter runs in `_free_agent_lines()`. A raw marginal
+  value in `(0, 0.05)` — real but tiny — passes the pickup-alert filter yet
+  renders as `"+0.0"`, so a Pickup alert can literally read "would add +0.0
+  to your lineup — would require dropping Starter WR (a starter)": a
+  self-contradicting message for the exact same underlying signal that
+  `free_agent_board`'s identical filter already exists to keep off the
+  board for that player. Bounded in practice (only the `(0, 0.05)` window
+  is affected, and the displayed "+0.0" undercuts rather than
+  overstates the case for acting on it) — not a wrong recommendation, but
+  a confusing one on a feature whose whole point is a trustworthy "what
+  this would replace" readout. No existing test exercises this boundary
+  (`test_summary.py`'s pickup-alert tests only ever pass whole-number
+  `marginal_value`s). Fix: round once in `state.py` (matching
+  `free_agent_board`'s convention) and filter/store/sort on that rounded
+  value, rather than filtering on the raw float and formatting a different
+  precision downstream. See `valuation_principles.md`'s new "a displayed
+  number and the filter gating its display must round on the same basis"
+  rule.
 - [ ] **VA-5: `win_pct` doesn't credit a tie as half a win** (assistant
   valuation review, 2026-08-02) — `team_power_timeline_scores()` computes
   `wins / games_played` where `games_played = wins + losses + ties`; a
