@@ -111,7 +111,7 @@ from .roster_value import (
     player_status_flags,
     roster_value_analysis,
 )
-from .state import gather_state
+from .state import build_pickup_alerts, gather_state
 from .summary import build_attention_digest
 from .team_analysis import team_roster_analysis
 from .trade import (
@@ -173,6 +173,7 @@ __all__ = [
     "best_position_relevant_drop",
     "build_attention_digest",
     "build_big_board",
+    "build_pickup_alerts",
     "bye_for_row",
     "bye_week_by_team",
     "compute_pick_ownership",

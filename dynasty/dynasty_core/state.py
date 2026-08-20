@@ -43,6 +43,44 @@ from .trade import leaguewide_trade_candidates
 logger = logging.getLogger(__name__)
 
 
+def build_pickup_alerts(pickup_changes: list[dict], ranked: list[dict], players: dict[str, dict]) -> list[dict]:
+    """Attach marginal-value/drop context to each pickup-eligible change and rank by impact, best first.
+
+    Filters to a positive *rounded* marginal_value, matching
+    `free_agent_board()`'s own round-then-filter order - a raw value in
+    (0, 0.05) would otherwise pass a raw `> 0` check here but still render
+    as the self-contradicting "would add +0.0 to your lineup" once
+    `summary.py` formats it to one decimal (see
+    `valuation_principles.md`'s "a displayed number and the filter gating
+    its display must round on the same basis" rule). `drop_name`/
+    `drop_is_starter` mirror `free_agent_board()`'s own fields exactly
+    (same `rank_by_marginal_value()` "drop" shape) so a pickup alert shows
+    the same "what this would replace" context the Free agents board
+    already does, not just that something changed.
+    """
+    ranked_by_id = {r["player_id"]: r for r in ranked}
+    pickup_alerts = []
+    for change in pickup_changes:
+        ranked_row = ranked_by_id.get(change["player_id"])
+        value = round(ranked_row["marginal_value"], 1) if ranked_row else None
+        if value is not None and value > 0:
+            info = players.get(change["player_id"], {})
+            drop = ranked_row["drop"]
+            pickup_alerts.append(
+                {
+                    **change,
+                    "name": info.get("full_name"),
+                    "pos": info.get("position"),
+                    "team": info.get("team"),
+                    "marginal_value": value,
+                    "drop_name": drop["name"] if drop else None,
+                    "drop_is_starter": drop["is_starter"] if drop else None,
+                }
+            )
+    pickup_alerts.sort(key=lambda a: a["marginal_value"], reverse=True)
+    return pickup_alerts
+
+
 def gather_state(
     league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool = False
 ) -> dict[str, Any]:
@@ -241,30 +279,7 @@ def gather_state(
             taxi_eligible=False,
             taxi_filled=len(user_roster.get("taxi") or []),
         )
-        ranked_by_id = {r["player_id"]: r for r in ranked}
-        for change in pickup_changes:
-            ranked_row = ranked_by_id.get(change["player_id"])
-            value = ranked_row["marginal_value"] if ranked_row else None
-            if value is not None and value > 0:
-                info = players.get(change["player_id"], {})
-                # drop_name/drop_is_starter mirror free_agent_board()'s own
-                # fields exactly (same rank_by_marginal_value() "drop" shape)
-                # so a pickup alert shows the same "what this would replace"
-                # context the Free agents board already does, not just that
-                # something changed.
-                drop = ranked_row["drop"]
-                pickup_alerts.append(
-                    {
-                        **change,
-                        "name": info.get("full_name"),
-                        "pos": info.get("position"),
-                        "team": info.get("team"),
-                        "marginal_value": value,
-                        "drop_name": drop["name"] if drop else None,
-                        "drop_is_starter": drop["is_starter"] if drop else None,
-                    }
-                )
-        pickup_alerts.sort(key=lambda a: a["marginal_value"], reverse=True)
+        pickup_alerts = build_pickup_alerts(pickup_changes, ranked, players)
 
     replacement_level = position_replacement_levels(rosters, players, fc_by_sleeper_id, league["roster_positions"])
     user_analysis = team_roster_analysis(
