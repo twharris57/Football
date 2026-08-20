@@ -26,9 +26,18 @@ from .constants import FANTASY_POSITIONS
 # than pretending 1-2 points says something about this position
 # specifically. MIN_COMPARABLE_SAMPLE=3 is the floor below which no
 # guidance is shown at all, rather than a range computed from 1-2 points.
+# COMPARABLE_MAX_DISTANCE_PCT/MIN_ABSOLUTE_DISTANCE bound how far (in
+# adj_value) a "nearest" row is allowed to be before it stops counting as a
+# real comparable - nearest-K alone has no such floor, so on a sparse or
+# value-skewed sample it will happily return the closest rows even when
+# "closest" is still a wildly different tier of player. Same
+# max(pct * value, absolute_floor) shape as trade.py's
+# TRADE_OFFER_PARTNER_TOLERANCE_PCT/TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE.
 COMPARABLE_NEAREST_K = 5
 MIN_SAME_POSITION = 3
 MIN_COMPARABLE_SAMPLE = 3
+COMPARABLE_MAX_DISTANCE_PCT = 0.5
+COMPARABLE_MIN_ABSOLUTE_DISTANCE = 50.0
 
 
 def won_bid_sample(
@@ -74,16 +83,27 @@ def nearest_comparable_bids(
     sample: pd.DataFrame,
     k: int = COMPARABLE_NEAREST_K,
     min_same_position: int = MIN_SAME_POSITION,
-) -> tuple[list[float], bool]:
+) -> tuple[list[dict[str, float]], bool]:
     """Up to `k` real historical winning bids nearest to `candidate_adj_value`
     by value distance - not a fixed percentage band, which can return
     nothing at all on a thin sample; nearest-K always returns something as
-    long as `sample` has any rows.
+    long as `sample` has any rows within tolerance.
 
     Same-position rows preferred; broadens to every row in `sample`
     (still nearest-by-value) only when the same-position count is below
     `min_same_position`, since bidding behavior plausibly differs
-    meaningfully by position. Returns `(bids, same_position)` -
+    meaningfully by position. Whichever pool gets selected, a row only
+    counts as a real comparable if its `adj_value` is within
+    `max(COMPARABLE_MAX_DISTANCE_PCT * candidate_adj_value,
+    COMPARABLE_MIN_ABSOLUTE_DISTANCE)` of the candidate's - nearest-K alone
+    has no such floor, so on a sparse or value-skewed sample it would
+    otherwise return whatever's closest even when "closest" is still a
+    wildly different tier of player.
+
+    Returns `(comparables, same_position)` - `comparables` is each row's
+    `bid` alongside its own `adj_value` (not just the bid amount), so a
+    caller can show the real player value each bid came from rather than
+    asking the reader to trust an unverifiable "similar" claim.
     `same_position` is `False` when broadening happened, so a caller can
     say so honestly rather than implying a position-specific comparison
     that isn't really there.
@@ -98,8 +118,11 @@ def nearest_comparable_bids(
         pool, used_same_position = sample, False
 
     distances = (pool["adj_value"] - candidate_adj_value).abs()
-    nearest = pool.assign(_distance=distances).sort_values("_distance").head(k)
-    return list(nearest["bid"]), used_same_position
+    tolerance = max(COMPARABLE_MAX_DISTANCE_PCT * candidate_adj_value, COMPARABLE_MIN_ABSOLUTE_DISTANCE)
+    within_tolerance = pool.assign(_distance=distances)
+    within_tolerance = within_tolerance[within_tolerance["_distance"] <= tolerance]
+    nearest = within_tolerance.sort_values("_distance").head(k)
+    return nearest[["bid", "adj_value"]].to_dict("records"), used_same_position
 
 
 def bid_guidance(candidate_adj_value: float, candidate_position: str, sample: pd.DataFrame) -> dict[str, Any] | None:
@@ -107,22 +130,24 @@ def bid_guidance(candidate_adj_value: float, candidate_position: str, sample: pd
     low/median/high computed directly from that same list - never an
     independently invented number.
 
-    `None` if fewer than `MIN_COMPARABLE_SAMPLE` comparables were found -
-    too thin to say anything useful yet (matches this project's existing
-    small-sample-guard pattern, e.g. `_sane_ratio`/`QUALIFYING_VOLUME`): an
-    honest gap, not a fabricated figure from too few real data points.
+    `None` if fewer than `MIN_COMPARABLE_SAMPLE` comparables were found
+    close enough in value (see `nearest_comparable_bids`'s distance
+    tolerance) - too thin, or too far away in value, to say anything
+    useful yet (matches this project's existing small-sample-guard
+    pattern, e.g. `_sane_ratio`/`QUALIFYING_VOLUME`): an honest gap, not a
+    fabricated figure from too few or too-mismatched real data points.
     `low`/`high` are the min/max of the comparable set itself, not a
     percentile calculation - a percentile implies more statistical rigor
     than a sample this small (3-5 points) actually supports.
     """
-    bids, same_position = nearest_comparable_bids(candidate_adj_value, candidate_position, sample)
-    if len(bids) < MIN_COMPARABLE_SAMPLE:
+    comparables, same_position = nearest_comparable_bids(candidate_adj_value, candidate_position, sample)
+    if len(comparables) < MIN_COMPARABLE_SAMPLE:
         return None
-    sorted_bids = sorted(bids)
+    bids = sorted(c["bid"] for c in comparables)
     return {
-        "comparable_bids": sorted_bids,
-        "low": min(sorted_bids),
-        "median": statistics.median(sorted_bids),
-        "high": max(sorted_bids),
+        "comparables": sorted(comparables, key=lambda c: c["bid"]),
+        "low": min(bids),
+        "median": statistics.median(bids),
+        "high": max(bids),
         "same_position": same_position,
     }

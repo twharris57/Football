@@ -79,17 +79,17 @@ class TestNearestComparableBids:
         )
 
     def test_prefers_same_position_when_sample_is_large_enough(self):
-        bids, same_position = dc.nearest_comparable_bids(100.0, "WR", self._sample(), min_same_position=3)
+        comparables, same_position = dc.nearest_comparable_bids(100.0, "WR", self._sample(), min_same_position=3)
 
         assert same_position is True
-        assert set(bids) == {10.0, 12.0, 8.0}  # the 3 WR rows only, RB excluded
+        assert {c["bid"] for c in comparables} == {10.0, 12.0, 8.0}  # the 3 WR rows only, RB excluded
 
     def test_broadens_to_all_positions_when_same_position_sample_is_too_thin(self):
         sample = self._sample()
-        bids, same_position = dc.nearest_comparable_bids(100.0, "TE", sample, min_same_position=3)
+        comparables, same_position = dc.nearest_comparable_bids(100.0, "TE", sample, min_same_position=3)
 
         assert same_position is False
-        assert 50.0 in bids  # the RB row is now eligible since no TE rows exist at all
+        assert 50.0 in {c["bid"] for c in comparables}  # the RB row is now eligible since no TE rows exist at all
 
     def test_returns_genuinely_nearest_by_value_not_just_first_k(self):
         sample = pd.DataFrame(
@@ -99,14 +99,35 @@ class TestNearestComparableBids:
             ]
         )
 
-        bids, _ = dc.nearest_comparable_bids(100.0, "WR", sample, k=2)
+        comparables, _ = dc.nearest_comparable_bids(100.0, "WR", sample, k=2)
 
-        assert set(bids) == {101.0, 99.0}
+        assert {c["bid"] for c in comparables} == {101.0, 99.0}
+
+    def test_each_comparable_carries_its_own_adj_value_alongside_its_bid(self):
+        comparables, _ = dc.nearest_comparable_bids(100.0, "WR", self._sample(), min_same_position=3)
+
+        by_bid = {c["bid"]: c["adj_value"] for c in comparables}
+        assert by_bid[10.0] == 100.0
+        assert by_bid[12.0] == 110.0
+        assert by_bid[8.0] == 90.0
+
+    def test_excludes_comparables_too_far_in_value_even_though_the_pool_is_nonempty(self):
+        # Same-position count clears min_same_position, so the pool selection
+        # itself succeeds - but every row is a wildly different tier of
+        # player than the candidate, so none should count as "comparable."
+        sample = self._sample()
+
+        comparables, same_position = dc.nearest_comparable_bids(2000.0, "WR", sample, min_same_position=3)
+
+        assert comparables == []
+        assert same_position is True
 
     def test_empty_sample_returns_no_bids(self):
-        bids, same_position = dc.nearest_comparable_bids(100.0, "WR", pd.DataFrame(columns=["position", "adj_value", "bid"]))
+        comparables, same_position = dc.nearest_comparable_bids(
+            100.0, "WR", pd.DataFrame(columns=["position", "adj_value", "bid"])
+        )
 
-        assert bids == []
+        assert comparables == []
 
 
 class TestBidGuidance:
@@ -131,11 +152,25 @@ class TestBidGuidance:
 
         guidance = dc.bid_guidance(100.0, "WR", sample)
 
-        assert guidance["comparable_bids"] == [10.0, 20.0, 30.0]
+        assert [c["bid"] for c in guidance["comparables"]] == [10.0, 20.0, 30.0]
         assert guidance["low"] == 10.0
         assert guidance["median"] == 20.0
         assert guidance["high"] == 30.0
         assert guidance["same_position"] is True
+
+    def test_returns_none_when_comparables_exist_but_are_all_too_far_in_value(self):
+        # 3 real comparables clear MIN_COMPARABLE_SAMPLE on count alone, but
+        # the candidate is a far higher tier of player than any of them -
+        # a count floor with no distance floor would wrongly show guidance here.
+        sample = pd.DataFrame(
+            [
+                {"player_id": "wr1", "position": "WR", "adj_value": 50.0, "bid": 5.0},
+                {"player_id": "wr2", "position": "WR", "adj_value": 60.0, "bid": 6.0},
+                {"player_id": "wr3", "position": "WR", "adj_value": 70.0, "bid": 7.0},
+            ]
+        )
+
+        assert dc.bid_guidance(2000.0, "WR", sample) is None
 
     def test_same_position_flag_reflects_broadening(self):
         sample = pd.DataFrame(

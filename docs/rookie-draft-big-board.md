@@ -382,12 +382,22 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     `nearest_comparable_bids()` finds up to `COMPARABLE_NEAREST_K` real
     bids nearest a candidate's value (same position preferred, broadened
     to every position only when the same-position sample is under
-    `MIN_SAME_POSITION`), and `bid_guidance()` returns those bids directly
-    alongside a low/median/high computed from that exact list — never a
-    separate model — or `None` below `MIN_COMPARABLE_SAMPLE`, an honest
-    "not enough data yet" rather than a number from too few points.
-    Computed on demand for one selected free-agent candidate at a time
-    (Roster tab), not for the whole board every refresh.
+    `MIN_SAME_POSITION`), filtered to rows within
+    `max(COMPARABLE_MAX_DISTANCE_PCT * candidate_adj_value,
+    COMPARABLE_MIN_ABSOLUTE_DISTANCE)` of the candidate's own value — a
+    count floor alone (`MIN_COMPARABLE_SAMPLE`) doesn't catch a sparse or
+    value-skewed sample where the *nearest available* rows are still a
+    wildly different tier of player, so a distance floor gates that
+    separately (`valuation_principles.md`'s "nearest-neighbor needs a
+    distance floor" rule). `bid_guidance()` returns those bids directly,
+    each alongside its own `adj_value` so the UI can show a human the real
+    match quality rather than asking them to trust it, plus a low/median/
+    high computed from that exact list — never a separate model — or
+    `None` below `MIN_COMPARABLE_SAMPLE` *close* comparables, an honest
+    "not enough data yet" rather than a number from too few or too
+    mismatched points. Computed on demand for one selected free-agent
+    candidate at a time (Roster tab), not for the whole board every
+    refresh.
   - **Pickup alerts** (the Summary tab's in-season monitor,
     `pickup_snapshots.py`/`state.py`) shares this same "what would this
     replace, and what's the impact" phrasing rather than a second one — a
@@ -719,4 +729,4 @@ is a deliberate decision, not a silent bug:
 | `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers`/`_asset_pool`/`improve_incoming_offer` (`dynasty_core/trade.py`) | Judgment calls bounding an offer search's candidate pool/combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size. Shared by both `find_trade_offers()`'s combo search and `improve_incoming_offer()`'s neighbor search via the common `_asset_pool()`/tolerance formula, not two separate constants | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |
 | `SUGGESTED_TRADE_SCAN_TOP_K = 15` | `leaguewide_trade_candidates`/`suggested_trades` (`dynasty_core/trade.py`) | How many of Stage 1's cheap, affordability-filtered leaguewide candidates get Stage 2's expensive real search — bounds Suggested Trades' scan cost to a constant regardless of league size, sized to the same order of magnitude as the original single-partner whole-roster scan concept | Raise if 15 candidates routinely produce fewer than 3 viable offers in practice; lower if a scan feels slow |
 | A historical winning bid's comparable value is the player's *current* `adj_value`, not their value at the time of the bid | `won_bid_sample` (`dynasty_core/waiver_bids.py`) | Not reconstructable without historical roster/value snapshots this project doesn't keep. Reasonable for the short in-season windows FAAB guidance covers today; gets progressively less accurate the further back a comparable bid is from, which is exactly why extending this to prior seasons (`RT-25`) needs a recency-aware sample, not a flat pool | Revisit if bid guidance ever extends beyond the current season, or starts looking systematically off for older in-season comparables |
-| `COMPARABLE_NEAREST_K = 5` / `MIN_SAME_POSITION = 3` / `MIN_COMPARABLE_SAMPLE = 3` | `dynasty_core/waiver_bids.py` | Judgment calls sizing the FAAB bid-guidance comparable sample, not derived from any league rule | Adjust by feel once a full season of real bid history exists to judge against |
+| `COMPARABLE_NEAREST_K = 5` / `MIN_SAME_POSITION = 3` / `MIN_COMPARABLE_SAMPLE = 3` / `COMPARABLE_MAX_DISTANCE_PCT = 0.5` / `COMPARABLE_MIN_ABSOLUTE_DISTANCE = 50.0` | `dynasty_core/waiver_bids.py` | Judgment calls sizing the FAAB bid-guidance comparable sample and its value-distance tolerance, not derived from any league rule | Adjust by feel once a full season of real bid history exists to judge against |

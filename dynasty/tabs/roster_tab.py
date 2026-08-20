@@ -211,15 +211,18 @@ def _render_faab_bid_guidance(state: dict, board: pd.DataFrame) -> None:
             "Real winning FAAB bids from this league's own Sleeper transaction history, "
             "not an invented formula - the nearest, by current market value, to the "
             "selected candidate (same position preferred, broadened to every position "
-            "only when there aren't enough same-position comparables yet). Shown as the "
+            "only when there aren't enough same-position comparables yet), and each "
+            "one's own value is shown alongside its bid so you can judge how close a "
+            "match it really is. A bid whose player is too far off in value to be a "
+            "meaningful comparable is excluded rather than shown anyway. Shown as the "
             "real numbers directly, plus a low/median/high computed from that exact list "
             "- never a separately-modeled number. \"Not enough comparable bid history "
-            "yet\" means too few real winning bids exist this season to say anything "
-            "useful, not a hidden zero. Current season only, and each historical bid is "
-            "compared against the player's *current* market value, not their value at "
-            "the time of that bid - a reasonable proxy for the short in-season windows "
-            "this covers, less so further back (why this doesn't yet reach into prior "
-            "seasons' history)."
+            "yet\" means too few real winning bids exist close enough in value this "
+            "season to say anything useful, not a hidden zero. Current season only, and "
+            "each historical bid is compared against the player's *current* market "
+            "value, not their value at the time of that bid - a reasonable proxy for "
+            "the short in-season windows this covers, less so further back (why this "
+            "doesn't yet reach into prior seasons' history)."
         )
 
     label_by_id = {row["player_id"]: f"{row['name']} ({row['pos']}, {row['team']})" for _, row in board.iterrows()}
@@ -246,8 +249,11 @@ def _render_faab_bid_guidance(state: dict, board: pd.DataFrame) -> None:
 
     if not guidance["same_position"]:
         st.caption(f"No same-position ({position}) comparable bids yet — showing the closest bids across all positions.")
-    bids_str = ", ".join(f"${bid:.0f}" for bid in guidance["comparable_bids"])
-    st.write(f"Recent winning FAAB bids for similarly-valued players: {bids_str}")
+    comparables_str = ", ".join(
+        f"${c['bid']:.0f} (value {c['adj_value']:.0f})" for c in guidance["comparables"]
+    )
+    st.write(f"Recent winning FAAB bids for similarly-valued players: {comparables_str}")
+    st.caption(f"This candidate's own current value: {adj_value:.0f} — compare against each bid's value above.")
     low_col, median_col, high_col = st.columns(3)
     low_col.metric("Low", f"${guidance['low']:.0f}")
     median_col.metric("Median", f"${guidance['median']:.0f}")

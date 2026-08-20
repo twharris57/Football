@@ -111,6 +111,30 @@ guidance from real league bid history") — reviewed 2026-08-19.
   asserts on the resulting distance/quality signal, not just that *some*
   bids come back.
 
+  **Fixed 2026-08-19**: added `COMPARABLE_MAX_DISTANCE_PCT`/
+  `COMPARABLE_MIN_ABSOLUTE_DISTANCE` (`dynasty_core/waiver_bids.py`,
+  same `max(pct * value, absolute_floor)` shape as `trade.py`'s tolerance
+  constants) — `nearest_comparable_bids()` now filters the selected pool
+  to rows within that tolerance before taking the nearest `k`, so
+  `bid_guidance()` returns `None` when even the closest comparables are
+  too far in value, not just when there are too few of them.
+  `nearest_comparable_bids()` now returns each comparable as
+  `{"bid", "adj_value"}` (was a bare bid list) and `bid_guidance()`'s
+  `comparables` field carries the same, so `roster_tab.py` can show each
+  comparable's own value next to its bid instead of hiding it. Added
+  `test_excludes_comparables_too_far_in_value_even_though_the_pool_is_nonempty`
+  and `test_returns_none_when_comparables_exist_but_are_all_too_far_in_value`
+  — both constructed the sparse/skewed shape the finding described (3
+  same-position rows clear the count floor but sit far below a
+  high-value candidate) and confirmed they fail against the pre-fix code.
+  235 tests pass.
+
+- [x] **`free_agent_board()`'s new `player_id` column leaks into the CLI
+  report** — `rookie_draft.py:186` printed the raw frame; `roster_tab.py`
+  already dropped the column before display.
+  **Fixed 2026-08-19**: `rookie_draft.py:186` now drops `player_id` the
+  same way, before `render_df()`.
+
 ## Now — blocking
 
 Empty right now — nothing blocking.
@@ -582,17 +606,6 @@ cutoff.
   the fix might need to flow through AgentConfig rather than a direct
   edit here; confirm which before implementing. Deliberately deferred to
   its own branch, not bundled into unrelated work.
-- [ ] **CQ-9: `free_agent_board()`'s `player_id` join-key column leaks into
-  the CLI report** (assistant valuation review, 2026-08-19, RT-10) —
-  `player_id` was added to `free_agent_board()`'s output as an internal
-  join key so `roster_tab.py`'s new FAAB bid guidance selector can look up
-  a chosen candidate; `roster_tab.py` itself drops the column before
-  display (`board.drop(columns="player_id", errors="ignore")`), but
-  `rookie_draft.py:186` still prints the raw frame via
-  `render_df(state["free_agent_board"], ...)`, so a raw Sleeper player ID
-  string now shows up as an extra column in the CLI's free-agent table.
-  Cosmetic only — no wrong values, just noise in a human-facing report.
-  Fix: drop the same column in `rookie_draft.py:186`.
 
 ## Deferred / low priority
 
