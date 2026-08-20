@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-27`, `VA-6`, `CQ-8`, `DL-9`.
+below): `NB-2`, `RT-28`, `VA-6`, `CQ-9`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -69,7 +69,47 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty right now — nothing pending review.
+**Branch:** `feature/rt10-faab-bid-guidance` (PR #43, "RT-10: FAAB bid
+guidance from real league bid history") — reviewed 2026-08-19.
+
+- [ ] **`nearest_comparable_bids()`/`bid_guidance()` has a sample-size floor
+  but no match-*quality* floor — a sparse or value-skewed sample can hand
+  back "comparables" that aren't actually comparable, presented with the
+  same confidence as a tight match.** `MIN_COMPARABLE_SAMPLE = 3` only
+  guards against *too few* rows; nothing bounds how *far* (in `adj_value`)
+  the nearest rows are allowed to be from `candidate_adj_value`. `.head(k)`
+  on a small or skewed pool returns whatever's closest even when "closest"
+  is still a wildly different tier of player — and unlike the
+  `same_position` flag (which *does* get surfaced to the user when
+  broadening happens), there's no equivalent signal for match quality by
+  value. Confirmed this isn't theoretical: pulled this league's live
+  transaction data — right now (2026-08-19, leg 1) there are only 8
+  `status == "complete"` waiver transactions all season, spanning whatever
+  positions and value tiers happened to clear waivers first. A candidate
+  whose true value sits far from every one of those 8 (very plausible this
+  early, and the exact situation `MIN_SAME_POSITION`'s broaden-to-all-
+  positions path is designed to fall into) still gets a full low/median/
+  high panel built from bids on players nowhere near its own tier — e.g. a
+  handful of $0–$5 depth-add bids presented as calibrated guidance for a
+  candidate that's actually a clear must-add. The UI compounds this: it
+  shows only each comparable's bid amount (`bids_str` in
+  `roster_tab.py::_render_faab_bid_guidance`), never the comparable
+  player's own `adj_value`, so the user has no way to sanity-check match
+  quality themselves even by eye. This is exactly the shape
+  `valuation_principles.md`'s "silent data-degradation must surface as a
+  warning" rule already names — a well-formed computation that's
+  quietly a bad match, not an error, still needs to say so.
+  **Fix:** add a maximum-distance guard (an absolute `adj_value` gap, or a
+  relative one similar to `trade.py`'s `TRADE_OFFER_PREFILTER_LOW`/`HIGH`
+  bounds) and drop to `None`/a distinct "no close comparables" state when
+  even the nearest rows fall outside it, rather than always returning up
+  to `k` regardless of how far they are. At minimum, surface each
+  comparable's own `adj_value` next to its bid in the UI so a human can
+  judge match quality directly, the same way `same_position` already lets
+  them judge the positional gap. Add a test constructing a sparse/skewed
+  sample (a handful of low-value comparables, a high-value candidate) that
+  asserts on the resulting distance/quality signal, not just that *some*
+  bids come back.
 
 ## Now — blocking
 
@@ -338,6 +378,28 @@ Deliberately out of v1, not forgotten:
   a comparable bid is from).
   A weighted-by-recency sample (or a hard recency window) is likely
   needed, not a flat pool across all available seasons.
+- [ ] **RT-28: FAAB bid guidance's position-broadening may mix structurally
+  different bidding behavior, not just different players** (assistant
+  valuation review, 2026-08-19) — when a candidate's same-position sample
+  is under `MIN_SAME_POSITION`, `nearest_comparable_bids()` broadens to
+  the nearest bids across *every* position, on the theory that "nearest by
+  value" is still a reasonable comparable. That holds for raw dynasty
+  value, but FAAB is a bidding-*behavior* signal, and this is a confirmed
+  superflex league (see `valuation_principles.md`'s superflex section) —
+  a backup-QB-tier player plausibly draws a real bidding premium purely
+  from 2-QB-startable scarcity that a RB/WR/TE at the identical
+  `adj_value` never faces, independent of whatever the market-value layer
+  already prices in. Broadening a thin QB sample into RB/WR/TE
+  comparables (or the reverse) risks presenting a calibrated-looking
+  range built from a different demand curve than the one the candidate is
+  actually being bid into. Already partially disclosed (`same_position ==
+  False` triggers a caption in `roster_tab.py`), so not filed as a
+  fix-before-merge blocker — but worth a deliberate look once enough
+  season data exists to check empirically: either exclude QB from
+  cross-position broadening entirely (small-sample "no guidance yet" is
+  more honest than a mismatched-demand-curve range), or widen the
+  disclosure to name the superflex-scarcity risk specifically rather than
+  the generic "showing bids across all positions" caption.
 - [ ] **RT-26: Draft Board — a year selector, defaulting to the current
   year** (user-flagged 2026-08-20, future years) — once more than one
   rookie draft's worth of history exists, add a dropdown to the Draft
@@ -520,6 +582,17 @@ cutoff.
   the fix might need to flow through AgentConfig rather than a direct
   edit here; confirm which before implementing. Deliberately deferred to
   its own branch, not bundled into unrelated work.
+- [ ] **CQ-9: `free_agent_board()`'s `player_id` join-key column leaks into
+  the CLI report** (assistant valuation review, 2026-08-19, RT-10) —
+  `player_id` was added to `free_agent_board()`'s output as an internal
+  join key so `roster_tab.py`'s new FAAB bid guidance selector can look up
+  a chosen candidate; `roster_tab.py` itself drops the column before
+  display (`board.drop(columns="player_id", errors="ignore")`), but
+  `rookie_draft.py:186` still prints the raw frame via
+  `render_df(state["free_agent_board"], ...)`, so a raw Sleeper player ID
+  string now shows up as an extra column in the CLI's free-agent table.
+  Cosmetic only — no wrong values, just noise in a human-facing report.
+  Fix: drop the same column in `rookie_draft.py:186`.
 
 ## Deferred / low priority
 
