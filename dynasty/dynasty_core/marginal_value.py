@@ -291,6 +291,12 @@ def free_agent_board(
         drop = candidate["drop"]
         rows.append(
             {
+                # An internal join key for a caller that needs to act on a
+                # specific candidate (RT-10's FAAB bid guidance looks up its
+                # current adj_value by this), not just display it - same
+                # pattern as sellable_players()'s own player_id column, drop
+                # it before rendering a table.
+                "player_id": candidate["player_id"],
                 "name": info.get("full_name"),
                 "pos": info.get("position"),
                 "team": info.get("team"),

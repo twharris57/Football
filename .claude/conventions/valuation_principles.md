@@ -536,3 +536,42 @@ downstream. Watch for this whenever a shared formatting helper is
 introduced specifically to keep two call sites in sync (as here): the
 helper can guarantee identical *wording*, but not identical *inputs* — the
 callers still have to agree on what value they're each feeding it.
+
+## A nearest-neighbor comparable set needs a distance floor, not just a count floor
+
+`nearest_comparable_bids()`/`bid_guidance()` (`dynasty_core/waiver_bids.py`,
+RT-10, 2026-08-19 review) calibrate FAAB bid guidance from the `k`
+historical winning bids nearest a candidate's `adj_value` — a deliberate
+choice over a fixed percentage band specifically because a band "can
+return nothing at all on a thin sample," and nearest-K always returns
+*something* as long as the sample has any rows. `MIN_COMPARABLE_SAMPLE`
+guards the one failure mode that design invites — too few rows — by
+refusing to show guidance below 3. It does not guard the other one:
+nothing bounds how *far* (in value) the nearest available rows are
+allowed to be. On a sparse or value-skewed sample — confirmed live on
+this league's own current data, only 8 winning waiver bids so far this
+season, spanning whatever positions and value tiers happened to clear
+waivers first — `.head(k)` still returns whatever's closest even when
+"closest" is a wildly different tier of player, and hands back a full
+low/median/high panel with the same visual confidence as a tight match.
+Unlike `same_position` (which *does* get surfaced to the user the moment
+the search broadens across positions), there was no equivalent signal for
+"these are the nearest we've got, but not actually close" — the UI shows
+only each comparable's bid amount, never its own `adj_value`, so a human
+reading the guidance can't even sanity-check match quality by eye. This
+is the same shape as this file's "silent data-degradation must surface as
+a warning" rule, one layer down: the degradation here isn't an empty/join
+failure, it's a well-formed computation that's quietly a bad match.
+
+**The rule**: a "nearest K" or "nearest within reason" search needs two
+independent floors, not one — how many comparables exist, *and* how close
+the nearest ones actually are. A count floor alone (guarding against too
+few) says nothing about quality (guarding against too far), and the two
+failure modes need separate signals: refuse to show guidance (or mark it
+explicitly low-confidence) when even the nearest rows exceed a distance
+bound, the same way a count below the floor already refuses to show
+anything. Whenever a "comparable"/"similar"/"nearest" search is the basis
+for a number a human might act on, surface enough of the underlying match
+(here: each comparable's own value, not just its bid) that the human can
+judge closeness themselves rather than trusting a black-box "similar
+enough" verdict.

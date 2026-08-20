@@ -183,7 +183,7 @@ def print_report(state: dict[str, Any]) -> None:
         f"suggested drop. Remaining FAAB: {state['user_faab_remaining']}. No bid-sizing - "
         "budget shown for context only."
     )
-    print(render_df(state["free_agent_board"], "(no free agents available)"))
+    print(render_df(state["free_agent_board"].drop(columns="player_id", errors="ignore"), "(no free agents available)"))
 
     print(
         "\n--- Bye week impact (weeks with an active-roster player out; "
