@@ -514,9 +514,40 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   rather than requiring it be picked first. Out of scope for v1: pick
   targets (no comparable marginal-lineup signal to rank leaguewide
   candidates by — still fully usable in the manual evaluator above),
-  multi-asset targets, 3-way trades, and improving an offer someone else
-  proposed *to* us (tracked in `.claude/PROJECT_PLAN.md`). Lives in the
-  Trade Evaluator tab below the manual evaluator.
+  multi-asset targets, and 3-way trades. Lives in the Trade Evaluator tab
+  below the manual evaluator.
+- **Improve an incoming offer** (`improve_incoming_offer()` — `RT-14`) —
+  a distinct question from the two above: a partner has *already* proposed
+  a specific, fully-specified trade (both sides, potentially multiple
+  assets each — players, current- or future-season picks, any mix) *to*
+  the user, via the manual evaluator's own selectors. Not another
+  from-scratch `find_trade_offers()`-style search — the ask is "tweak this
+  real proposal," not "ignore it and search my whole pool again." Instead,
+  generates single-move neighbors of the actual proposal — drop an asset,
+  swap one for a candidate from that side's owner's own asset pool, or add
+  a pool candidate — independently on each side (your own sellable
+  players/picks for what you'd give, the partner's for what you'd
+  receive). Both `find_trade_offers()` and this function draw their
+  candidate pool from the same extracted `_asset_pool()` helper (sellable
+  players + every owned pick, merged and value-sorted) rather than each
+  reimplementing the merge.
+
+  A variant survives only if it clears the same two gates already
+  established elsewhere: the partner's `asset_value_delta` within
+  `TRADE_OFFER_PARTNER_TOLERANCE_PCT`/`TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE`
+  of zero (anchored to the baseline proposal's own incoming value, mirroring
+  `find_trade_offers()`'s tolerance formula), and a lineup-value bar
+  (`your_side["lineup_delta_after_drops"] > 0`) reused verbatim from
+  `suggested_trades()`'s own "worth surfacing at all" rule
+  (`valuation_principles.md`) rather than a second bar for "is this
+  actually good." Returns a three-way verdict, not just a list:
+  `"accept"` (the baseline is already worth taking, any variant that's
+  *also* good and strictly better is optional upside), `"counter"` (the
+  baseline isn't good, but at least one variant is — ranked by
+  `your_side["asset_value_delta"]`, capped to `top_n`), or `"reject"`
+  (nothing clears the bar — say so plainly rather than an unexplained
+  empty list). Reuses the manual evaluator's own selected assets directly
+  via a "Suggest an improvement" button — no separate UI selectors.
 - **Bye-week impact** and **weekly gaps** — the former
   (`roster_bye_conflicts`) shows every week with an active-roster player on
   bye: who's out, who fills in, and the resulting delta to optimal
@@ -658,5 +689,5 @@ is a deliberate decision, not a silent bug:
 | `WIN_PCT_SHRINKAGE_K = 4` (games worth of shrinkage weight toward `0.5`) | `dynasty_core/power_timeline.py` | A judgment call for how fast `win_pct_shrunk` (the power/timeline read's z-scoring input, not the displayed `win_pct`) should trust a real record over the neutral prior — not derived from any league setting or statistical fit | Adjust by feel if early-season `power_score` still looks too swingy or too damped |
 | `max_keepers: 1` in the league's Sleeper settings | Not modeled anywhere | Appears vestigial for a dynasty-type league (Sleeper `type: 2`) — the whole roster carries over every year, not a limited keeper count, so this setting doesn't seem to apply | Revisit only if Sleeper's dynasty/keeper interaction is ever observed to actually matter |
 | `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`, `dynasty_core/picks.py`) | The only place in this codebase that treats `roster_id` as a range rather than an opaque key (needed to synthesize future pick ownership with no real draft object). Confirmed true today; a non-contiguous ID (e.g. a departed team) would silently synthesize a phantom pick | Iterate the real `rosters` list instead of a synthesized range |
-| `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers` (`dynasty_core/trade.py`) | Judgment calls bounding a single-target offer search's combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |
+| `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers`/`_asset_pool`/`improve_incoming_offer` (`dynasty_core/trade.py`) | Judgment calls bounding an offer search's candidate pool/combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size. Shared by both `find_trade_offers()`'s combo search and `improve_incoming_offer()`'s neighbor search via the common `_asset_pool()`/tolerance formula, not two separate constants | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |
 | `SUGGESTED_TRADE_SCAN_TOP_K = 15` | `leaguewide_trade_candidates`/`suggested_trades` (`dynasty_core/trade.py`) | How many of Stage 1's cheap, affordability-filtered leaguewide candidates get Stage 2's expensive real search — bounds Suggested Trades' scan cost to a constant regardless of league size, sized to the same order of magnitude as the original single-partner whole-roster scan concept | Raise if 15 candidates routinely produce fewer than 3 viable offers in practice; lower if a scan feels slow |

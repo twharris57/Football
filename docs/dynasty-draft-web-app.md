@@ -123,7 +123,26 @@ every refresh inside `gather_state()`) as a plain candidate count, plus a
 and renders up to 3 results the same expander style, each one naming its
 owning team since there's no longer a single implied partner. Results
 persist across reruns via `st.session_state["suggested_trades_results"]`
-rather than needing a re-click on every unrelated page interaction.
+rather than needing a re-click on every unrelated page interaction —
+tagged with `state["version"]` and dropped on a mismatch
+(`docs/data-model.md`'s "versioned on-demand-result pattern") so a stale
+scan can't outlive a real refresh.
+
+A third section, "Suggest an improvement" (`RT-14`), sits directly below
+the manual evaluator's own two-sided result — a partner has *already*
+proposed the exact trade currently selected in those four multiselects;
+clicking the button runs `dynasty_core.improve_incoming_offer()` against
+it and shows one of three outcomes: `st.success` if it's already worth
+taking, `st.info` plus a ranked, expander-per-variant list of nearby
+adjustments if a tweak would make it worth taking, or `st.error`
+recommending decline if nothing does. Reuses the selected assets directly,
+no separate selectors. Its own cached result
+(`st.session_state["improve_offer_result"]`) is tagged with a signature of
+everything it was computed from (both teams, all four asset lists,
+`state["version"]`) and silently dropped the moment the selection
+changes — the same pattern as Suggested Trades' results above, just
+without the explanatory `st.info` on invalidation, since here the trigger
+is the user's own edit to the selection rather than a background refresh.
 
 ### Player projection lookup
 

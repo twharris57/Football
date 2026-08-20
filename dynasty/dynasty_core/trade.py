@@ -352,6 +352,50 @@ def evaluate_trade(
     }
 
 
+def _asset_pool(
+    roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    replacement_level: dict[str, float],
+    league: dict,
+    byes: dict[str, int],
+    pick_value_table: pd.DataFrame,
+    value_cap: float | None = None,
+) -> list[dict[str, Any]]:
+    """One roster's sellable players plus every pick it owns (current- and
+    future-season alike, since `pick_value_table` already carries both
+    formats), as a single value-sorted, capped asset pool - each entry
+    `{"kind": "player"/"pick", "id", "label", "value"}`.
+
+    The shared candidate-pool builder `find_trade_offers()`'s combo search
+    and `improve_incoming_offer()`'s neighbor search both draw from, so a
+    heterogeneous mix (players and picks together) is handled uniformly by
+    every consumer rather than each reimplementing its own merge. `value_cap`
+    (if given) drops any asset priced beyond it up front - no combo/variant
+    containing one could ever land in a target-anchored value band.
+    """
+    sellable = sellable_players(roster, players, fc_by_sleeper_id, replacement_level, league, byes)
+    pool = [
+        {
+            "kind": "player",
+            "id": row["player_id"],
+            "label": row["name"],
+            "value": row["adj_value"] if pd.notna(row["adj_value"]) else 0.0,
+        }
+        for _, row in sellable.iterrows()
+    ]
+    owned_picks = pick_value_table[pick_value_table["owner_roster_id"] == roster["roster_id"]]
+    pool += [
+        {"kind": "pick", "id": row["pick"], "label": row["pick"], "value": row["value"]}
+        for _, row in owned_picks.iterrows()
+        if pd.notna(row["value"])
+    ]
+    if value_cap is not None:
+        pool = [c for c in pool if c["value"] <= value_cap]
+    pool.sort(key=lambda c: c["value"], reverse=True)
+    return pool[:TRADE_OFFER_POOL_CAP]
+
+
 def find_trade_offers(
     your_roster: dict,
     partner_roster: dict,
@@ -440,26 +484,16 @@ def find_trade_offers(
             "combos_evaluated": 0,
         }
 
-    your_sellable = sellable_players(your_roster, players, fc_by_sleeper_id, replacement_level, league, byes)
-    pool = [
-        {
-            "kind": "player",
-            "id": row["player_id"],
-            "label": row["name"],
-            "value": row["adj_value"] if pd.notna(row["adj_value"]) else 0.0,
-        }
-        for _, row in your_sellable.iterrows()
-    ]
-    your_picks = pick_value_table[pick_value_table["owner_roster_id"] == your_roster["roster_id"]]
-    pool += [
-        {"kind": "pick", "id": row["pick"], "label": row["pick"], "value": row["value"]}
-        for _, row in your_picks.iterrows()
-        if pd.notna(row["value"])
-    ]
-    if target_value > 0:
-        pool = [c for c in pool if c["value"] <= TRADE_OFFER_PREFILTER_HIGH * target_value]
-    pool.sort(key=lambda c: c["value"], reverse=True)
-    pool = pool[:TRADE_OFFER_POOL_CAP]
+    pool = _asset_pool(
+        your_roster,
+        players,
+        fc_by_sleeper_id,
+        replacement_level,
+        league,
+        byes,
+        pick_value_table,
+        value_cap=TRADE_OFFER_PREFILTER_HIGH * target_value if target_value > 0 else None,
+    )
 
     partner_needs = need_positions(roster_needs_summary(partner_roster, players))
 
@@ -543,6 +577,222 @@ def find_trade_offers(
         "combos_considered": combos_considered,
         "combos_evaluated": len(prefiltered),
     }
+
+
+def _is_good(your_side: dict[str, Any]) -> bool:
+    """Worth surfacing at all - the same lineup-value bar `suggested_trades()`
+    already established (`.claude/conventions/valuation_principles.md`'s
+    "worth surfacing" filter rule), reused here rather than a second bar for
+    "is this actually a good trade."
+    """
+    return your_side["lineup_delta_after_drops"] > 0
+
+
+def improve_incoming_offer(
+    your_roster: dict,
+    partner_roster: dict,
+    your_outgoing_player_ids: list[str],
+    your_outgoing_pick_names: list[str],
+    incoming_player_ids: list[str],
+    incoming_pick_names: list[str],
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    replacement_level: dict[str, float],
+    pick_value_table: pd.DataFrame,
+    handcuffs: dict[str, str] | None = None,
+    top_n: int = 3,
+) -> dict[str, Any]:
+    """Evaluate a trade a partner has already proposed to us (RT-14) - both
+    sides already fully specified, unlike `find_trade_offers()`'s single
+    target - and either confirm it's worth taking, suggest a nearby
+    adjustment that would make it worth taking, or say plainly that no
+    adjustment found does. Returns `{"verdict": "accept"/"counter"/"reject",
+    "baseline": {...}, "improvements": [...]}`.
+
+    Deliberately not another from-scratch `find_trade_offers()`-style combo
+    search - the ask here is "tweak this specific real proposal," not
+    "ignore it and search my whole pool again." Generates single-move
+    neighbors of the proposed trade (drop an asset, swap one for a pool
+    candidate, add a pool candidate) independently on each side - your own
+    `_asset_pool()` for what you'd give, the partner's for what you'd
+    receive, so a heterogeneous mix (players, current- or future-season
+    picks) on either side is handled uniformly, not as a special case. This
+    stays linear in (assets on a side) x (pool size), not combinatorial, so
+    it doesn't need `find_trade_offers()`'s prefilter/combo-count machinery.
+
+    A variant survives only if it clears both of the same gates already
+    established elsewhere in this module: the partner's own
+    `asset_value_delta` within `TRADE_OFFER_PARTNER_TOLERANCE_PCT`/
+    `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` of zero, and `_is_good()` in
+    absolute terms - not merely "better than an already-bad baseline."
+    The tolerance is anchored on whichever side of the trade stays *fixed*
+    for the variant being evaluated - the proposal's own incoming value for
+    a `"yours"` variant (only your outgoing package changes, mirroring
+    `find_trade_offers()`'s tolerance formula anchored on its fixed
+    target_value), the proposal's own outgoing value for a `"theirs"`
+    variant (the mirror image - your outgoing package stays fixed while
+    what you'd receive varies). Anchoring both on the same value would let
+    a "theirs" swap/add that shrinks a large baseline ask slip through
+    under a stale, too-generous tolerance sized for the original ask, not
+    the real (now smaller) deal the variant actually proposes. Nothing
+    needs to separately forbid a one-sided giveaway (e.g. dropping your
+    only outgoing asset): that fails the partner-tolerance gate on its own.
+
+    Verdict logic:
+    - `"accept"` - the baseline proposal, exactly as offered, already
+      clears `_is_good()`. `improvements` still lists any variant that's
+      *also* good and strictly better than baseline, as optional upside.
+    - `"counter"` - the baseline doesn't clear the bar, but at least one
+      neighbor variant clears both gates. `improvements` is that ranked,
+      `top_n`-capped list (best `your_side["asset_value_delta"]` first,
+      same key `find_trade_offers()` ranks by).
+    - `"reject"` - the baseline doesn't clear the bar and no variant does
+      either. `improvements` is always `[]` in this case.
+
+    `compute_callouts=False` while generating/filtering every variant,
+    recomputed `True` only for the survivors actually returned - identical
+    perf pattern to `find_trade_offers()`'s own combo search.
+    """
+    pick_value_by_name = dict(zip(pick_value_table["pick"], pick_value_table["value"]))
+
+    def _pick_value_sum(pick_names: list[str]) -> float:
+        return sum(float(v) for v in (pick_value_by_name.get(name) for name in pick_names) if pd.notna(v))
+
+    def _player_asset(player_id: str) -> dict[str, Any]:
+        info = players.get(player_id, {})
+        entry = fc_by_sleeper_id.get(player_id)
+        value = entry.get("adj_value") if entry else None
+        return {"kind": "player", "id": player_id, "label": info.get("full_name"), "value": value if pd.notna(value) else 0.0}
+
+    def _pick_asset(pick_name: str) -> dict[str, Any]:
+        value = pick_value_by_name.get(pick_name)
+        return {"kind": "pick", "id": pick_name, "label": pick_name, "value": value if pd.notna(value) else 0.0}
+
+    def _evaluate(
+        out_player_ids: list[str], out_pick_names: list[str], in_player_ids: list[str], in_pick_names: list[str],
+        compute_callouts: bool,
+    ) -> tuple[dict, dict]:
+        out_pick_value = _pick_value_sum(out_pick_names)
+        in_pick_value = _pick_value_sum(in_pick_names)
+        your_side = evaluate_trade(
+            your_roster, out_player_ids, in_player_ids, players, fc_by_sleeper_id, byes, league,
+            outgoing_pick_value=out_pick_value, incoming_pick_value=in_pick_value,
+            handcuffs=handcuffs, outgoing_pick_names=out_pick_names, incoming_pick_names=in_pick_names,
+            pick_value_table=pick_value_table, compute_callouts=compute_callouts,
+        )
+        partner_side = evaluate_trade(
+            partner_roster, in_player_ids, out_player_ids, players, fc_by_sleeper_id, byes, league,
+            outgoing_pick_value=in_pick_value, incoming_pick_value=out_pick_value,
+            handcuffs=handcuffs, outgoing_pick_names=in_pick_names, incoming_pick_names=out_pick_names,
+            pick_value_table=pick_value_table, compute_callouts=compute_callouts,
+        )
+        return your_side, partner_side
+
+    def _neighbor_variants(owner_roster: dict, current_player_ids: list[str], current_pick_names: list[str], exclude_ids: set[str]) -> list[dict]:
+        """Single-move (drop/swap/add) neighbors of one side of the proposed
+        trade, drawing swap/add candidates from `owner_roster`'s own asset
+        pool - your pool for what you'd give, the partner's for what you'd
+        receive. `exclude_ids` keeps a candidate from duplicating an asset
+        already present anywhere in the trade."""
+        pool = _asset_pool(owner_roster, players, fc_by_sleeper_id, replacement_level, league, byes, pick_value_table)
+        candidates = [c for c in pool if c["id"] not in exclude_ids]
+        current_assets = [_player_asset(pid) for pid in current_player_ids] + [_pick_asset(pn) for pn in current_pick_names]
+
+        variants = []
+        for asset in current_assets:
+            remaining_players = [pid for pid in current_player_ids if pid != asset["id"]]
+            remaining_picks = [pn for pn in current_pick_names if pn != asset["id"]]
+            variants.append({"move": "drop", "removed": asset, "added": None, "player_ids": remaining_players, "pick_names": remaining_picks})
+            for candidate in candidates:
+                swapped_players = remaining_players + [candidate["id"]] if candidate["kind"] == "player" else remaining_players
+                swapped_picks = remaining_picks + [candidate["id"]] if candidate["kind"] == "pick" else remaining_picks
+                variants.append({"move": "swap", "removed": asset, "added": candidate, "player_ids": swapped_players, "pick_names": swapped_picks})
+        for candidate in candidates:
+            added_players = list(current_player_ids) + [candidate["id"]] if candidate["kind"] == "player" else list(current_player_ids)
+            added_picks = list(current_pick_names) + [candidate["id"]] if candidate["kind"] == "pick" else list(current_pick_names)
+            variants.append({"move": "add", "removed": None, "added": candidate, "player_ids": added_players, "pick_names": added_picks})
+        return variants
+
+    baseline_your, baseline_partner = _evaluate(
+        your_outgoing_player_ids, your_outgoing_pick_names, incoming_player_ids, incoming_pick_names, compute_callouts=True
+    )
+    baseline = {"your_side": baseline_your, "partner_side": baseline_partner}
+
+    # Tolerance is anchored on whichever side of the trade stays *fixed* for
+    # the variant being evaluated - not one anchor reused for both. A
+    # "yours" variant only changes your outgoing package; what the partner
+    # is set to give you (incoming_value) stays fixed, so that's the deal-
+    # size reference (mirrors find_trade_offers()'s own tolerance, anchored
+    # on its fixed target_value while your combo varies). A "theirs"
+    # variant is the mirror image - your outgoing package stays fixed while
+    # what you'd receive varies, so outgoing_value is the right anchor
+    # there. Using incoming_value for both (a bug found in review) let a
+    # "theirs" swap/add that shrinks a large baseline ask slip through
+    # under a stale, too-generous tolerance sized for the *original* ask,
+    # not the real (now much smaller) deal the variant actually proposes.
+    incoming_value = sum(_player_asset(pid)["value"] for pid in incoming_player_ids) + _pick_value_sum(incoming_pick_names)
+    outgoing_value = sum(_player_asset(pid)["value"] for pid in your_outgoing_player_ids) + _pick_value_sum(your_outgoing_pick_names)
+    tolerance_by_side = {
+        "yours": max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * incoming_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE),
+        "theirs": max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * outgoing_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE),
+    }
+
+    already_in_trade = set(your_outgoing_player_ids) | set(your_outgoing_pick_names) | set(incoming_player_ids) | set(incoming_pick_names)
+    your_variants = _neighbor_variants(your_roster, your_outgoing_player_ids, your_outgoing_pick_names, already_in_trade)
+    their_variants = _neighbor_variants(partner_roster, incoming_player_ids, incoming_pick_names, already_in_trade)
+
+    candidates = [(v, "yours") for v in your_variants] + [(v, "theirs") for v in their_variants]
+
+    survivors = []
+    for variant, side in candidates:
+        if side == "yours":
+            out_players, out_picks = variant["player_ids"], variant["pick_names"]
+            in_players, in_picks = incoming_player_ids, incoming_pick_names
+        else:
+            out_players, out_picks = your_outgoing_player_ids, your_outgoing_pick_names
+            in_players, in_picks = variant["player_ids"], variant["pick_names"]
+
+        your_side, partner_side = _evaluate(out_players, out_picks, in_players, in_picks, compute_callouts=False)
+        if partner_side["asset_value_delta"] < -tolerance_by_side[side]:
+            continue
+        if not _is_good(your_side):
+            continue
+        survivors.append(
+            {
+                "move": variant["move"],
+                "side": side,
+                "removed": variant["removed"],
+                "added": variant["added"],
+                "your_side": your_side,
+                "partner_side": partner_side,
+                "_out_players": out_players,
+                "_out_picks": out_picks,
+                "_in_players": in_players,
+                "_in_picks": in_picks,
+            }
+        )
+
+    survivors.sort(key=lambda s: s["your_side"]["asset_value_delta"], reverse=True)
+    top = survivors[:top_n]
+    for survivor in top:
+        survivor["your_side"], survivor["partner_side"] = _evaluate(
+            survivor["_out_players"], survivor["_out_picks"], survivor["_in_players"], survivor["_in_picks"], compute_callouts=True
+        )
+        del survivor["_out_players"], survivor["_out_picks"], survivor["_in_players"], survivor["_in_picks"]
+
+    if _is_good(baseline_your):
+        verdict = "accept"
+        improvements = [s for s in top if s["your_side"]["asset_value_delta"] > baseline_your["asset_value_delta"]]
+    elif top:
+        verdict = "counter"
+        improvements = top
+    else:
+        verdict = "reject"
+        improvements = []
+
+    return {"verdict": verdict, "baseline": baseline, "improvements": improvements}
 
 
 def _max_affordable_target_value(sellable: pd.DataFrame, pick_value_table: pd.DataFrame, roster_id: int) -> float:

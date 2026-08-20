@@ -465,3 +465,43 @@ for catching it should be highest, precisely where a pipeline stage
 removes a human review step earlier stages relied on — automating "pick
 and present" is what turns a merely-imprecise signal into a wrong action
 recommendation a user might actually act on.
+
+## A fixed-anchor tolerance formula stays correct only while its anchor stays fixed
+
+`find_trade_offers()`'s partner-acceptance gate anchors its tolerance
+(`TRADE_OFFER_PARTNER_TOLERANCE_PCT` of a value, floored by
+`TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE`) to `target_value` — correct there
+because the search only ever varies *your* offering; the target itself
+never changes across the combos being searched, so anchoring the
+percentage term to it is a stable, sensible deal-size reference.
+`improve_incoming_offer()` (RT-14, 2026-08-19 review) reused that exact
+formula, anchored to the baseline proposal's `incoming_value`, for **both**
+directions it searches — but only one of those directions actually holds
+`incoming_value` fixed. Its `"yours"` variants (drop/swap/add on what you'd
+give) do keep the incoming side unchanged, so the anchor is still valid
+there. Its `"theirs"` variants (drop/swap/add on what the *partner* would
+give you) are exactly the case the anchor was never built for: the
+quantity the formula treats as a fixed deal-size reference is the very
+thing being varied by the search, while the actually-fixed side (your own
+outgoing package) goes unused as a reference. A `"theirs, swap"` that
+shrinks the incoming package's real value gets checked against a tolerance
+sized for the old, larger package — a too-loose gate that can pass a
+counter-offer suggestion meaningfully more unfair to the partner than the
+same 15%/$25 bar would allow at the deal's real size. This can't be
+caught by the sibling `_is_good()` gate on the user's own side, because a
+deal that shortchanges the partner is definitionally a *good* deal for the
+user — the tolerance gate is the only thing meant to catch it, so a
+miscalibrated anchor there isn't backstopped by anything else in the
+function.
+
+**The rule**: before reusing an existing fixed-anchor tolerance/fairness
+formula in a new search direction, check which quantity the formula
+actually assumes is fixed — not just that the formula "worked before."
+If the new search varies the very quantity the original anchor was fixed
+on, the anchor needs to switch to whatever *is* fixed in the new
+direction (here: swap in the outgoing-side value when searching the
+incoming side), not get carried over unchanged just because it's "the
+same tolerance formula `find_trade_offers()` already uses." A function
+that searches in more than one direction (varying side A while B is fixed,
+then varying B while A is fixed) generally needs the anchor computed
+per-direction, not once up front.

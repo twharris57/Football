@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 import dynasty_core as dc
+from dynasty_core import trade as trade_module
 from tests.dynasty_core.helpers import EMPTY_PICKS, fc_entry, make_player
 
 
@@ -1113,3 +1114,350 @@ class TestSuggestedTrades:
         )
 
         assert len(results) == 2
+
+
+def _scripted_evaluate_trade(script):
+    """Build a fake evaluate_trade() for TestImproveIncomingOffer, keyed by
+    (roster_id, sorted outgoing players, sorted outgoing picks, sorted
+    incoming players, sorted incoming picks) -> {"lineup_delta_after_drops",
+    "asset_value_delta"}. Isolates improve_incoming_offer()'s own move
+    generation/gating/verdict logic from evaluate_trade()'s real lineup
+    simulation (already covered by TestEvaluateTrade) - hand-deriving exact
+    lineup-value outcomes for every generated neighbor variant would be
+    fragile given how many interacting parts evaluate_trade() has (byes,
+    capacity/drops, positional starter logic).
+
+    Any unscripted key defaults to a neutral (0.0, 0.0) result - "no real
+    effect" - which correctly fails _is_good's strict > 0 bar without
+    needing every generated variant explicitly scripted.
+    """
+
+    def fake(
+        roster,
+        outgoing_player_ids,
+        incoming_player_ids,
+        players,
+        fc_by_sleeper_id,
+        byes,
+        league,
+        outgoing_pick_value=0.0,
+        incoming_pick_value=0.0,
+        handcuffs=None,
+        outgoing_pick_names=None,
+        incoming_pick_names=None,
+        pick_value_table=None,
+        compute_callouts=True,
+    ):
+        key = (
+            roster["roster_id"],
+            tuple(sorted(outgoing_player_ids)),
+            tuple(sorted(outgoing_pick_names or [])),
+            tuple(sorted(incoming_player_ids)),
+            tuple(sorted(incoming_pick_names or [])),
+        )
+        scripted = script.get(key, {})
+        return {
+            "lineup_delta": scripted.get("lineup_delta_after_drops", 0.0),
+            "lineup_delta_after_drops": scripted.get("lineup_delta_after_drops", 0.0),
+            "asset_value_delta": scripted.get("asset_value_delta", 0.0),
+            "over_capacity": False,
+            "roster_size_after": 0,
+            "capacity": 0,
+            "recommended_drops": [],
+            "callouts": [],
+        }
+
+    return fake
+
+
+class TestAssetPool:
+    """_asset_pool() is the candidate-pool builder find_trade_offers()'s combo
+    search and improve_incoming_offer()'s neighbor search both draw from -
+    sellable players plus every pick a roster owns, merged, value-sorted, and
+    capped."""
+
+    def test_merges_sellable_players_and_owned_picks_sorted_by_value(self):
+        league = {"roster_positions": ["WR", "BN"]}
+        roster = {"roster_id": 1, "players": ["starter_wr", "depth_wr"]}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "depth_wr": make_player("WR", full_name="Depth WR"),
+        }
+        players["starter_wr"]["years_exp"] = 5
+        players["depth_wr"]["years_exp"] = 3
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("starter_wr", 500), fc_entry("depth_wr", 100)])
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+        pick_values = pd.DataFrame([{"pick": "2026 Pick 1.05", "owner": "Me", "owner_roster_id": 1, "value": 60.0}])
+
+        pool = trade_module._asset_pool(roster, players, fc_by_id, replacement_level, league, {}, pick_values)
+
+        assert {c["id"] for c in pool} == {"depth_wr", "2026 Pick 1.05"}
+        assert pool[0]["id"] == "depth_wr"  # depth_wr (~100) outranks the pick (60)
+
+    def test_value_cap_excludes_pricier_candidates(self):
+        league = {"roster_positions": ["WR", "BN", "BN"]}
+        roster = {"roster_id": 1, "players": ["starter_wr", "depth_wr", "depth_wr2"]}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "depth_wr": make_player("WR", full_name="Depth WR"),
+            "depth_wr2": make_player("WR", full_name="Depth WR 2"),
+        }
+        for p in players.values():
+            p["years_exp"] = 5
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("depth_wr", 100), fc_entry("depth_wr2", 20)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
+
+        pool = trade_module._asset_pool(
+            roster, players, fc_by_id, replacement_level, league, {}, EMPTY_PICKS, value_cap=50.0
+        )
+
+        assert {c["id"] for c in pool} == {"depth_wr2"}
+
+
+class TestImproveIncomingOffer:
+    """A partner has already proposed a specific trade to us (RT-14) - unlike
+    find_trade_offers()'s from-scratch combo search against a single target,
+    this generates single-move (drop/swap/add) neighbors of the *actual*
+    proposal and returns a three-way verdict (accept/counter/reject) rather
+    than just a list."""
+
+    LEAGUE = {"roster_positions": ["WR", "BN"]}
+
+    def _base_setup(self):
+        your_roster = {"roster_id": 1, "players": ["wr_a", "wr_b"], "taxi": [], "reserve": []}
+        partner_roster = {"roster_id": 2, "players": ["target_wr", "other_wr"], "taxi": [], "reserve": []}
+        players = {
+            "wr_a": make_player("WR", full_name="WR A"),
+            "wr_b": make_player("WR", full_name="WR B"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+            "other_wr": make_player("WR", full_name="Other WR"),
+        }
+        for p in players.values():
+            p["years_exp"] = 5
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr_a", 200), fc_entry("wr_b", 100), fc_entry("target_wr", 150), fc_entry("other_wr", 50)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+        return your_roster, partner_roster, players, fc_by_id, replacement_level
+
+    def test_accept_when_baseline_already_good(self, monkeypatch):
+        your_roster, partner_roster, players, fc_by_id, replacement_level = self._base_setup()
+        script = {
+            (1, ("wr_a",), (), ("target_wr",), ()): {"lineup_delta_after_drops": 50.0, "asset_value_delta": 50.0},
+            (2, ("target_wr",), (), ("wr_a",), ()): {"asset_value_delta": -50.0},
+        }
+        monkeypatch.setattr(trade_module, "evaluate_trade", _scripted_evaluate_trade(script))
+
+        result = dc.improve_incoming_offer(
+            your_roster, partner_roster, ["wr_a"], [], ["target_wr"], [],
+            players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS,
+        )
+
+        assert result["verdict"] == "accept"
+        assert result["baseline"]["your_side"]["lineup_delta_after_drops"] == 50.0
+        assert result["improvements"] == []
+
+    def test_counter_ranks_swap_and_add_variants_and_rejects_a_lopsided_drop(self, monkeypatch):
+        your_roster, partner_roster, players, fc_by_id, replacement_level = self._base_setup()
+        script = {
+            # Baseline: give wr_a for target_wr - bad for you.
+            (1, ("wr_a",), (), ("target_wr",), ()): {"lineup_delta_after_drops": -50.0, "asset_value_delta": -50.0},
+            (2, ("target_wr",), (), ("wr_a",), ()): {"asset_value_delta": 50.0},
+            # Drop: give nothing for target_wr - great for you, but wildly
+            # lopsided against the partner - must be filtered out.
+            (1, (), (), ("target_wr",), ()): {"lineup_delta_after_drops": 150.0, "asset_value_delta": 150.0},
+            (2, ("target_wr",), (), (), ()): {"asset_value_delta": -150.0},
+            # Swap: give wr_b (your sellable depth) instead of wr_a - good
+            # for you, acceptable to the partner.
+            (1, ("wr_b",), (), ("target_wr",), ()): {"lineup_delta_after_drops": 20.0, "asset_value_delta": 20.0},
+            (2, ("target_wr",), (), ("wr_b",), ()): {"asset_value_delta": -20.0},
+            # Add: ask for other_wr (partner's sellable depth) too - smaller
+            # upside than the swap, still acceptable.
+            (1, ("wr_a",), (), ("other_wr", "target_wr"), ()): {"lineup_delta_after_drops": 10.0, "asset_value_delta": 10.0},
+            (2, ("other_wr", "target_wr"), (), ("wr_a",), ()): {"asset_value_delta": -10.0},
+        }
+        monkeypatch.setattr(trade_module, "evaluate_trade", _scripted_evaluate_trade(script))
+
+        result = dc.improve_incoming_offer(
+            your_roster, partner_roster, ["wr_a"], [], ["target_wr"], [],
+            players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS,
+        )
+
+        assert result["verdict"] == "counter"
+        moves = [(imp["move"], imp["side"]) for imp in result["improvements"]]
+        assert ("swap", "yours") in moves
+        assert ("add", "theirs") in moves
+        assert ("drop", "yours") not in moves  # filtered by the partner-tolerance gate
+        # Ranked by your_side asset_value_delta descending: swap (20) before add (10).
+        assert result["improvements"][0]["move"] == "swap"
+        assert result["improvements"][1]["move"] == "add"
+
+    def test_counter_with_a_successful_drop_variant(self, monkeypatch):
+        your_roster = {"roster_id": 1, "players": ["wr_a", "wr_c"], "taxi": [], "reserve": []}
+        partner_roster = {"roster_id": 2, "players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {
+            "wr_a": make_player("WR", full_name="WR A"),
+            "wr_c": make_player("WR", full_name="WR C"),
+            "target_wr": make_player("WR", full_name="Target WR"),
+        }
+        for p in players.values():
+            p["years_exp"] = 5
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("wr_a", 200), fc_entry("wr_c", 30), fc_entry("target_wr", 150)])
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        script = {
+            # Baseline: partner over-asks for both wr_a and wr_c for target_wr.
+            (1, ("wr_a", "wr_c"), (), ("target_wr",), ()): {"lineup_delta_after_drops": -30.0, "asset_value_delta": -30.0},
+            (2, ("target_wr",), (), ("wr_a", "wr_c"), ()): {"asset_value_delta": 80.0},
+            # Dropping wr_c (giving only wr_a) is a fair, good-for-you deal.
+            (1, ("wr_a",), (), ("target_wr",), ()): {"lineup_delta_after_drops": 15.0, "asset_value_delta": 15.0},
+            (2, ("target_wr",), (), ("wr_a",), ()): {"asset_value_delta": -15.0},
+        }
+        monkeypatch.setattr(trade_module, "evaluate_trade", _scripted_evaluate_trade(script))
+
+        result = dc.improve_incoming_offer(
+            your_roster, partner_roster, ["wr_a", "wr_c"], [], ["target_wr"], [],
+            players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS,
+        )
+
+        assert result["verdict"] == "counter"
+        assert any(imp["move"] == "drop" and imp["removed"]["id"] == "wr_c" for imp in result["improvements"])
+
+    def test_reject_when_nothing_clears_the_bar(self, monkeypatch):
+        your_roster, partner_roster, players, fc_by_id, replacement_level = self._base_setup()
+        script = {
+            (1, ("wr_a",), (), ("target_wr",), ()): {"lineup_delta_after_drops": -50.0, "asset_value_delta": -50.0},
+            (2, ("target_wr",), (), ("wr_a",), ()): {"asset_value_delta": 50.0},
+            # No variant is scripted good - everything else defaults to a
+            # neutral (0.0, 0.0), which fails _is_good's strict > 0 bar.
+        }
+        monkeypatch.setattr(trade_module, "evaluate_trade", _scripted_evaluate_trade(script))
+
+        result = dc.improve_incoming_offer(
+            your_roster, partner_roster, ["wr_a"], [], ["target_wr"], [],
+            players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS,
+        )
+
+        assert result["verdict"] == "reject"
+        assert result["improvements"] == []
+
+    def test_variant_better_than_baseline_but_still_not_good_is_excluded(self, monkeypatch):
+        your_roster, partner_roster, players, fc_by_id, replacement_level = self._base_setup()
+        script = {
+            (1, ("wr_a",), (), ("target_wr",), ()): {"lineup_delta_after_drops": -50.0, "asset_value_delta": -50.0},
+            (2, ("target_wr",), (), ("wr_a",), ()): {"asset_value_delta": 50.0},
+            # Swap: less bad than baseline (asset value improves -50 -> -5)
+            # but still not a genuinely good trade (lineup impact <= 0) -
+            # must not be surfaced as an "improvement."
+            (1, ("wr_b",), (), ("target_wr",), ()): {"lineup_delta_after_drops": 0.0, "asset_value_delta": -5.0},
+            (2, ("target_wr",), (), ("wr_b",), ()): {"asset_value_delta": 5.0},
+        }
+        monkeypatch.setattr(trade_module, "evaluate_trade", _scripted_evaluate_trade(script))
+
+        result = dc.improve_incoming_offer(
+            your_roster, partner_roster, ["wr_a"], [], ["target_wr"], [],
+            players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS,
+        )
+
+        assert result["verdict"] == "reject"
+        assert result["improvements"] == []
+
+    def test_top_n_caps_the_improvements_list(self, monkeypatch):
+        your_roster = {"roster_id": 1, "players": ["wr_a", "wr_b", "wr_c", "wr_d"], "taxi": [], "reserve": []}
+        partner_roster = {"roster_id": 2, "players": ["target_wr"], "taxi": [], "reserve": []}
+        players = {pid: make_player("WR", full_name=pid) for pid in ["wr_a", "wr_b", "wr_c", "wr_d", "target_wr"]}
+        for p in players.values():
+            p["years_exp"] = 5
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr_a", 300), fc_entry("wr_b", 90), fc_entry("wr_c", 80), fc_entry("wr_d", 70), fc_entry("target_wr", 150)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        script = {
+            (1, ("wr_a",), (), ("target_wr",), ()): {"lineup_delta_after_drops": -50.0, "asset_value_delta": -50.0},
+            (2, ("target_wr",), (), ("wr_a",), ()): {"asset_value_delta": 50.0},
+        }
+        # Partner delta held comfortably within tolerance for all three -
+        # only your_side's own value should determine the ranking/cap here.
+        for pid, lineup in [("wr_b", 30.0), ("wr_c", 20.0), ("wr_d", 10.0)]:
+            script[(1, (pid,), (), ("target_wr",), ())] = {"lineup_delta_after_drops": lineup, "asset_value_delta": lineup}
+            script[(2, ("target_wr",), (), (pid,), ())] = {"asset_value_delta": -5.0}
+        monkeypatch.setattr(trade_module, "evaluate_trade", _scripted_evaluate_trade(script))
+
+        result = dc.improve_incoming_offer(
+            your_roster, partner_roster, ["wr_a"], [], ["target_wr"], [],
+            players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS, top_n=2,
+        )
+
+        assert result["verdict"] == "counter"
+        assert len(result["improvements"]) == 2
+        assert [imp["your_side"]["asset_value_delta"] for imp in result["improvements"]] == [30.0, 20.0]
+
+    def test_heterogeneous_trade_with_a_pick_is_handled(self, monkeypatch):
+        your_roster, partner_roster, players, fc_by_id, replacement_level = self._base_setup()
+        pick_values = pd.DataFrame([{"pick": "2026 Pick 1.05", "owner": "Partner", "owner_roster_id": 2, "value": 60.0}])
+        script = {
+            # Baseline: give wr_a for a pick alone - bad.
+            (1, ("wr_a",), (), (), ("2026 Pick 1.05",)): {"lineup_delta_after_drops": -80.0, "asset_value_delta": -80.0},
+            (2, (), ("2026 Pick 1.05",), ("wr_a",), ()): {"asset_value_delta": 80.0},
+            # Add: also ask for other_wr (partner's sellable depth)
+            # alongside the pick - good, and still acceptable.
+            (1, ("wr_a",), (), ("other_wr",), ("2026 Pick 1.05",)): {"lineup_delta_after_drops": 25.0, "asset_value_delta": 25.0},
+            (2, ("other_wr",), ("2026 Pick 1.05",), ("wr_a",), ()): {"asset_value_delta": -25.0},
+        }
+        monkeypatch.setattr(trade_module, "evaluate_trade", _scripted_evaluate_trade(script))
+
+        result = dc.improve_incoming_offer(
+            your_roster, partner_roster, ["wr_a"], [], [], ["2026 Pick 1.05"],
+            players, fc_by_id, {}, self.LEAGUE, replacement_level, pick_values,
+        )
+
+        assert result["verdict"] == "counter"
+        assert any(imp["move"] == "add" and imp["added"]["kind"] == "player" for imp in result["improvements"])
+
+    def test_theirs_side_tolerance_is_anchored_on_outgoing_value_not_the_stale_incoming_ask(self, monkeypatch):
+        # Regression test for a tolerance-anchor bug found in review: a
+        # "theirs" variant (what you'd receive changes) must be judged
+        # against your *fixed* outgoing value, not the baseline's original
+        # (much larger) incoming ask - otherwise a shrunk incoming side
+        # gets an unrealistically generous tolerance sized for the ask it
+        # replaced. incoming_value=300 puts the percentage term (0.15*300=45)
+        # above the $25 floor, so the two anchors genuinely disagree here.
+        your_roster = {"roster_id": 1, "players": ["wr_a"], "taxi": [], "reserve": []}
+        partner_roster = {"roster_id": 2, "players": ["big_target", "cheap_swap"], "taxi": [], "reserve": []}
+        players = {
+            "wr_a": make_player("WR", full_name="WR A"),
+            "big_target": make_player("WR", full_name="Big Target"),
+            "cheap_swap": make_player("WR", full_name="Cheap Swap"),
+        }
+        for p in players.values():
+            p["years_exp"] = 5
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr_a", 100), fc_entry("big_target", 300), fc_entry("cheap_swap", 130)]
+        )
+        replacement_level = {"QB": 0.0, "RB": 0.0, "WR": 0.0, "TE": 0.0}
+
+        script = {
+            # Baseline: give wr_a (100) for big_target (300) - bad for you,
+            # generous to the partner.
+            (1, ("wr_a",), (), ("big_target",), ()): {"lineup_delta_after_drops": -10.0, "asset_value_delta": -10.0},
+            (2, ("big_target",), (), ("wr_a",), ()): {"asset_value_delta": 200.0},
+            # "theirs" swap: ask for cheap_swap (130) instead of big_target.
+            # Real deal is now wr_a (100) for cheap_swap (130) - correctly
+            # anchored tolerance is max(0.15*100, 25)=25; the partner's
+            # delta here (100-130=-30) must fail that, not the stale
+            # max(0.15*300,25)=45 anchor a pre-fix version would have used.
+            (1, ("wr_a",), (), ("cheap_swap",), ()): {"lineup_delta_after_drops": 5.0, "asset_value_delta": 5.0},
+            (2, ("cheap_swap",), (), ("wr_a",), ()): {"asset_value_delta": -30.0},
+        }
+        monkeypatch.setattr(trade_module, "evaluate_trade", _scripted_evaluate_trade(script))
+
+        result = dc.improve_incoming_offer(
+            your_roster, partner_roster, ["wr_a"], [], ["big_target"], [],
+            players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS,
+        )
+
+        assert result["verdict"] == "reject"
+        assert result["improvements"] == []
