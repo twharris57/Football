@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-24`, `VA-6`, `CQ-7`, `DL-9`.
+below): `NB-2`, `RT-27`, `VA-6`, `CQ-8`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -49,6 +49,8 @@ active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
 **Nice to have (no deadline, worth doing when there's room):**
+- [ ] `RT-27` — Lineup tab mode switch: value-based vs. this-week-projected
+  starters. Flagged as the likely next feature to build (user, 2026-08-19).
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
@@ -67,59 +69,7 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-**Branch:** `feature/rt14-counter-offer-improvement` (PR #41, "RT-14:
-evaluate and improve a trade offer someone proposed to us") — reviewed
-2026-08-19.
-
-- [ ] **`improve_incoming_offer()`'s partner-tolerance gate uses a stale
-  anchor for "theirs"-side variants, letting through some counter-offers
-  meaningfully more unfair to the partner than the app's own established
-  fairness bar.** `trade.py`'s `tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT
-  * incoming_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)` is computed once,
-  from the *baseline proposal's* `incoming_value` (the value of what the
-  partner originally offered), and reused unchanged for every generated
-  variant on *both* sides. That's correct for `"yours"` variants (only your
-  outgoing package changes; what the partner gives — `incoming_value` — really
-  does stay fixed, exactly mirroring `find_trade_offers()`'s own formula,
-  where `target_value` is fixed and only your combo varies). It's wrong for
-  `"theirs"` variants: there, the swap/add move changes what the partner
-  would give you, so `incoming_value` is no longer the deal's fixed
-  reference — your own (unchanged) outgoing value is. Concrete failure case:
-  partner offers a 500-value target for your fixed 200-value outgoing
-  package (baseline `incoming_value = 500`, so `tolerance = max(0.15*500, 25)
-  = 75`). A `"theirs, swap"` neighbor replaces that target with a cheaper
-  250-value asset from the partner's own sellable pool. The real deal size
-  is now ~200–250, so a properly-calibrated tolerance would be ~`max(0.15*250,
-  25) = 37.5`, and the swap's real partner-side shortfall (`200 - 250 =
-  -50`) should fail that. But the code still uses the stale `75` anchor, so
-  `-50 > -75` passes, and the variant gets surfaced as a legitimate
-  `"counter"` suggestion — one the app's own convention would reject at a
-  smaller deal size. This isn't self-correcting via `_is_good()`: a variant
-  that shortchanges the partner is, by construction, a *good* deal for the
-  user (that's exactly the case the tolerance gate exists to catch), so
-  `_is_good(your_side)` passes easily and the tolerance gate is the only
-  thing standing between a fair suggestion and an unrealistic one. None of
-  the 7 new tests happen to combine a baseline `incoming_value` large enough
-  for the percentage term to dominate (`> ~167`) with a "theirs" swap/add
-  that shrinks value — the one test that does exercise `"theirs, add"`
-  (`test_counter_ranks_swap_and_add_variants_and_rejects_a_lopsided_drop`)
-  uses values low enough that the anchor mismatch doesn't move the outcome.
-  **Fix:** anchor tolerance on whichever side of the trade stays fixed for
-  the variant being evaluated — `incoming_value` (as today) for `"yours"`
-  variants, but the *outgoing* package's value (`your_outgoing_player_ids`/
-  `your_outgoing_pick_names`, summed the same way `incoming_value` already
-  is) for `"theirs"` variants — rather than one hardcoded anchor used for
-  both. Add a test with a baseline `incoming_value` above the ~167
-  percentage/floor crossover point and a `"theirs"` swap/add that shrinks
-  the incoming side, to lock in the corrected behavior.
-
-  **Fixed 2026-08-19**: `tolerance_by_side` now computes both anchors
-  (`incoming_value` for `"yours"`, `outgoing_value` for `"theirs"`) and the
-  filtering loop looks up the one matching each variant's `side`, instead
-  of one `tolerance` reused for both. Added
-  `test_theirs_side_tolerance_is_anchored_on_outgoing_value_not_the_stale_incoming_ask`
-  — confirmed it fails against the pre-fix code (`counter` when it should
-  be `reject`) and passes against the fix. 214 tests pass.
+Empty right now — nothing pending review.
 
 ## Now — blocking
 
@@ -160,6 +110,50 @@ Deliberately out of v1, not forgotten:
   decision (extend the exclusion, or leave it and rely on the human)
   rather than an unexamined inconsistency between the two features.
 
+- [ ] **RT-27: Lineup tab mode switch — value-based vs. this-week-projected
+  starters** (user-flagged 2026-08-19, prompted by noticing Sleeper's own
+  "optimize lineup" — which uses Sleeper's weekly point projections —
+  sometimes picks a different starter set than this tool's `adj_value`-
+  ranked lineup). `assign_starters()`/`lineup_breakdown()`
+  (`dynasty_core/lineup.py`) rank by FantasyCalc dynasty trade value, a
+  long-run asset signal, not a this-week signal — correct for trade/drop/
+  draft-plan decisions (stays untouched, per `valuation_principles.md`'s
+  "one valuation strategy" rule), but a different question than "who wins
+  me the most points this week." Full design already scoped (see below);
+  next session can implement directly rather than re-planning:
+  - Sleeper has no documented projections API — the only per-player weekly
+    projection data is an unofficial, reverse-engineered endpoint
+    (`api.sleeper.app/projections/nfl/{season}/{week}`-shaped; exact path
+    and stat-key vocabulary need confirming against a live call). User
+    confirmed this dependency risk is acceptable, gated on graceful
+    degradation (try/except → `data_warnings`, same pattern as byes/
+    handcuffs in `gather_state()`) rather than crashing the app if it
+    breaks.
+  - Scope is **current week only** (`league["settings"]["leg"]`, same
+    signal `roster_tab.py`'s bye-impact view already uses) — no week
+    selector.
+  - UI: a mode switch inside the existing Lineup tab (not a new tab) —
+    "By value (dynasty)" (unchanged) vs. "This week's projected lineup
+    (Week N)" (new). Reuse `assign_starters()` unchanged — it only needs
+    `{player_id, pos, adj_value}` rows, so the new mode just builds those
+    rows from projected weekly points (a straight dot product of Sleeper's
+    projected stat categories against `league["scoring_settings"]` — not
+    `player_scoring._stat_points`, which translates `nfl_data_py`'s
+    differently-named historical columns; both sides here already speak
+    Sleeper's own stat-key vocabulary once the key-shape assumption above
+    is confirmed) and feeds them into the same slot-assignment primitive.
+  - New pieces: `sleeper_api.get_weekly_projections(season, week)` (short-
+    TTL disk cache, same pattern as `get_players()`); `lineup.py`'s
+    `_weekly_projected_points()`/`weekly_projected_value_rows()`/
+    `weekly_lineup_breakdown()` (mirrors `player_value_rows()`/
+    `lineup_breakdown()`); threaded through `gather_state()` →
+    `team_roster_analysis()` as `weekly_lineup_*` keys alongside the
+    existing `lineup_*` ones; `streamlit_app.py`'s `_render_lineup_tab()`
+    gets the mode switch.
+  - Full plan with file:line references written to
+    `C:\Users\th007\.claude\plans\cryptic-enchanting-thompson.md` during
+    scoping (assistant's local plan-file path, not part of this repo —
+    treat this entry as the durable record, that file as scratch).
 - [ ] **RT-16: Need-match tiebreaker in `find_trade_offers()` reuses
   `roster_needs_summary`'s rebuild-timeline "need" flag on the *partner's*
   roster, which may not mean what it implies for a partner not running the
@@ -323,18 +317,34 @@ Deliberately out of v1, not forgotten:
   Revisit ahead of next year's rookie draft, with time to verify the
   unconfirmed assumptions above against a real draft in progress before
   committing to a design — not urgent mid-draft the way `RT-20` was.
-- [ ] **RT-10: FAAB bid-threshold modeling** (deferred from the free-agent
-  evaluator v1 above, 2026-08-02) — `free_agent_board()` shows remaining
-  FAAB (`league["settings"]["waiver_budget"] - roster["settings"].
-  waiver_budget_used`, both already pulled, no new fetch) purely as
-  context; there's no bid-amount input anywhere in this app for a
-  threshold to apply to yet. A reasonable v1 of this specific piece:
-  flag when a recommended pickup wouldn't crack the starting lineup *and*
-  the user is about to spend a large share of remaining budget on it —
-  once there's a real bid-amount input to check that against — rather
-  than the full opportunity-cost modeling ("spend now vs. save for a
-  bigger add later") that's a genuine optimal-stopping problem with no
-  clean closed-form answer.
+- [ ] **RT-25: Extend FAAB bid guidance to prior seasons via
+  `previous_league_id`** (deliberately deferred from `RT-10`, 2026-08-20)
+  — a real `previous_league_id` chain exists for this league and could
+  substantially grow the comparable-bid sample beyond the current
+  season's (still-thin, early-season) data. Two real complications
+  user-flagged when this is picked up, not present in the current-season-
+  only v1: **(1) league membership churn** — a `roster_id`/owner from a
+  prior season may no longer be in the league (or a current owner may not
+  have been), so pulling in their historical bids without accounting for
+  that risks calibrating guidance partly on bidding behavior from people
+  who aren't part of this negotiation anymore, or missing a real member's
+  history if they joined more recently; needs the real owner/roster
+  mapping checked per season, not assumed stable. **(2) recency bias** —
+  older bids should count for less than recent ones (both because FAAB
+  budgets/behavior can drift year to year, and because `won_bid_sample`
+  already uses *current* `adj_value` as a proxy for a player's value at
+  bid time — see `docs/rookie-draft-big-board.md`'s "Static assumptions"
+  table — a proxy that gets progressively less accurate the further back
+  a comparable bid is from).
+  A weighted-by-recency sample (or a hard recency window) is likely
+  needed, not a flat pool across all available seasons.
+- [ ] **RT-26: Draft Board — a year selector, defaulting to the current
+  year** (user-flagged 2026-08-20, future years) — once more than one
+  rookie draft's worth of history exists, add a dropdown to the Draft
+  Board tab (defaulting to the current/most-recent year) that lets the
+  user look back at a prior year's board instead of only ever showing the
+  latest. Not urgent yet (only one draft has happened so far) — revisit
+  once a second season's draft data exists to actually browse back to.
 
 ## Valuation & data accuracy
 

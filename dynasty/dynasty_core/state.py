@@ -163,6 +163,22 @@ def gather_state(
             "Handcuff data unavailable this refresh - handcuff flags will show none, which does "
             "not mean there are none."
         )
+    try:
+        # RT-10: real FAAB bid history (dynasty_core/waiver_bids.py's
+        # calibration source). Passed through raw, not pre-computed into
+        # guidance here - a UI only needs bid_guidance() for whichever one
+        # free-agent candidate it's currently showing, not all ~25 board
+        # rows every refresh.
+        transactions = sleeper.get_transactions(
+            league_id, league["season"], league["settings"].get("leg", 1), force_refresh=force_full_refresh
+        )
+    except Exception:
+        logger.warning("Failed to fetch transaction history; skipping FAAB bid guidance", exc_info=True)
+        transactions = []
+        data_warnings.append(
+            "Waiver transaction history unavailable this refresh - FAAB bid guidance will show no "
+            "comparable bids, which does not mean there aren't any."
+        )
 
     user_roster_id = resolve_user_roster_id(users, rosters, username)
     team_names = team_name_by_roster_id(rosters, users)
@@ -346,6 +362,11 @@ def gather_state(
         "fc_by_sleeper_id": fc_by_sleeper_id,
         "byes": byes,
         "handcuffs": handcuffs,
+        # Raw waiver transaction history (RT-10) - a UI computes
+        # dynasty_core.bid_guidance() from this on demand, for whichever
+        # free-agent candidate is currently selected, not precomputed here
+        # for the whole board every refresh.
+        "transactions": transactions,
         # League-wide, computed once per refresh regardless of which team's
         # roster is being viewed (see position_replacement_levels) - exposed
         # so the Roster tab's team selector can pass it into an

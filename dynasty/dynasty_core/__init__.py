@@ -130,11 +130,20 @@ from .trade import (
     sellable_players,
     suggested_trades,
 )
+from .waiver_bids import (
+    COMPARABLE_NEAREST_K,
+    MIN_COMPARABLE_SAMPLE,
+    MIN_SAME_POSITION,
+    bid_guidance,
+    nearest_comparable_bids,
+    won_bid_sample,
+)
 
 __all__ = [
     "AMBIGUOUS",
     "BYES_CACHE_TTL_SECONDS",
     "CACHE_DIR",
+    "COMPARABLE_NEAREST_K",
     "DEFAULT_LEAGUE_ID",
     "DEFAULT_LOW_VALUE_AGING_AGE",
     "DEFAULT_USERNAME",
@@ -146,6 +155,8 @@ __all__ = [
     "LOW_VALUE_AGING_AGE",
     "LOW_VALUE_YOUNG_AGE",
     "MAX_DISPLAYED_ALTERNATES",
+    "MIN_COMPARABLE_SAMPLE",
+    "MIN_SAME_POSITION",
     "NFL_WEEKS",
     "PHASE_THRESHOLDS",
     "POSITION_VALUE_MULTIPLIER",
@@ -171,6 +182,7 @@ __all__ = [
     "alternate_gap_note",
     "assign_starters",
     "best_position_relevant_drop",
+    "bid_guidance",
     "build_attention_digest",
     "build_big_board",
     "build_pickup_alerts",
@@ -194,6 +206,7 @@ __all__ = [
     "leaguewide_trade_candidates",
     "lineup_breakdown",
     "multi_round_plan",
+    "nearest_comparable_bids",
     "need_positions",
     "own_draft_picks",
     "pick_trade_values",
@@ -226,4 +239,5 @@ __all__ = [
     "team_name_by_roster_id",
     "team_power_timeline_scores",
     "team_roster_analysis",
+    "won_bid_sample",
 ]

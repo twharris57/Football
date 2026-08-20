@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dynasty_core
+import pandas as pd
 import streamlit as st
 
 from .components import cols, show_df, show_status_table, team_selectbox
@@ -172,19 +173,20 @@ def _render_free_agents(state: dict, analysis: dict, selected_roster_id: int) ->
             "verified here, so an add is only ever suggested for an open active roster slot "
             "or via a drop, never assumed to fit an open taxi slot the way a rookie safely "
             "can.\n"
-            "- **No bid-sizing** — remaining FAAB is shown for context only; this doesn't "
-            "recommend how much to bid."
+            "- **FAAB bid guidance** — pick a candidate below to see real comparable bid "
+            "history and check a planned bid against it."
         )
     selected_roster_settings = state["rosters_by_id"][selected_roster_id].get("settings") or {}
     faab_remaining = state["league"]["settings"].get("waiver_budget", 0) - selected_roster_settings.get(
         "waiver_budget_used", 0
     )
     st.caption(f"Remaining FAAB: {faab_remaining}")
+    board = analysis["free_agent_board"]
     show_df(
-        analysis["free_agent_board"],
+        board.drop(columns="player_id", errors="ignore"),
         "(no free agents available)",
         column_config=cols(
-            analysis["free_agent_board"],
+            board,
             ("name", "Player"),
             ("pos", "Position"),
             ("team", "NFL Team"),
@@ -193,6 +195,73 @@ def _render_free_agents(state: dict, analysis: dict, selected_roster_id: int) ->
             ("drop_is_starter", "Drop Is Starter"),
         ),
     )
+    _render_faab_bid_guidance(state, board)
+
+
+def _render_faab_bid_guidance(state: dict, board: pd.DataFrame) -> None:
+    """RT-10: real comparable FAAB bids for one selected free-agent candidate,
+    computed on demand rather than for every board row every refresh - most
+    rows are never looked at this closely."""
+    if board.empty or "player_id" not in board.columns:
+        return
+
+    st.markdown("**FAAB bid guidance**")
+    with st.expander("How this works"):
+        st.caption(
+            "Real winning FAAB bids from this league's own Sleeper transaction history, "
+            "not an invented formula - the nearest, by current market value, to the "
+            "selected candidate (same position preferred, broadened to every position "
+            "only when there aren't enough same-position comparables yet). Shown as the "
+            "real numbers directly, plus a low/median/high computed from that exact list "
+            "- never a separately-modeled number. \"Not enough comparable bid history "
+            "yet\" means too few real winning bids exist this season to say anything "
+            "useful, not a hidden zero. Current season only, and each historical bid is "
+            "compared against the player's *current* market value, not their value at "
+            "the time of that bid - a reasonable proxy for the short in-season windows "
+            "this covers, less so further back (why this doesn't yet reach into prior "
+            "seasons' history)."
+        )
+
+    label_by_id = {row["player_id"]: f"{row['name']} ({row['pos']}, {row['team']})" for _, row in board.iterrows()}
+    chosen_id = st.selectbox(
+        "Check a candidate",
+        list(label_by_id),
+        format_func=lambda pid: label_by_id[pid],
+        key="faab_guidance_candidate",
+    )
+    candidate_row = board[board["player_id"] == chosen_id].iloc[0]
+    fc_entry = state["fc_by_sleeper_id"].get(chosen_id)
+    adj_value = fc_entry.get("adj_value") if fc_entry else None
+    position = state["players"].get(chosen_id, {}).get("position")
+
+    if adj_value is None or pd.isna(adj_value) or position is None:
+        st.info("No resolvable market value for this player yet — can't find comparable bids.")
+        return
+
+    sample = dynasty_core.won_bid_sample(state["transactions"], state["players"], state["fc_by_sleeper_id"])
+    guidance = dynasty_core.bid_guidance(adj_value, position, sample)
+    if guidance is None:
+        st.info("Not enough comparable bid history yet this season.")
+        return
+
+    if not guidance["same_position"]:
+        st.caption(f"No same-position ({position}) comparable bids yet — showing the closest bids across all positions.")
+    bids_str = ", ".join(f"${bid:.0f}" for bid in guidance["comparable_bids"])
+    st.write(f"Recent winning FAAB bids for similarly-valued players: {bids_str}")
+    low_col, median_col, high_col = st.columns(3)
+    low_col.metric("Low", f"${guidance['low']:.0f}")
+    median_col.metric("Median", f"${guidance['median']:.0f}")
+    high_col.metric("High", f"${guidance['high']:.0f}")
+
+    planned_bid = st.number_input("Your planned bid (optional)", min_value=0, step=1, value=0, key="faab_planned_bid")
+    if planned_bid > 0 and planned_bid > guidance["high"]:
+        message = (
+            f"${planned_bid:.0f} is above the recent comparable range (up to ${guidance['high']:.0f})."
+        )
+        if candidate_row["marginal_value"] <= 0:
+            st.warning(f"{message} This candidate also wouldn't crack your starting lineup right now.")
+        else:
+            st.info(message)
 
 
 def _render_bye_impact(state: dict, analysis: dict) -> None:

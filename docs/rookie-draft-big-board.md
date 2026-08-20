@@ -366,11 +366,28 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     league's rebuild strategy) is already-spent capacity, not "no room,"
     the distinction a 2026-08-02 review found this simplification had
     collapsed.
-  - **No FAAB bid-sizing** — remaining budget
-    (`league["settings"]["waiver_budget"] - roster["settings"].
-    waiver_budget_used`, both already pulled, no new fetch) is shown for
-    context only; there's no bid-amount input anywhere in this app yet for
-    a threshold to apply to.
+  - **FAAB bid guidance** (`RT-10`, `dynasty_core/waiver_bids.py`) — real
+    comparable bid history, not an invented formula. Sleeper's
+    `/league/{id}/transactions/{leg}` endpoint records every waiver
+    transaction with the actual dollar amount bid
+    (`settings.waiver_bid`), win or lose; `won_bid_sample()` keeps only
+    `status == "complete"` ones (a `"failed"` bid never cleared the
+    market, so it isn't a real clearing price) and resolves each winning
+    player's position and *current* `adj_value` — not their value at the
+    time of the bid, which isn't reconstructable without historical
+    roster/value snapshots this project doesn't keep, a reasonable proxy
+    for the short in-season windows this covers today (see `RT-25` for
+    why that gets materially less accurate the further back a lookback
+    reaches, ahead of extending this to prior seasons).
+    `nearest_comparable_bids()` finds up to `COMPARABLE_NEAREST_K` real
+    bids nearest a candidate's value (same position preferred, broadened
+    to every position only when the same-position sample is under
+    `MIN_SAME_POSITION`), and `bid_guidance()` returns those bids directly
+    alongside a low/median/high computed from that exact list — never a
+    separate model — or `None` below `MIN_COMPARABLE_SAMPLE`, an honest
+    "not enough data yet" rather than a number from too few points.
+    Computed on demand for one selected free-agent candidate at a time
+    (Roster tab), not for the whole board every refresh.
   - **Pickup alerts** (the Summary tab's in-season monitor,
     `pickup_snapshots.py`/`state.py`) shares this same "what would this
     replace, and what's the impact" phrasing rather than a second one — a
@@ -701,3 +718,5 @@ is a deliberate decision, not a silent bug:
 | `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`, `dynasty_core/picks.py`) | The only place in this codebase that treats `roster_id` as a range rather than an opaque key (needed to synthesize future pick ownership with no real draft object). Confirmed true today; a non-contiguous ID (e.g. a departed team) would silently synthesize a phantom pick | Iterate the real `rosters` list instead of a synthesized range |
 | `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers`/`_asset_pool`/`improve_incoming_offer` (`dynasty_core/trade.py`) | Judgment calls bounding an offer search's candidate pool/combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size. Shared by both `find_trade_offers()`'s combo search and `improve_incoming_offer()`'s neighbor search via the common `_asset_pool()`/tolerance formula, not two separate constants | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |
 | `SUGGESTED_TRADE_SCAN_TOP_K = 15` | `leaguewide_trade_candidates`/`suggested_trades` (`dynasty_core/trade.py`) | How many of Stage 1's cheap, affordability-filtered leaguewide candidates get Stage 2's expensive real search — bounds Suggested Trades' scan cost to a constant regardless of league size, sized to the same order of magnitude as the original single-partner whole-roster scan concept | Raise if 15 candidates routinely produce fewer than 3 viable offers in practice; lower if a scan feels slow |
+| A historical winning bid's comparable value is the player's *current* `adj_value`, not their value at the time of the bid | `won_bid_sample` (`dynasty_core/waiver_bids.py`) | Not reconstructable without historical roster/value snapshots this project doesn't keep. Reasonable for the short in-season windows FAAB guidance covers today; gets progressively less accurate the further back a comparable bid is from, which is exactly why extending this to prior seasons (`RT-25`) needs a recency-aware sample, not a flat pool | Revisit if bid guidance ever extends beyond the current season, or starts looking systematically off for older in-season comparables |
+| `COMPARABLE_NEAREST_K = 5` / `MIN_SAME_POSITION = 3` / `MIN_COMPARABLE_SAMPLE = 3` | `dynasty_core/waiver_bids.py` | Judgment calls sizing the FAAB bid-guidance comparable sample, not derived from any league rule | Adjust by feel once a full season of real bid history exists to judge against |

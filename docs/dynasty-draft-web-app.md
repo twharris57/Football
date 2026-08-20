@@ -95,6 +95,20 @@ the same way `team_power_timeline` is; a caption says so directly so it
 doesn't read as a bug that changing the team selector above doesn't change
 this table.
 
+A "FAAB bid guidance" section (`RT-10`) sits directly below the Free
+agents table — a "Check a candidate" selectbox over that same board (its
+`player_id` column, present in the data but dropped before the table
+itself renders, is the join key), then `dynasty_core.bid_guidance()`
+against `state["transactions"]` (Sleeper's real waiver bid history,
+fetched in `gather_state()` the same optional-enrichment way as
+byes/handcuffs — wrapped in a `try/except` that appends to
+`data_warnings` rather than breaking the refresh). Computed on demand for
+one candidate at a time, not for the whole board every refresh. An
+optional "your planned bid" number input triggers an `st.warning` if it's
+above the comparable range *and* the candidate wouldn't crack the
+starting lineup (`marginal_value <= 0`, the same field the table already
+shows), or a plainer `st.info` if it's just above the range.
+
 ### Trade Evaluator (its own tab)
 
 Its own tab, not folded into Roster — a trade is inherently two teams plus

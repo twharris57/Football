@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://api.sleeper.app/v1"
 PLAYERS_CACHE_PATH = CACHE_DIR / "players.json"
 PLAYERS_CACHE_TTL_SECONDS = 12 * 60 * 60
+TRANSACTIONS_CACHE_TTL_SECONDS = 12 * 60 * 60
 
 
 def _build_session() -> requests.Session:
@@ -82,6 +83,34 @@ def get_draft_picks(draft_id: str) -> list[dict[str, Any]]:
 def get_traded_picks(league_id: str) -> list[dict[str, Any]]:
     """Return every future draft pick that has changed hands via trade."""
     return _get(f"/league/{league_id}/traded_picks")
+
+
+def get_transactions(league_id: str, season: str, current_leg: int, force_refresh: bool = False) -> list[dict[str, Any]]:
+    """Return every transaction (trades, waivers, free-agent moves) across legs 1..current_leg, concatenated.
+
+    Cached to disk per (league_id, season) - like players.json/FantasyCalc
+    values, a 12h TTL rather than re-fetching current_leg's worth of
+    endpoints on every refresh. Each waiver-type transaction carries the
+    real FAAB amount bid in `settings.waiver_bid` - `status == "complete"`
+    means that bid actually won the player, `"failed"` means it didn't
+    (over budget, outbid, etc.) - the real market-behavior source
+    `dynasty_core/waiver_bids.py` calibrates bid guidance against, not an
+    invented formula.
+    """
+    cache_path = CACHE_DIR / f"transactions_{league_id}_{season}.json"
+    if not force_refresh and cache_path.exists():
+        age_seconds = time.time() - cache_path.stat().st_mtime
+        if age_seconds < TRANSACTIONS_CACHE_TTL_SECONDS:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+
+    logger.info("Refreshing transaction history from Sleeper (legs 1-%d)...", current_leg)
+    transactions: list[dict[str, Any]] = []
+    for leg in range(1, current_leg + 1):
+        transactions.extend(_get(f"/league/{league_id}/transactions/{leg}"))
+
+    CACHE_DIR.mkdir(exist_ok=True)
+    cache_path.write_text(json.dumps(transactions), encoding="utf-8")
+    return transactions
 
 
 def get_players(force_refresh: bool = False) -> dict[str, Any]:
