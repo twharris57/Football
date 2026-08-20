@@ -507,6 +507,19 @@ cutoff.
   helper (e.g. `_pick_value_lookup(pick_value_table)` returning both the
   dict and a `sum(names)` closure) next time either function is touched,
   rather than a third copy appearing.
+- [ ] **CQ-8: Add signal handlers for graceful container shutdown**
+  (user-flagged 2026-08-20) — `docker_guidelines.md`'s existing "Graceful
+  Shutdown" section already covers half of this (`CMD` exec form so
+  signals reach the process at all, confirmed already true for this
+  repo's `Dockerfile`), but doesn't yet say anything about the *process
+  itself* handling `SIGTERM` and shutting down cleanly within the
+  orchestrator's grace period once it receives one. Likely belongs as an
+  addition to that same convention section — but `docker_guidelines.md`
+  may be AgentConfig-sourced (shared across projects, pulled via
+  `/update-from-agentconfig`) rather than owned directly by this repo, so
+  the fix might need to flow through AgentConfig rather than a direct
+  edit here; confirm which before implementing. Deliberately deferred to
+  its own branch, not bundled into unrelated work.
 
 ## Deferred / low priority
 
