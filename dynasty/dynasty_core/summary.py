@@ -68,6 +68,20 @@ def _sellable_lines(sellable_players: pd.DataFrame) -> list[str]:
     return lines
 
 
+def _impact_and_drop_note(marginal_value: float, drop_name: str | None, drop_is_starter: bool | None) -> str:
+    """"would add +X to your lineup[ — would require dropping Y (a starter)]" -
+    the impact/replacement phrasing free_agent_board() rows and pickup_alerts
+    entries share (both come from rank_by_marginal_value()'s same
+    marginal_value/drop shape via state.py), factored out so the two
+    formatters below can't drift apart on how they phrase the same signal.
+    """
+    note = f"would add {marginal_value:+.1f} to your lineup"
+    if pd.notna(drop_name):
+        starter_note = " (a starter)" if drop_is_starter else ""
+        note += f" — would require dropping {drop_name}{starter_note}"
+    return note
+
+
 def _free_agent_lines(free_agent_board: pd.DataFrame) -> list[str]:
     if free_agent_board.empty:
         # An empty free_agent_board() has no columns at all (built from a
@@ -77,14 +91,10 @@ def _free_agent_lines(free_agent_board: pd.DataFrame) -> list[str]:
         # raise KeyError rather than just finding nothing.
         return []
     positive = free_agent_board[free_agent_board["marginal_value"] > 0]
-    lines = []
-    for _, row in positive.iterrows():
-        line = f"{row['name']} ({row['pos']}) would add {row['marginal_value']:+.1f} to your lineup"
-        if pd.notna(row["drop_name"]):
-            starter_note = " (a starter)" if row["drop_is_starter"] else ""
-            line += f" — would require dropping {row['drop_name']}{starter_note}"
-        lines.append(line)
-    return lines
+    return [
+        f"{row['name']} ({row['pos']}) {_impact_and_drop_note(row['marginal_value'], row['drop_name'], row['drop_is_starter'])}"
+        for _, row in positive.iterrows()
+    ]
 
 
 def _pickup_alert_lines(pickup_alerts: list[dict]) -> list[str]:
@@ -92,18 +102,23 @@ def _pickup_alert_lines(pickup_alerts: list[dict]) -> list[str]:
     for alert in pickup_alerts:
         kind = alert["kind"]
         if kind == "team" and alert["old"] is None:
-            lines.append(f"{alert['name']} ({alert['pos']}) just signed with {alert['new']}")
+            base = f"{alert['name']} ({alert['pos']}) just signed with {alert['new']}"
         elif kind == "team":
-            lines.append(f"{alert['name']} ({alert['pos']}) changed teams: {alert['old']} → {alert['new']}")
+            base = f"{alert['name']} ({alert['pos']}) changed teams: {alert['old']} → {alert['new']}"
         elif kind == "depth_chart":
-            lines.append(
+            base = (
                 f"{alert['name']} ({alert['pos']}, {alert['team']}) depth chart order "
                 f"improved: {alert['old']} → {alert['new']}"
             )
         else:  # "status"
-            lines.append(
-                f"{alert['name']} ({alert['pos']}, {alert['team']}) status changed: {alert['old']} → {alert['new']}"
-            )
+            base = f"{alert['name']} ({alert['pos']}, {alert['team']}) status changed: {alert['old']} → {alert['new']}"
+        # marginal_value/drop_name/drop_is_starter arrive on every alert
+        # already (state.py stamps them from the same rank_by_marginal_value()
+        # call free_agent_board() uses) - what this change would mean for
+        # *your* roster, not just what changed for the player, same as the
+        # Free agents board already shows.
+        note = _impact_and_drop_note(alert["marginal_value"], alert.get("drop_name"), alert.get("drop_is_starter"))
+        lines.append(f"{base} — {note}")
     return lines
 
 

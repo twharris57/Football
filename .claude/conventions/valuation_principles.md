@@ -505,3 +505,34 @@ same tolerance formula `find_trade_offers()` already uses." A function
 that searches in more than one direction (varying side A while B is fixed,
 then varying B while A is fixed) generally needs the anchor computed
 per-direction, not once up front.
+
+## A displayed number and the filter gating its display must round on the same basis
+
+`state.py`'s pickup-alert filter (`VA-6`, 2026-08-19 review) tests
+`value > 0` against `rank_by_marginal_value()`'s raw, unrounded
+`marginal_value`, then passes that same raw value straight through to
+`summary.py`'s shared `_impact_and_drop_note()`, which formats it to one
+decimal (`f"{marginal_value:+.1f}"`). `free_agent_board()`
+(`dynasty_core/marginal_value.py`) rounds to one decimal *before* an
+identical `> 0` filter runs in `_free_agent_lines()`. A raw marginal value
+in `(0, 0.05)` — real but tiny — passes the pickup-alert filter yet
+renders as `"+0.0"`, so the same underlying signal that `free_agent_board`
+already keeps off its board for that player can still surface as a
+Pickup alert reading "would add +0.0 to your lineup — would require
+dropping Starter WR (a starter)": a self-contradicting message from a
+feature (`_impact_and_drop_note()`) that was specifically factored out so
+two surfaces describing the same signal couldn't drift apart in *wording*
+— they drifted in *threshold* instead, one level below where the shared
+helper could catch it.
+
+**The rule**: when two surfaces share both a formatter and a "worth
+surfacing" threshold check, make sure the threshold check runs against the
+same rounded/unrounded value the formatter will actually render — a `> 0`
+check on a raw float and a `:.1f` display of that same float don't agree
+on what counts as zero near the rounding boundary. Round once, at (or
+before) the filter, and reuse that rounded value for both the check and
+the display — don't filter at one precision and format a different one
+downstream. Watch for this whenever a shared formatting helper is
+introduced specifically to keep two call sites in sync (as here): the
+helper can guarantee identical *wording*, but not identical *inputs* — the
+callers still have to agree on what value they're each feeding it.

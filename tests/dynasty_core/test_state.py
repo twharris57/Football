@@ -50,3 +50,63 @@ class TestGatherStateConnectivityErrors:
 
         with pytest.raises(requests.RequestException, match="Couldn't reach FantasyCalc"):
             dc.gather_state("league1", "user1", False)
+
+
+def _change(player_id: str, kind: str = "team", old=None, new="KC") -> dict:
+    return {"player_id": player_id, "kind": kind, "old": old, "new": new}
+
+
+def _ranked_row(player_id: str, marginal_value: float, drop: dict | None = None) -> dict:
+    return {"player_id": player_id, "marginal_value": marginal_value, "drop": drop}
+
+
+PLAYERS = {
+    "p1": {"full_name": "New Guy", "position": "WR", "team": "KC"},
+    "p2": {"full_name": "Other Guy", "position": "RB", "team": "SF"},
+}
+
+
+class TestBuildPickupAlerts:
+    """A raw marginal_value must be rounded before the >0 "worth surfacing"
+    filter runs, matching free_agent_board()'s own round-then-filter order -
+    otherwise a real-but-tiny value can pass the filter and still render as
+    the self-contradicting "would add +0.0 to your lineup" once summary.py
+    formats it to one decimal (VA-6, valuation_principles.md)."""
+
+    def test_a_raw_value_that_rounds_to_zero_is_excluded(self):
+        changes = [_change("p1")]
+        ranked = [_ranked_row("p1", 0.03)]
+
+        assert dc.build_pickup_alerts(changes, ranked, PLAYERS) == []
+
+    def test_a_raw_value_that_rounds_to_a_real_positive_is_included(self):
+        changes = [_change("p1")]
+        ranked = [_ranked_row("p1", 0.06)]
+
+        alerts = dc.build_pickup_alerts(changes, ranked, PLAYERS)
+
+        assert len(alerts) == 1
+        assert alerts[0]["marginal_value"] == 0.1
+
+    def test_a_negative_or_zero_value_is_excluded(self):
+        changes = [_change("p1"), _change("p2")]
+        ranked = [_ranked_row("p1", 0.0), _ranked_row("p2", -3.0)]
+
+        assert dc.build_pickup_alerts(changes, ranked, PLAYERS) == []
+
+    def test_carries_drop_name_and_is_starter_through(self):
+        changes = [_change("p1")]
+        ranked = [_ranked_row("p1", 8.0, drop={"player_id": "p9", "name": "Starter WR", "is_starter": True})]
+
+        alerts = dc.build_pickup_alerts(changes, ranked, PLAYERS)
+
+        assert alerts[0]["drop_name"] == "Starter WR"
+        assert alerts[0]["drop_is_starter"] is True
+
+    def test_sorts_best_marginal_value_first(self):
+        changes = [_change("p1"), _change("p2")]
+        ranked = [_ranked_row("p1", 2.0), _ranked_row("p2", 9.0)]
+
+        alerts = dc.build_pickup_alerts(changes, ranked, PLAYERS)
+
+        assert [a["player_id"] for a in alerts] == ["p2", "p1"]

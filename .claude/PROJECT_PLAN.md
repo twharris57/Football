@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-24`, `VA-5`, `CQ-7`, `DL-9`.
+below): `NB-2`, `RT-24`, `VA-6`, `CQ-7`, `DL-9`.
 
 ## Short list — actively prioritized right now
 

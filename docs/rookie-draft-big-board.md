@@ -371,6 +371,16 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     waiver_budget_used`, both already pulled, no new fetch) is shown for
     context only; there's no bid-amount input anywhere in this app yet for
     a threshold to apply to.
+  - **Pickup alerts** (the Summary tab's in-season monitor,
+    `pickup_snapshots.py`/`state.py`) shares this same "what would this
+    replace, and what's the impact" phrasing rather than a second one — a
+    real team/depth-chart/status change surfaces alongside the exact
+    `marginal_value`/`drop_name`/`drop_is_starter` fields `free_agent_board`
+    rows already carry (same `rank_by_marginal_value()` call, just applied
+    to the changed-player subset instead of the whole pool), formatted
+    through the same shared `_impact_and_drop_note()` helper in
+    `summary.py` so the two surfaces can't drift apart on how they describe
+    the same signal.
 - **Trade evaluator** (`evaluate_trade()`) — evaluates an arbitrary
   proposed trade (any number of players and/or picks on either side)
   between two selected teams, shown for both sides rather than a single

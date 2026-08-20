@@ -46,8 +46,28 @@ def _fa_row(name: str, pos: str, marginal_value: float, drop_name: str | None = 
     }
 
 
-def _alert(name: str, pos: str, kind: str, old, new, team: str = "AAA", marginal_value: float = 10.0) -> dict:
-    return {"name": name, "pos": pos, "team": team, "kind": kind, "old": old, "new": new, "marginal_value": marginal_value}
+def _alert(
+    name: str,
+    pos: str,
+    kind: str,
+    old,
+    new,
+    team: str = "AAA",
+    marginal_value: float = 10.0,
+    drop_name: str | None = None,
+    drop_is_starter: bool | None = None,
+) -> dict:
+    return {
+        "name": name,
+        "pos": pos,
+        "team": team,
+        "kind": kind,
+        "old": old,
+        "new": new,
+        "marginal_value": marginal_value,
+        "drop_name": drop_name,
+        "drop_is_starter": drop_is_starter,
+    }
 
 
 class TestBuildAttentionDigest:
@@ -213,55 +233,84 @@ class TestBuildAttentionDigest:
         assert len(digest["free_agents"]) == 4
 
     def test_pickup_alerts_formats_a_brand_new_pool_entrant(self):
-        alerts = [_alert("New Guy", "WR", "team", old=None, new="KC")]
+        alerts = [_alert("New Guy", "WR", "team", old=None, new="KC", marginal_value=12.0)]
 
         digest = dc.build_attention_digest(
             frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, alerts, WEEK_1
         )
 
-        assert digest["pickup_alerts"] == ["New Guy (WR) just signed with KC"]
+        assert digest["pickup_alerts"] == ["New Guy (WR) just signed with KC — would add +12.0 to your lineup"]
 
     def test_pickup_alerts_formats_a_team_change_between_two_real_teams(self):
-        alerts = [_alert("Vet Guy", "RB", "team", old="MIA", new="NYJ")]
+        alerts = [_alert("Vet Guy", "RB", "team", old="MIA", new="NYJ", marginal_value=5.0)]
 
         digest = dc.build_attention_digest(
             frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, alerts, WEEK_1
         )
 
-        assert digest["pickup_alerts"] == ["Vet Guy (RB) changed teams: MIA → NYJ"]
+        assert digest["pickup_alerts"] == ["Vet Guy (RB) changed teams: MIA → NYJ — would add +5.0 to your lineup"]
 
     def test_pickup_alerts_formats_a_depth_chart_improvement(self):
-        alerts = [_alert("Backup RB", "RB", "depth_chart", old=3, new=1, team="SF")]
+        alerts = [_alert("Backup RB", "RB", "depth_chart", old=3, new=1, team="SF", marginal_value=7.5)]
 
         digest = dc.build_attention_digest(
             frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, alerts, WEEK_1
         )
 
-        assert digest["pickup_alerts"] == ["Backup RB (RB, SF) depth chart order improved: 3 → 1"]
+        assert digest["pickup_alerts"] == [
+            "Backup RB (RB, SF) depth chart order improved: 3 → 1 — would add +7.5 to your lineup"
+        ]
 
     def test_pickup_alerts_formats_a_status_change(self):
-        alerts = [_alert("Practice Squad WR", "WR", "status", old="Practice Squad", new="Active", team="DAL")]
+        alerts = [
+            _alert(
+                "Practice Squad WR", "WR", "status", old="Practice Squad", new="Active", team="DAL", marginal_value=3.0
+            )
+        ]
 
         digest = dc.build_attention_digest(
             frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, alerts, WEEK_1
         )
 
-        assert digest["pickup_alerts"] == ["Practice Squad WR (WR, DAL) status changed: Practice Squad → Active"]
+        assert digest["pickup_alerts"] == [
+            "Practice Squad WR (WR, DAL) status changed: Practice Squad → Active — would add +3.0 to your lineup"
+        ]
+
+    def test_pickup_alerts_notes_a_required_drop_and_whether_its_a_starter(self):
+        # Same "what this would replace" phrasing free_agent_board() rows
+        # already show - pickup_alerts carries the same drop_name/
+        # drop_is_starter fields (state.py stamps them from the same
+        # rank_by_marginal_value() call), not just a bare marginal_value.
+        alerts = [
+            _alert(
+                "New Guy", "WR", "team", old=None, new="KC", marginal_value=8.0,
+                drop_name="Starter WR", drop_is_starter=True,
+            )
+        ]
+
+        digest = dc.build_attention_digest(
+            frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, alerts, WEEK_1
+        )
+
+        assert digest["pickup_alerts"] == [
+            "New Guy (WR) just signed with KC — would add +8.0 to your lineup — "
+            "would require dropping Starter WR (a starter)"
+        ]
 
     def test_pickup_alerts_preserves_caller_order_when_capped(self):
         # The caller (state.py) is responsible for ranking pickup_alerts by
         # marginal value before passing them in - this function must only
         # format and cap, never re-sort, or the caller's ranking would be
         # silently undone.
-        alerts = [_alert(f"Player {i}", "RB", "team", old=None, new="KC") for i in range(5)]
+        alerts = [_alert(f"Player {i}", "RB", "team", old=None, new="KC", marginal_value=1.0) for i in range(5)]
 
         digest = dc.build_attention_digest(
             frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, EMPTY_FREE_AGENTS, alerts, WEEK_1, top_n=3
         )
 
         assert digest["pickup_alerts"] == [
-            "Player 0 (RB) just signed with KC",
-            "Player 1 (RB) just signed with KC",
-            "Player 2 (RB) just signed with KC",
+            "Player 0 (RB) just signed with KC — would add +1.0 to your lineup",
+            "Player 1 (RB) just signed with KC — would add +1.0 to your lineup",
+            "Player 2 (RB) just signed with KC — would add +1.0 to your lineup",
             "(+2 more)",
         ]
