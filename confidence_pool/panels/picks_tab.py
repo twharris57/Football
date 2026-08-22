@@ -20,7 +20,11 @@ def _cached_schedule(year: int) -> pd.DataFrame:
 
 
 def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) -> None:
-    schedule = _cached_schedule(active_season)
+    try:
+        schedule = _cached_schedule(active_season)
+    except OSError as exc:
+        st.error(f"Couldn't fetch the schedule from nfl_data_py: {exc}. Try reloading the page.")
+        st.stop()
     default_week = pc.current_week(schedule, today)
 
     col_season, col_week = st.columns(2)
@@ -33,7 +37,12 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
     with col_week:
         week = int(st.number_input("Week", min_value=1, max_value=18, value=default_week, step=1))
 
-    schedule = schedule if season == active_season else _cached_schedule(season)
+    if season != active_season:
+        try:
+            schedule = _cached_schedule(season)
+        except OSError as exc:
+            st.error(f"Couldn't fetch the schedule from nfl_data_py: {exc}. Try reloading the page.")
+            st.stop()
 
     auto_games = pc.select_games(schedule, season, week)
     if auto_games.empty:
