@@ -24,6 +24,60 @@ def player_value_rows(player_ids: list[str], players: dict[str, dict], fc_by_sle
     return rows
 
 
+def _weekly_projected_points(projection: dict[str, float], scoring_settings: dict[str, float], position: str) -> float:
+    """Dot product of a player's projected stat categories against this league's real scoring settings.
+
+    Not `player_scoring._stat_points` - that translates `nfl_data_py`'s
+    differently-named historical columns. Here both sides already speak
+    Sleeper's own stat-key vocabulary (`rec`, `rec_yd`, `rush_td`, ...
+    confirmed live to line up 1:1), so no crosswalk is needed - except for
+    `bonus_rec_te`, a position-conditional *weight* rather than a raw stat
+    category, which Sleeper's projections (a global, non-league-scoped
+    endpoint) can never emit as its own key. Handled the same way
+    `player_scoring._stat_points()` already does: added directly against
+    the `rec` count, only for TEs.
+
+    Non-numeric stat values are skipped rather than trusted blindly - an
+    undocumented endpoint can plausibly return `None` for a rarely-projected
+    category, and this pipeline degrades gracefully everywhere else rather
+    than crashing on an external-data surprise.
+    """
+    points = sum(
+        value * scoring_settings.get(stat, 0.0)
+        for stat, value in projection.items()
+        if isinstance(value, (int, float))
+    )
+    if position == "TE":
+        receptions = projection.get("rec")
+        if isinstance(receptions, (int, float)):
+            points += receptions * scoring_settings.get("bonus_rec_te", 0.0)
+    return points
+
+
+def weekly_projected_value_rows(
+    player_ids: list[str],
+    players: dict[str, dict],
+    projections: dict[str, dict],
+    scoring_settings: dict[str, float],
+) -> list[dict]:
+    """Build {player_id, pos, adj_value} rows from this week's projected points - same
+    shape as `player_value_rows()`, so both can feed `assign_starters()` unchanged, but
+    `adj_value` here is a this-week points projection, not dynasty trade value. A player
+    with no projection entry gets `adj_value=None`, the same missing-data handling
+    `player_value_rows()` already uses for an unresolved market value.
+    """
+    rows = []
+    for player_id in player_ids:
+        info = players.get(player_id, {})
+        position = info.get("position")
+        if position not in FANTASY_POSITIONS:
+            continue
+        projection = projections.get(player_id)
+        adj_value = _weekly_projected_points(projection, scoring_settings, position) if projection else None
+        rows.append({"player_id": player_id, "pos": position, "adj_value": adj_value})
+    return rows
+
+
 def bye_for_row(row: dict, players: dict[str, dict], byes: dict[str, int]) -> int | None:
     """Resolve a `player_value_rows()` row's bye week via its player's current NFL team."""
     team = players.get(row["player_id"], {}).get("team")
@@ -65,23 +119,22 @@ def assign_starters(player_rows: list[dict], roster_positions: list[str]) -> lis
     return assignments
 
 
-def lineup_breakdown(
-    roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], league: dict
+def _lineup_breakdown_from_rows(
+    rows: list[dict], roster: dict, players: dict[str, dict], roster_positions: list[str]
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Return (starters, bench, taxi, ir) for the roster's optimal lineup by current value.
+    """Shared assignment/grouping logic behind `lineup_breakdown()`/`weekly_lineup_breakdown()`.
 
-    A snapshot, not week- or injury-aware (a planned refinement). Taxi and
-    IR/reserve players are in `roster["players"]` alongside the real bench,
-    so they're split out via `roster["taxi"]`/`roster["reserve"]` (plain
-    player_id lists) and excluded from the starter assignment itself —
-    Sleeper doesn't allow starting them.
+    The two only differ in how each row's `adj_value` gets computed
+    (dynasty trade value vs. this week's projected points, via
+    `player_value_rows()`/`weekly_projected_value_rows()`) — starter
+    assignment and the taxi/reserve/bench split are the same question
+    either way, so that logic lives here once rather than twice.
     """
     taxi_ids = set(roster.get("taxi") or [])
     reserve_ids = set(roster.get("reserve") or [])
-    rows = player_value_rows(roster.get("players") or [], players, fc_by_sleeper_id)
     value_by_id = {r["player_id"]: r["adj_value"] for r in rows}
     active_rows = [r for r in rows if r["player_id"] not in taxi_ids and r["player_id"] not in reserve_ids]
-    assignments = assign_starters(active_rows, league["roster_positions"])
+    assignments = assign_starters(active_rows, roster_positions)
     starter_ids = {pid for _, pid in assignments if pid}
 
     starter_rows = []
@@ -110,6 +163,41 @@ def lineup_breakdown(
     reserve_df = group_df(lambda pid: pid in reserve_ids)
 
     return pd.DataFrame(starter_rows), bench_df, taxi_df, reserve_df
+
+
+def lineup_breakdown(
+    roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], league: dict
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Return (starters, bench, taxi, ir) for the roster's optimal lineup by dynasty value.
+
+    A long-run asset-value ranking, not week- or injury-aware by design —
+    this is what trade/drop/draft-plan decisions correctly key off of (see
+    `valuation_principles.md`'s "one valuation strategy" rule), so it stays
+    untouched. See `weekly_lineup_breakdown()` for the this-week-projected
+    alternative. Taxi and IR/reserve players are in `roster["players"]`
+    alongside the real bench, so they're split out via
+    `roster["taxi"]`/`roster["reserve"]` (plain player_id lists) and
+    excluded from the starter assignment itself — Sleeper doesn't allow
+    starting them.
+    """
+    rows = player_value_rows(roster.get("players") or [], players, fc_by_sleeper_id)
+    return _lineup_breakdown_from_rows(rows, roster, players, league["roster_positions"])
+
+
+def weekly_lineup_breakdown(
+    roster: dict, players: dict[str, dict], projections: dict[str, dict], league: dict
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Return (starters, bench, taxi, ir) for the roster's optimal lineup by THIS WEEK's
+    projected points — a genuinely different ranking question than `lineup_breakdown()`'s
+    dynasty value (who wins the most points this week vs. long-run asset value), reusing
+    `assign_starters()`/the same taxi-reserve-bench split unchanged rather than a second,
+    parallel implementation of "who starts." An empty `projections` dict (a failed fetch —
+    see `state.py`) makes every row's `adj_value` `None`, same as an unresolved market
+    value — `assign_starters()` already handles that (treats `None` as lowest priority),
+    so this degrades to an arbitrary-order lineup rather than crashing.
+    """
+    rows = weekly_projected_value_rows(roster.get("players") or [], players, projections, league["scoring_settings"])
+    return _lineup_breakdown_from_rows(rows, roster, players, league["roster_positions"])
 
 
 def roster_capacity(roster: dict, league: dict) -> dict[str, int]:

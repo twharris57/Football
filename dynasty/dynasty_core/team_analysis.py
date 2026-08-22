@@ -7,7 +7,7 @@ from typing import Any
 from .byes import roster_bye_conflicts, roster_weekly_gaps
 from .constants import YOUNG_CORE_NEED_THRESHOLD
 from .handcuffs import roster_handcuff_status
-from .lineup import lineup_breakdown, roster_capacity
+from .lineup import lineup_breakdown, roster_capacity, weekly_lineup_breakdown
 from .marginal_value import free_agent_board
 from .roster_needs import (
     need_positions,
@@ -27,6 +27,7 @@ def team_roster_analysis(
     handcuffs: dict[str, str],
     replacement_level: dict[str, float],
     available_free_agents: dict[str, dict],
+    projections: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     """Bundle every per-roster analysis view into one call, for any team's roster.
 
@@ -41,6 +42,12 @@ def team_roster_analysis(
     and passed in, not recomputed here. `available_free_agents`
     (`free_agent_pool()`'s output) is likewise computed once per refresh and
     passed in, not recomputed per team looked up through the team selector.
+    `projections` (RT-27, this week's per-player point projections) defaults
+    to `{}` — only the Lineup tab's own team actually renders
+    `weekly_lineup_*`, so a caller that doesn't have (or care about) this
+    week's projections, like the Roster tab's other-team lookup, can omit
+    it and just get an all-`None`-value weekly lineup back, the same
+    graceful-degradation shape a failed fetch already produces.
     """
     roster_needs = roster_needs_summary(roster, players)
     if not roster_needs.empty:
@@ -62,6 +69,9 @@ def team_roster_analysis(
         roster_needs["vor"] = roster_needs["vor"].fillna(0.0)
         roster_needs["weak"] = roster_needs["weak"].fillna(True)
     lineup_starters, lineup_bench, lineup_taxi, lineup_ir = lineup_breakdown(roster, players, fc_by_sleeper_id, league)
+    weekly_starters, weekly_bench, weekly_taxi, weekly_ir = weekly_lineup_breakdown(
+        roster, players, projections or {}, league
+    )
     return {
         "roster_needs": roster_needs,
         "need_positions": need_positions(roster_needs),
@@ -76,4 +86,8 @@ def team_roster_analysis(
         "lineup_bench": lineup_bench,
         "lineup_taxi": lineup_taxi,
         "lineup_ir": lineup_ir,
+        "weekly_lineup_starters": weekly_starters,
+        "weekly_lineup_bench": weekly_bench,
+        "weekly_lineup_taxi": weekly_taxi,
+        "weekly_lineup_ir": weekly_ir,
     }

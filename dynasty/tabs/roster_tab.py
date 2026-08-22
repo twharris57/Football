@@ -390,6 +390,7 @@ def render_roster_tab(state: dict) -> None:
             state["handcuffs"],
             state["replacement_level"],
             state["available_free_agents"],
+            state["projections"],
         )
 
     _render_team_timeline(state, selected_roster_id)

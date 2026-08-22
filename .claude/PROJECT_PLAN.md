@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-28`, `VA-6`, `CQ-9`, `DL-9`.
+below): `NB-2`, `RT-28`, `VA-7`, `CQ-9`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -49,8 +49,6 @@ active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `RT-27` — Lineup tab mode switch: value-based vs. this-week-projected
-  starters. Flagged as the likely next feature to build (user, 2026-08-19).
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
@@ -61,6 +59,8 @@ too, per the convention above), don't let this become a history log.
 
 ## Current branch — fix before merge
 
+`feature/rt27-weekly-lineup-mode` (PR #44), reviewed 2026-08-21.
+
 Findings from reviewing the *active* branch's own not-yet-merged work —
 kept separate from the thematic backlog below so "fix this before the PR
 merges" is never mixed in with "someday" work. Ephemeral by design: cleared
@@ -69,71 +69,9 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-**Branch:** `feature/rt10-faab-bid-guidance` (PR #43, "RT-10: FAAB bid
-guidance from real league bid history") — reviewed 2026-08-19.
-
-- [ ] **`nearest_comparable_bids()`/`bid_guidance()` has a sample-size floor
-  but no match-*quality* floor — a sparse or value-skewed sample can hand
-  back "comparables" that aren't actually comparable, presented with the
-  same confidence as a tight match.** `MIN_COMPARABLE_SAMPLE = 3` only
-  guards against *too few* rows; nothing bounds how *far* (in `adj_value`)
-  the nearest rows are allowed to be from `candidate_adj_value`. `.head(k)`
-  on a small or skewed pool returns whatever's closest even when "closest"
-  is still a wildly different tier of player — and unlike the
-  `same_position` flag (which *does* get surfaced to the user when
-  broadening happens), there's no equivalent signal for match quality by
-  value. Confirmed this isn't theoretical: pulled this league's live
-  transaction data — right now (2026-08-19, leg 1) there are only 8
-  `status == "complete"` waiver transactions all season, spanning whatever
-  positions and value tiers happened to clear waivers first. A candidate
-  whose true value sits far from every one of those 8 (very plausible this
-  early, and the exact situation `MIN_SAME_POSITION`'s broaden-to-all-
-  positions path is designed to fall into) still gets a full low/median/
-  high panel built from bids on players nowhere near its own tier — e.g. a
-  handful of $0–$5 depth-add bids presented as calibrated guidance for a
-  candidate that's actually a clear must-add. The UI compounds this: it
-  shows only each comparable's bid amount (`bids_str` in
-  `roster_tab.py::_render_faab_bid_guidance`), never the comparable
-  player's own `adj_value`, so the user has no way to sanity-check match
-  quality themselves even by eye. This is exactly the shape
-  `valuation_principles.md`'s "silent data-degradation must surface as a
-  warning" rule already names — a well-formed computation that's
-  quietly a bad match, not an error, still needs to say so.
-  **Fix:** add a maximum-distance guard (an absolute `adj_value` gap, or a
-  relative one similar to `trade.py`'s `TRADE_OFFER_PREFILTER_LOW`/`HIGH`
-  bounds) and drop to `None`/a distinct "no close comparables" state when
-  even the nearest rows fall outside it, rather than always returning up
-  to `k` regardless of how far they are. At minimum, surface each
-  comparable's own `adj_value` next to its bid in the UI so a human can
-  judge match quality directly, the same way `same_position` already lets
-  them judge the positional gap. Add a test constructing a sparse/skewed
-  sample (a handful of low-value comparables, a high-value candidate) that
-  asserts on the resulting distance/quality signal, not just that *some*
-  bids come back.
-
-  **Fixed 2026-08-19**: added `COMPARABLE_MAX_DISTANCE_PCT`/
-  `COMPARABLE_MIN_ABSOLUTE_DISTANCE` (`dynasty_core/waiver_bids.py`,
-  same `max(pct * value, absolute_floor)` shape as `trade.py`'s tolerance
-  constants) — `nearest_comparable_bids()` now filters the selected pool
-  to rows within that tolerance before taking the nearest `k`, so
-  `bid_guidance()` returns `None` when even the closest comparables are
-  too far in value, not just when there are too few of them.
-  `nearest_comparable_bids()` now returns each comparable as
-  `{"bid", "adj_value"}` (was a bare bid list) and `bid_guidance()`'s
-  `comparables` field carries the same, so `roster_tab.py` can show each
-  comparable's own value next to its bid instead of hiding it. Added
-  `test_excludes_comparables_too_far_in_value_even_though_the_pool_is_nonempty`
-  and `test_returns_none_when_comparables_exist_but_are_all_too_far_in_value`
-  — both constructed the sparse/skewed shape the finding described (3
-  same-position rows clear the count floor but sit far below a
-  high-value candidate) and confirmed they fail against the pre-fix code.
-  235 tests pass.
-
-- [x] **`free_agent_board()`'s new `player_id` column leaks into the CLI
-  report** — `rookie_draft.py:186` printed the raw frame; `roster_tab.py`
-  already dropped the column before display.
-  **Fixed 2026-08-19**: `rookie_draft.py:186` now drops `player_id` the
-  same way, before `render_df()`.
+Empty right now — the TE-premium gap found in this review (`_weekly_projected_points()`
+missing `bonus_rec_te`) is fixed; see `valuation_principles.md`'s "generic
+stat-vocabulary dot product" rule for the durable lesson.
 
 ## Now — blocking
 
@@ -174,50 +112,6 @@ Deliberately out of v1, not forgotten:
   decision (extend the exclusion, or leave it and rely on the human)
   rather than an unexamined inconsistency between the two features.
 
-- [ ] **RT-27: Lineup tab mode switch — value-based vs. this-week-projected
-  starters** (user-flagged 2026-08-19, prompted by noticing Sleeper's own
-  "optimize lineup" — which uses Sleeper's weekly point projections —
-  sometimes picks a different starter set than this tool's `adj_value`-
-  ranked lineup). `assign_starters()`/`lineup_breakdown()`
-  (`dynasty_core/lineup.py`) rank by FantasyCalc dynasty trade value, a
-  long-run asset signal, not a this-week signal — correct for trade/drop/
-  draft-plan decisions (stays untouched, per `valuation_principles.md`'s
-  "one valuation strategy" rule), but a different question than "who wins
-  me the most points this week." Full design already scoped (see below);
-  next session can implement directly rather than re-planning:
-  - Sleeper has no documented projections API — the only per-player weekly
-    projection data is an unofficial, reverse-engineered endpoint
-    (`api.sleeper.app/projections/nfl/{season}/{week}`-shaped; exact path
-    and stat-key vocabulary need confirming against a live call). User
-    confirmed this dependency risk is acceptable, gated on graceful
-    degradation (try/except → `data_warnings`, same pattern as byes/
-    handcuffs in `gather_state()`) rather than crashing the app if it
-    breaks.
-  - Scope is **current week only** (`league["settings"]["leg"]`, same
-    signal `roster_tab.py`'s bye-impact view already uses) — no week
-    selector.
-  - UI: a mode switch inside the existing Lineup tab (not a new tab) —
-    "By value (dynasty)" (unchanged) vs. "This week's projected lineup
-    (Week N)" (new). Reuse `assign_starters()` unchanged — it only needs
-    `{player_id, pos, adj_value}` rows, so the new mode just builds those
-    rows from projected weekly points (a straight dot product of Sleeper's
-    projected stat categories against `league["scoring_settings"]` — not
-    `player_scoring._stat_points`, which translates `nfl_data_py`'s
-    differently-named historical columns; both sides here already speak
-    Sleeper's own stat-key vocabulary once the key-shape assumption above
-    is confirmed) and feeds them into the same slot-assignment primitive.
-  - New pieces: `sleeper_api.get_weekly_projections(season, week)` (short-
-    TTL disk cache, same pattern as `get_players()`); `lineup.py`'s
-    `_weekly_projected_points()`/`weekly_projected_value_rows()`/
-    `weekly_lineup_breakdown()` (mirrors `player_value_rows()`/
-    `lineup_breakdown()`); threaded through `gather_state()` →
-    `team_roster_analysis()` as `weekly_lineup_*` keys alongside the
-    existing `lineup_*` ones; `streamlit_app.py`'s `_render_lineup_tab()`
-    gets the mode switch.
-  - Full plan with file:line references written to
-    `C:\Users\th007\.claude\plans\cryptic-enchanting-thompson.md` during
-    scoping (assistant's local plan-file path, not part of this repo —
-    treat this entry as the durable record, that file as scratch).
 - [ ] **RT-16: Need-match tiebreaker in `find_trade_offers()` reuses
   `roster_needs_summary`'s rebuild-timeline "need" flag on the *partner's*
   roster, which may not mean what it implies for a partner not running the
@@ -515,6 +409,24 @@ cutoff.
   `_derive_rookie_buckets`/multiplier machinery as additional features
   rather than requiring a new pipeline.
 
+- [ ] **VA-7: Unverified whether Sleeper's weekly projections include the
+  threshold/long-play bonus categories this league also scores** (assistant
+  valuation review, 2026-08-21, RT-27) — `_weekly_projected_points()`'s
+  dot product (`dynasty_core/lineup.py`) now correctly handles
+  `bonus_rec_te` as a position-conditional weight rather than a raw stat
+  (fixed same review), but whether Sleeper's projections endpoint actually
+  populates `rush_fd`, `rec_fd`, and `player_scoring.LONG_PLAY_THRESHOLDS`'s
+  `*_40p`/`*_50p` keys — all real, non-zero scoring categories for this
+  league — was never specifically checked. Unlike `bonus_rec_te`, these
+  genuinely are raw countable stats a projection provider could plausibly
+  include, so this is a "verify against live data" gap, not a structural
+  certainty. If Sleeper's projections omit them, the dot product already
+  handles it gracefully (an absent key just contributes 0, same as any
+  other stat this league doesn't score) — the open question is only
+  whether it's silently *systematically* undercounting these categories the
+  same way `bonus_rec_te` was, not whether it crashes. Worth a quick live
+  check of one real projection payload's full key set next time this is
+  touched.
 - [ ] **VA-5: `win_pct` doesn't credit a tie as half a win** (assistant
   valuation review, 2026-08-02) — `team_power_timeline_scores()` computes
   `wins / games_played` where `games_played = wins + losses + ties`; a

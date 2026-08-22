@@ -575,3 +575,42 @@ for a number a human might act on, surface enough of the underlying match
 (here: each comparable's own value, not just its bid) that the human can
 judge closeness themselves rather than trusting a black-box "similar
 enough" verdict.
+
+## A generic stat-vocabulary dot product silently drops any scoring rule that isn't itself a raw stat
+
+`_weekly_projected_points()` (`dynasty_core/lineup.py`, `RT-27`,
+2026-08-21 review) scores a player's weekly projection by summing
+`value * scoring_settings.get(stat, 0.0)` over every key in Sleeper's raw
+projection dict — a deliberately generic approach, correct precisely
+because Sleeper's projections and this league's `scoring_settings` already
+share one stat-key vocabulary (`rec`, `rec_yd`, `rush_td`, ...), so no
+crosswalk is needed for *ordinary counting stats*. But `bonus_rec_te` isn't
+a counting stat at all — it's a position-conditional *weight* this league
+applies to the `rec` count only when the player is a TE, the same
+distinction `player_scoring._stat_points()` already encodes explicitly
+(`if position == "TE": ... scoring.get("bonus_rec_te", ...)`). Because
+Sleeper's projections endpoint is global, not league-scoped (see
+`sleeper_api.get_weekly_projections()`), it can never emit a raw stat
+literally named `bonus_rec_te` — there's no live-data fix, the key is
+structurally absent by construction, not missing due to a data-quality
+issue. The generic dot product silently priced every TE's weekly
+projection ~0.5 points/reception too low, in a league where TE premium is
+large enough to justify a 1.202x market-value multiplier
+(`player_pools.POSITION_VALUE_MULTIPLIER`) — enough to flip a real
+marginal FLEX/TE start-sit call.
+
+**The rule**: before scoring an arbitrary external stat-keyed dict against
+`scoring_settings` via a generic `sum(value * scoring_settings.get(stat,
+0.0) ...)`, check `scoring_settings` for keys that are position-conditional
+*weights* rather than raw countable categories (this league currently has
+one: `bonus_rec_te` — grep `player_scoring._stat_points()` for the
+authoritative list of what needs position-conditional handling, since it's
+the one place that distinction is already made explicit). A generic dot
+product is the right shape for ordinary counting stats and gets those
+right "for free" from the shared vocabulary — but it will never
+automatically pick up a rule that only exists in `scoring_settings`, not in
+any stat provider's raw output, no matter how well the two vocabularies
+otherwise line up. Reuse `player_scoring._stat_points()`'s own explicit
+`if position == ...` branches as the reference for which keys need this,
+rather than assuming "same stat-key vocabulary confirmed live" covers
+every key in `scoring_settings`.

@@ -185,23 +185,56 @@ else:
 
 
 def _render_lineup_tab() -> None:
-    st.caption(
-        "Optimal current lineup by value alone — a snapshot, not week-specific yet (doesn't "
-        "account for byes or injuries when deciding who starts). A by-week/injury-aware version "
-        "is a planned refinement."
+    mode = st.radio(
+        "Ranking",
+        ["By value (dynasty)", f"This week's projection (Week {state['projection_week']})"],
+        horizontal=True,
+        key="lineup_tab_mode",
     )
-    starter_cols = cols(
-        state["lineup_starters"], ("slot", "Slot"), ("name", "Player"), ("pos", "Position"), ("adj_value", "Value")
-    )
-    bench_cols = cols(state["lineup_bench"], ("name", "Player"), ("pos", "Position"), ("adj_value", "Value"))
+    if mode == "By value (dynasty)":
+        st.caption(
+            "Optimal lineup by long-run dynasty trade value — the same ranking trade, drop, and "
+            "draft-plan decisions use elsewhere in this app. Doesn't account for byes or injuries "
+            "when deciding who starts; switch to the other mode for a this-week points view instead."
+        )
+        starters, bench, taxi, ir = (
+            state["lineup_starters"],
+            state["lineup_bench"],
+            state["lineup_taxi"],
+            state["lineup_ir"],
+        )
+        value_label = "Value"
+    else:
+        if not state["projections"]:
+            st.info(
+                "This week's player projections are unavailable this refresh — see the warning "
+                "above. Try the \"By value\" mode instead, or hit Refresh to retry."
+            )
+            return
+        st.caption(
+            "Optimal lineup by this week's projected points — Sleeper's own weekly per-player "
+            "projections, scored against this league's real scoring settings. A different question "
+            "than dynasty value: who wins you the most points this week, not who's the better "
+            "long-run asset (trade/drop decisions still use the value-based mode)."
+        )
+        starters, bench, taxi, ir = (
+            state["weekly_lineup_starters"],
+            state["weekly_lineup_bench"],
+            state["weekly_lineup_taxi"],
+            state["weekly_lineup_ir"],
+        )
+        value_label = "Proj. Pts"
+
+    starter_cols = cols(starters, ("slot", "Slot"), ("name", "Player"), ("pos", "Position"), ("adj_value", value_label))
+    bench_cols = cols(bench, ("name", "Player"), ("pos", "Position"), ("adj_value", value_label))
     st.subheader("Starters")
-    st.dataframe(state["lineup_starters"], hide_index=True, width="stretch", column_config=starter_cols)
+    st.dataframe(starters, hide_index=True, width="stretch", column_config=starter_cols)
     st.subheader("Bench")
-    show_df(state["lineup_bench"], "(empty)", column_config=bench_cols)
+    show_df(bench, "(empty)", column_config=bench_cols)
     st.subheader("Taxi squad")
-    show_df(state["lineup_taxi"], "(empty)", column_config=bench_cols)
+    show_df(taxi, "(empty)", column_config=bench_cols)
     st.subheader("IR / Reserve")
-    show_df(state["lineup_ir"], "(empty)", column_config=bench_cols)
+    show_df(ir, "(empty)", column_config=bench_cols)
 
 
 # Tab order shifts with the season rather than staying fixed: Draft Plan is

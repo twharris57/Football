@@ -11,7 +11,15 @@ Five tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
 1. **Draft Plan** — the round-by-round marginal-value simulation, backup
    alternates in expanders, a full player-projection lookup, weekly-gap
    impact.
-2. **Lineup** — current optimal starters/bench.
+2. **Lineup** — a mode switch (`RT-27`) between two different ranking
+   questions, both reusing `assign_starters()` unchanged: "By value
+   (dynasty)" (the long-run asset ranking trade/drop/draft-plan decisions
+   use elsewhere) and "This week's projection" (Sleeper's own weekly
+   per-player projections, scored against this league's real
+   `scoring_settings` — who wins the most points *this* week). Current
+   week only, no week selector; degrades to an "unavailable" message
+   rather than crashing if the undocumented projections endpoint fails
+   (see `data_warnings`).
 3. **Draft Board** — the full rookie class, tiered, with draft attribution.
 4. **Roster** — capacity, needs, value analysis, bye conflicts, weekly
    gaps, handcuffs, sellable veterans, free agents, and the team timeline

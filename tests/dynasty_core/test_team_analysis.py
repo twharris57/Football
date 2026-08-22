@@ -13,7 +13,11 @@ class TestTeamRosterAnalysis:
     not just the user's own - the basis for the Roster tab's team selector."""
 
     def test_bundles_every_view_for_an_arbitrary_roster(self):
-        league = {"roster_positions": ["QB", "WR", "BN"], "settings": {"taxi_slots": 1, "reserve_slots": 1}}
+        league = {
+            "roster_positions": ["QB", "WR", "BN"],
+            "settings": {"taxi_slots": 1, "reserve_slots": 1},
+            "scoring_settings": {"pass_yd": 0.04, "rec_yd": 0.1},
+        }
         players = {
             "qb1": make_player("QB", team="AAA", full_name="QB One"),
             "wr1": make_player("WR", team="AAA", full_name="WR One"),
@@ -41,6 +45,10 @@ class TestTeamRosterAnalysis:
             "lineup_bench",
             "lineup_taxi",
             "lineup_ir",
+            "weekly_lineup_starters",
+            "weekly_lineup_bench",
+            "weekly_lineup_taxi",
+            "weekly_lineup_ir",
         }
         assert analysis["roster_capacity"]["active_filled"] == 2
         assert set(analysis["lineup_starters"]["name"]) == {"QB One", "WR One"}
