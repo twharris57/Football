@@ -73,6 +73,33 @@ class TestWeeklyProjectedValueRows:
 
         assert rows == []
 
+    def test_te_gets_bonus_rec_te_applied_against_the_rec_stat(self):
+        players = {"a": make_player("TE")}
+        projections = {"a": {"rec": 5.0}}
+        scoring_settings = {"rec": 1.0, "bonus_rec_te": 0.5}
+
+        rows = dc.weekly_projected_value_rows(["a"], players, projections, scoring_settings)
+
+        assert rows == [{"player_id": "a", "pos": "TE", "adj_value": 7.5}]  # 5*1 + 5*0.5
+
+    def test_non_te_does_not_get_bonus_rec_te_applied(self):
+        players = {"a": make_player("WR")}
+        projections = {"a": {"rec": 5.0}}
+        scoring_settings = {"rec": 1.0, "bonus_rec_te": 0.5}
+
+        rows = dc.weekly_projected_value_rows(["a"], players, projections, scoring_settings)
+
+        assert rows == [{"player_id": "a", "pos": "WR", "adj_value": 5.0}]
+
+    def test_non_numeric_stat_value_is_skipped_not_crashed_on(self):
+        players = {"a": make_player("WR")}
+        projections = {"a": {"rec": 5.0, "some_undocumented_field": None}}
+        scoring_settings = {"rec": 1.0, "some_undocumented_field": 2.0}
+
+        rows = dc.weekly_projected_value_rows(["a"], players, projections, scoring_settings)
+
+        assert rows == [{"player_id": "a", "pos": "WR", "adj_value": 5.0}]
+
 
 class TestWeeklyLineupBreakdown:
     def test_disagrees_with_dynasty_value_ranking_when_projections_differ(self):

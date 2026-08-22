@@ -24,15 +24,34 @@ def player_value_rows(player_ids: list[str], players: dict[str, dict], fc_by_sle
     return rows
 
 
-def _weekly_projected_points(projection: dict[str, float], scoring_settings: dict[str, float]) -> float:
+def _weekly_projected_points(projection: dict[str, float], scoring_settings: dict[str, float], position: str) -> float:
     """Dot product of a player's projected stat categories against this league's real scoring settings.
 
     Not `player_scoring._stat_points` - that translates `nfl_data_py`'s
     differently-named historical columns. Here both sides already speak
     Sleeper's own stat-key vocabulary (`rec`, `rec_yd`, `rush_td`, ...
-    confirmed live to line up 1:1), so no crosswalk is needed.
+    confirmed live to line up 1:1), so no crosswalk is needed - except for
+    `bonus_rec_te`, a position-conditional *weight* rather than a raw stat
+    category, which Sleeper's projections (a global, non-league-scoped
+    endpoint) can never emit as its own key. Handled the same way
+    `player_scoring._stat_points()` already does: added directly against
+    the `rec` count, only for TEs.
+
+    Non-numeric stat values are skipped rather than trusted blindly - an
+    undocumented endpoint can plausibly return `None` for a rarely-projected
+    category, and this pipeline degrades gracefully everywhere else rather
+    than crashing on an external-data surprise.
     """
-    return sum(value * scoring_settings.get(stat, 0.0) for stat, value in projection.items())
+    points = sum(
+        value * scoring_settings.get(stat, 0.0)
+        for stat, value in projection.items()
+        if isinstance(value, (int, float))
+    )
+    if position == "TE":
+        receptions = projection.get("rec")
+        if isinstance(receptions, (int, float)):
+            points += receptions * scoring_settings.get("bonus_rec_te", 0.0)
+    return points
 
 
 def weekly_projected_value_rows(
@@ -54,7 +73,7 @@ def weekly_projected_value_rows(
         if position not in FANTASY_POSITIONS:
             continue
         projection = projections.get(player_id)
-        adj_value = _weekly_projected_points(projection, scoring_settings) if projection else None
+        adj_value = _weekly_projected_points(projection, scoring_settings, position) if projection else None
         rows.append({"player_id": player_id, "pos": position, "adj_value": adj_value})
     return rows
 

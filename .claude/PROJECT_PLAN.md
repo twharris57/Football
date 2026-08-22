@@ -69,38 +69,9 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-- [ ] **`_weekly_projected_points()` silently drops this league's TE-premium
-  bonus, systematically undercounting every TE's "this week's projection"
-  score.** `dynasty_core/lineup.py`'s new dot product
-  (`sum(value * scoring_settings.get(stat, 0.0) for stat, value in
-  projection.items())`) only ever multiplies a scoring-rule weight against a
-  *raw stat category present in Sleeper's projection dict* (`rec`, `rec_yd`,
-  `rec_td`, ...). `bonus_rec_te` (confirmed non-zero for this league — see
-  `player_scoring.BASELINE_SCORING`'s comment that it deliberately omits
-  `rush_fd`/`rec_fd`/`bonus_rec_te`, and `tests/test_player_scoring.py`'s
-  `0.5` fixture value) is not a raw stat category at all — it's a
-  position-conditional weighting rule applied to the `rec` count *only when
-  the player is a TE*, the same distinction `player_scoring._stat_points()`
-  already handles explicitly (`if position == "TE": points +=
-  totals["receptions"] * scoring.get("bonus_rec_te", 0.0)`). Sleeper's
-  projections endpoint is explicitly not league-scoped (no `/league/{id}` in
-  the path — one global projection set per NFL week, per
-  `sleeper_api.get_weekly_projections()`'s own docstring), so it structurally
-  cannot ever emit a key named `bonus_rec_te` — there is no live-data
-  scenario where this starts working; every TE's weekly-projection
-  `adj_value` is undercounted by `0.5 x projected receptions` every time this
-  runs, in a league where TE premium is large enough to justify a 1.202x
-  market-value multiplier (`player_pools.POSITION_VALUE_MULTIPLIER`). This
-  can flip a real FLEX/TE start-sit decision in the newly added "This week's
-  projection" lineup mode — e.g. a TE projected for 6 catches loses 3.0
-  points, easily enough to lose a marginal slot to a non-TE it should have
-  beaten. Not caught by `TestWeeklyProjectedValueRows`/
-  `TestWeeklyLineupBreakdown` (2026-08-21 branch) — none of the new tests
-  construct a TE case. **Fix**: thread `position` into
-  `_weekly_projected_points()` (or `weekly_projected_value_rows()`, which
-  already has it) and add the same `if position == "TE":` bonus branch
-  `player_scoring._stat_points()` uses, keyed off the real `rec` count
-  already present in the projection dict.
+Empty right now — the TE-premium gap found in this review (`_weekly_projected_points()`
+missing `bonus_rec_te`) is fixed; see `valuation_principles.md`'s "generic
+stat-vocabulary dot product" rule for the durable lesson.
 
 ## Now — blocking
 
@@ -438,37 +409,24 @@ cutoff.
   `_derive_rookie_buckets`/multiplier machinery as additional features
   rather than requiring a new pipeline.
 
-- [ ] **VA-7: `_weekly_projected_points()` trusts an undocumented endpoint's
-  per-stat values are always numeric, with no defensive check** (assistant
-  valuation review, 2026-08-21, RT-27) — the dot product
-  (`sum(value * scoring_settings.get(stat, 0.0) for stat, value in
-  projection.items())`) iterates every key Sleeper's projections endpoint
-  happens to return for a player and multiplies blindly; a `None` or
-  non-numeric value for any stat category (plausible on an undocumented,
-  unofficial endpoint — e.g. a rarely-attempted category returned as `null`
-  rather than omitted) raises an unhandled `TypeError` at render time, not a
-  graceful degradation — unlike the fetch itself, which `state.py` already
-  wraps in try/except and reports via `data_warnings`. Nothing today catches
-  a bad value once the fetch succeeds but a value inside it is malformed.
-  `player_scoring._stat_points()`, the codebase's existing precedent for a
-  scoring dot product, avoids this entirely by reading named, pre-aggregated
-  numeric DataFrame columns rather than iterating an arbitrary external
-  dict — this new function is the first to trust an external free-form
-  dict's values directly. Not confirmed to have happened on live data (the
-  branch's own live verification didn't hit it), so not filed as a
-  fix-before-merge blocker — but cheap to harden (skip/treat-as-0 a
-  non-numeric value per stat key) next time this function is touched,
-  especially alongside the TE-premium fix filed above in "Current branch —
-  fix before merge", since both land in the same function.
-  Related, lower-confidence, same endpoint: whether Sleeper's weekly
-  projections actually include the threshold/long-play bonus categories
-  this league also scores (`rush_fd`, `rec_fd`, and
-  `player_scoring.LONG_PLAY_THRESHOLDS`'s `*_40p`/`*_50p` keys) was never
-  specifically checked — unlike `bonus_rec_te`, these genuinely are raw
-  countable stats a projection provider could plausibly include, so this
-  is a "verify against live data" gap, not a structural certainty like the
-  TE-premium one. Worth a quick live check of one real projection payload's
-  full key set next time this is touched.
+- [ ] **VA-7: Unverified whether Sleeper's weekly projections include the
+  threshold/long-play bonus categories this league also scores** (assistant
+  valuation review, 2026-08-21, RT-27) — `_weekly_projected_points()`'s
+  dot product (`dynasty_core/lineup.py`) now correctly handles
+  `bonus_rec_te` as a position-conditional weight rather than a raw stat
+  (fixed same review), but whether Sleeper's projections endpoint actually
+  populates `rush_fd`, `rec_fd`, and `player_scoring.LONG_PLAY_THRESHOLDS`'s
+  `*_40p`/`*_50p` keys — all real, non-zero scoring categories for this
+  league — was never specifically checked. Unlike `bonus_rec_te`, these
+  genuinely are raw countable stats a projection provider could plausibly
+  include, so this is a "verify against live data" gap, not a structural
+  certainty. If Sleeper's projections omit them, the dot product already
+  handles it gracefully (an absent key just contributes 0, same as any
+  other stat this league doesn't score) — the open question is only
+  whether it's silently *systematically* undercounting these categories the
+  same way `bonus_rec_te` was, not whether it crashes. Worth a quick live
+  check of one real projection payload's full key set next time this is
+  touched.
 - [ ] **VA-5: `win_pct` doesn't credit a tie as half a win** (assistant
   valuation review, 2026-08-02) — `team_power_timeline_scores()` computes
   `wins / games_played` where `games_played = wins + losses + ties`; a
