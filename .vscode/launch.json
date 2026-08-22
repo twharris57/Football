@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "CLI: Rookie Draft (interactive)",
+            "name": "Dynasty: Rookie Draft CLI (interactive)",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/dynasty/rookie_draft.py",
@@ -14,7 +14,7 @@
             "console": "integratedTerminal"
         },
         {
-            "name": "CLI: Rookie Draft (--once)",
+            "name": "Dynasty: Rookie Draft CLI (--once)",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/dynasty/rookie_draft.py",
@@ -24,11 +24,21 @@
             "console": "integratedTerminal"
         },
         {
-            "name": "Web: Streamlit Dashboard",
+            "name": "Dynasty: Streamlit Dashboard",
             "type": "debugpy",
             "request": "launch",
             "module": "streamlit",
             "args": ["run", "dynasty/streamlit_app.py", "--server.headless=true"],
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Confidence Pool: Streamlit App",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "streamlit",
+            "args": ["run", "confidence_pool/streamlit_app.py", "--server.headless=true"],
             "cwd": "${workspaceFolder}",
             "justMyCode": false,
             "console": "integratedTerminal"
