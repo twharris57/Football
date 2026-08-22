@@ -23,60 +23,9 @@ it names is completed and deleted. Cross-reference other items by tag
 
 `feature/confidence-pool-web-app` — MVP web frontend for the weekly
 confidence-pool picks (see the approved implementation plan for full
-scope). Cleared out when the branch merges. Reviewed 2026-08-22
-(assistant valuation review).
+scope). Cleared out when the branch merges.
 
-- [ ] **CP-8: Excluded games don't persist — an unchecked game silently
-  reverts to "included" on the next page load.** `panels/picks_tab.py`'s
-  "Regenerate picks" button and the deadline auto-lock (`CP-9`) both call
-  `store.save_week()` with only the *included* subset of `auto_games`
-  (`chosen.assign(included=True)`), so a game the user unchecked is never
-  written to `weekly_games` at all — not stored with `included=0`, just
-  absent from the table entirely. `included_map` (rebuilt from
-  `saved_games` on the next load) therefore has no entry for that game,
-  and `included_map.get(row["game_id"], True)` falls back to *True* —
-  silently re-checking a game the user deliberately excluded, the moment
-  a new session/reload happens (a fresh browser session, a container
-  restart, or the automatic lock in `CP-9`/`CP-10`). This defeats the
-  documented purpose of the checkboxes ("a normal part of reviewing each
-  week," not just an escape hatch — `docs/confidence-pool-web-app.md`).
-  Fix: pass the *full* `auto_games` frame to `save_week()` with a real
-  per-row `included` column reflecting the checkbox state, and rank only
-  the included subset — the schema (`weekly_games.included`) already
-  supports this; only the caller never uses it.
-- [ ] **CP-9: Deadline auto-lock always recomputes from live odds
-  instead of reusing the last manually-generated snapshot.**
-  `panels/picks_tab.py`'s auto-lock block re-runs `pc.rank_games()`
-  against freshly-fetched odds at whatever moment the page happens to
-  load after the deadline, even when `saved_picks` already holds a
-  snapshot from an earlier "Regenerate picks" click.
-  `docs/confidence-pool-web-app.md` documents the intended behavior as
-  "locks the **last-generated snapshot** (or, if nothing was ever
-  generated, computes one final time)" — the code doesn't do that; it
-  *always* recomputes. Since moneylines move over the course of a week,
-  the snapshot that actually gets locked (and becomes the permanent
-  historical record `CP-3`/`CP-4` depend on) can silently differ from
-  the picks the user actually saw and submitted to the pool earlier.
-  Fix: if `saved_picks` is non-empty, lock it as-is
-  (`store.save_week(conn, season, week, saved_games, saved_picks, now,
-  lock=True)`); only recompute from `auto_games` when nothing was ever
-  generated.
-- [ ] **CP-10: Auto-lock silently no-ops (never locks, no warning) if
-  odds are still pending for any selected game at the deadline.** The
-  auto-lock block only calls `store.save_week(..., lock=True)` `if
-  pending.empty`; when a game's moneyline hasn't posted yet, nothing is
-  saved, `locked` stays `False`, and the function falls through to the
-  normal unlocked edit view with no indication the deadline has already
-  passed. Most likely for weeks 17-18, where `configured_deadline` is
-  deliberately set *earlier than any of that week's real kickoffs* (the
-  bylaws' own example: a Saturday cutoff, potentially a day or more
-  before some of that week's games) — exactly the situation where Vegas
-  may not have posted lines for every selected game yet. The result: the
-  app's own safety net (the entire reason this web app exists — see the
-  doc's opening motivation) can fail precisely when it's most needed,
-  with the UI giving no sign anything's wrong. Fix: on a pending-odds
-  auto-lock attempt, surface an explicit warning ("deadline passed but
-  odds aren't posted for: ...") so the gap is visible instead of silent.
+Empty right now.
 
 ## Now — blocking
 
@@ -123,19 +72,6 @@ Empty right now — nothing blocking.
   in `picks_core.py`, if the Vegas-odds-only approach ever stops being
   sufficient. Deliberately deferred — the pure-odds approach already
   placed 7th of 100+ last season, so this isn't urgent.
-- [ ] **CP-11: Extract the deadline/lock decision and inclusion-merge
-  logic out of `panels/picks_tab.py` into `picks_core.py` as a plain,
-  Streamlit-free function** (assistant valuation review, 2026-08-22).
-  `CP-8`/`CP-9`/`CP-10` all live in code with zero test coverage —
-  `tests/confidence_pool/` covers `picks_core.py` and `store.py`
-  thoroughly, but the `panels/` modules have none, and this is exactly
-  the kind of business logic (not UI rendering) that belongs in the
-  tested core library per this project's own split (`picks_core.py` as
-  the library, `panels/` as thin orchestrators — see `CLAUDE.md`'s
-  Architecture section). A function like `resolve_week_lock(auto_games,
-  saved_games, saved_picks, status, now, deadline) -> LockDecision`
-  would keep `picks_tab.py` a thin orchestrator and make `CP-8`-`CP-10`'s
-  fixes verifiable by a unit test instead of only by manual QA.
 - [ ] **CP-12: Revisit the vig-removal method for extreme favorites, and
   consider multi-book consensus lines** (assistant valuation review,
   2026-08-22). `compute_probability` + `rank_games`'s proportional

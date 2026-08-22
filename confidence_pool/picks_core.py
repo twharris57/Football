@@ -10,6 +10,7 @@ full game-selection rules and why they're shaped this way.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
@@ -134,6 +135,23 @@ def rank_games(games: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return ranked, pending
 
 
+def games_with_included_flags(
+    auto_games: pd.DataFrame, included: dict[str, bool]
+) -> pd.DataFrame:
+    """Attach a real `included` column to every auto-selected game, from the
+    per-game checkbox state (`included`) -- defaulting to `True` for any
+    game not present in the map (nothing has excluded it yet).
+
+    Callers must persist the *full* result via `store.save_week`, not just
+    the included subset -- saving only the included games silently drops a
+    user's exclusion the moment the week is next loaded (its `game_id`
+    would simply be absent from `included`, defaulting back to `True`).
+    """
+    return auto_games.assign(
+        included=auto_games["game_id"].map(included).fillna(True).astype(bool)
+    )
+
+
 def kickoff_datetime(gameday: str, gametime: str) -> datetime:
     """Combine a schedule row's date/time strings into an ET-aware datetime."""
     return datetime.combine(
@@ -172,3 +190,51 @@ def week_deadline(
 def is_locked(now: datetime, deadline: datetime) -> bool:
     """Whether a week's pick-submission deadline has passed."""
     return now >= deadline
+
+
+@dataclass(frozen=True)
+class LockOutcome:
+    """What to do about a week whose deadline has just passed and isn't
+    locked yet, from `resolve_week_lock`."""
+
+    locked: bool
+    games: pd.DataFrame
+    picks: pd.DataFrame
+    warning: str | None
+
+
+def resolve_week_lock(
+    auto_games: pd.DataFrame,
+    included: dict[str, bool],
+    saved_games: pd.DataFrame,
+    saved_picks: pd.DataFrame,
+) -> LockOutcome:
+    """Decide what to lock in for a week whose deadline has just passed.
+
+    Prefers the last manually-generated snapshot (`saved_picks`) so the
+    locked historical record matches what was actually reviewed and
+    submitted, rather than recomputing against whatever odds happen to be
+    live at the moment the lock is evaluated -- moneylines move over the
+    course of a week, so recomputing here could silently lock in different
+    picks than the ones actually generated and acted on earlier.
+
+    Only computes a fresh snapshot from `auto_games` if nothing was ever
+    generated for the week. If odds are still pending for a selected game
+    and there's no prior snapshot to fall back to, returns `locked=False`
+    with an explanatory `warning` instead of locking nothing silently.
+    """
+    if not saved_picks.empty:
+        return LockOutcome(locked=True, games=saved_games, picks=saved_picks, warning=None)
+
+    games_all = games_with_included_flags(auto_games, included)
+    ranked, pending = rank_games(games_all[games_all["included"]])
+    if not pending.empty:
+        missing = ", ".join(
+            f"{r['away_team']} @ {r['home_team']}" for _, r in pending.iterrows()
+        )
+        warning = (
+            f"Pick deadline has passed, but odds aren't posted yet for: {missing}. "
+            "Picks have not been locked -- reload once odds are posted."
+        )
+        return LockOutcome(locked=False, games=pd.DataFrame(), picks=pd.DataFrame(), warning=warning)
+    return LockOutcome(locked=True, games=games_all, picks=ranked, warning=None)

@@ -73,13 +73,19 @@ historical input instead of needing to reconstruct it later (see
 
 A week can be regenerated freely before its deadline (`Picks` tab's
 "Regenerate picks" button overwrites the saved snapshot). Once
-`is_locked(now, deadline)` is true, the app locks the last-generated
-snapshot (or, if nothing was ever generated, computes one final time) and
-switches to a read-only view — `store.save_week()` refuses to overwrite an
-already-locked week's row. There's no background scheduler: "locked" is
-computed from `now` vs. the deadline on every page load/regenerate
-attempt, which is sufficient since checking the app close to game time is
-the whole point of using it.
+`is_locked(now, deadline)` is true, `picks_core.resolve_week_lock()`
+decides what to lock: the last manually-generated snapshot if one exists
+(reused as-is, not recomputed against whatever odds happen to be live at
+that moment — moneylines move over a week, and the locked row is the
+permanent historical record `CP-3`/`CP-4` depend on), or one final
+computed snapshot if nothing was ever generated. If odds are still
+pending for a selected game and there's no prior snapshot to fall back
+on, the week is left unlocked with an explicit warning rather than
+silently not locking. The picks tab then switches to a read-only view —
+`store.save_week()` refuses to overwrite an already-locked week's row.
+There's no background scheduler: "locked" is computed from `now` vs. the
+deadline on every page load/regenerate attempt, which is sufficient since
+checking the app close to game time is the whole point of using it.
 
 Manually overriding a locked week, or recording an actual submitted pick
 that deviated from the recommendation, is deliberately not built — see
@@ -117,13 +123,6 @@ actually covers it.
   (injury impact, weather/altitude, sentiment) aren't wired into
   `picks_core.py` — `CP-6`, deliberately deferred; the pure-odds approach
   already placed 7th of 100+ last season.
-- **The current implementation doesn't yet match this doc's "Lock-in"
-  section**: excluded games aren't actually persisted (an unchecked game
-  silently reverts to included on the next reload), the deadline
-  auto-lock always recomputes from live odds instead of reusing the last
-  manually-generated snapshot, and it silently fails to lock at all if
-  odds are still pending for a selected game at the deadline — see
-  `CP-8`/`CP-9`/`CP-10` in the project plan.
 
 ## Static assumptions
 

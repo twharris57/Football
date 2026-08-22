@@ -67,14 +67,13 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
 
     if not locked and pc.is_locked(now, deadline):
         # Deadline just passed with nothing explicitly locked yet -- lock the
-        # last-generated (or, absent that, the current auto-detected)
-        # recommendation now rather than leaving it open to further edits.
-        chosen = auto_games[
-            auto_games["game_id"].map(included_map).fillna(True).astype(bool)
-        ]
-        ranked, pending = pc.rank_games(chosen)
-        if pending.empty:
-            store.save_week(conn, season, week, chosen.assign(included=True), ranked, now, lock=True)
+        # last-generated snapshot (or, absent that, one final computed
+        # recommendation) now rather than leaving it open to further edits.
+        outcome = pc.resolve_week_lock(auto_games, included_map, saved_games, saved_picks)
+        if outcome.warning:
+            st.warning(outcome.warning)
+        if outcome.locked:
+            store.save_week(conn, season, week, outcome.games, outcome.picks, now, lock=True)
             saved_games, saved_picks, status = store.load_week(conn, season, week)
             locked = True
 
@@ -95,14 +94,15 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         )
 
     if st.button("Regenerate picks"):
-        chosen = auto_games[auto_games["game_id"].map(included)]
+        games_all = pc.games_with_included_flags(auto_games, included)
+        chosen = games_all[games_all["included"]]
         ranked, pending = pc.rank_games(chosen)
         if not pending.empty:
             missing = ", ".join(
                 f"{r['away_team']} @ {r['home_team']}" for _, r in pending.iterrows()
             )
             st.warning(f"Odds not posted yet for: {missing} — try again closer to kickoff.")
-        store.save_week(conn, season, week, chosen.assign(included=True), ranked, datetime.now(pc.ET))
+        store.save_week(conn, season, week, games_all, ranked, datetime.now(pc.ET))
         st.rerun()
     elif not saved_picks.empty:
         st.caption(f"Last generated: {status['generated_at']}")
