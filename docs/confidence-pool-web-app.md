@@ -117,6 +117,13 @@ actually covers it.
   (injury impact, weather/altitude, sentiment) aren't wired into
   `picks_core.py` — `CP-6`, deliberately deferred; the pure-odds approach
   already placed 7th of 100+ last season.
+- **The current implementation doesn't yet match this doc's "Lock-in"
+  section**: excluded games aren't actually persisted (an unchecked game
+  silently reverts to included on the next reload), the deadline
+  auto-lock always recomputes from live odds instead of reusing the last
+  manually-generated snapshot, and it silently fails to lock at all if
+  odds are still pending for a selected game at the deadline — see
+  `CP-8`/`CP-9`/`CP-10` in the project plan.
 
 ## Static assumptions
 
