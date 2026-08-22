@@ -113,24 +113,34 @@ def sellable_players(
     return sellable.sort_values("adj_value", ascending=False, na_position="last").reset_index(drop=True)
 
 
-def _bye_gap_callouts(
+def _weekly_gap_changes(
     before_roster: dict, after_roster: dict, players: dict[str, dict], byes: dict[str, int], league: dict
-) -> list[str]:
-    """Weeks this trade newly breaks or newly fixes a dedicated-slot weekly gap.
+) -> tuple[list[int], list[int]]:
+    """(weeks newly broken, weeks newly fixed) for a dedicated-slot weekly gap.
 
     Reuses `gap_delta()` in both directions - swapping before/after finds
     the reverse case (a gap that existed before but not after), the same
     primitive `alternate_gap_note`/`sellable_players` already use, just
-    read backwards - not a second gap-detection model.
+    read backwards - not a second gap-detection model. Computed
+    unconditionally in `evaluate_trade()` (not gated behind
+    `compute_callouts`) since `find_trade_offers()`'s ranking needs these
+    as real data, not just the formatted text `_weekly_gap_callouts()`
+    turns them into for display.
     """
-    callouts = []
     worsened = gap_delta(before_roster, after_roster, players, byes, league)
-    if not worsened.empty:
-        weeks = ", ".join(str(w) for w in worsened["week"])
-        callouts.append(f"would open a weekly starting gap in week(s) {weeks}")
     closed = gap_delta(after_roster, before_roster, players, byes, league)
-    if not closed.empty:
-        weeks = ", ".join(str(w) for w in closed["week"])
+    return sorted(worsened["week"].tolist()), sorted(closed["week"].tolist())
+
+
+def _weekly_gap_callouts(weekly_gaps_opened: list[int], weekly_gaps_closed: list[int]) -> list[str]:
+    """Format `_weekly_gap_changes()`'s output as the existing callout text - unchanged
+    wording, just no longer computing `gap_delta()` a second time to get it."""
+    callouts = []
+    if weekly_gaps_opened:
+        weeks = ", ".join(str(w) for w in weekly_gaps_opened)
+        callouts.append(f"would open a weekly starting gap in week(s) {weeks}")
+    if weekly_gaps_closed:
+        weeks = ", ".join(str(w) for w in weekly_gaps_closed)
         callouts.append(f"would close an existing weekly starting gap in week(s) {weeks}")
     return callouts
 
@@ -266,8 +276,20 @@ def evaluate_trade(
     trade-only number. Newly-incoming players are protected from being
     recommended for their own trade's forced cut via `exclude_ids`.
 
+    `weekly_gaps_opened`/`weekly_gaps_closed` (RT-27 follow-up, week numbers
+    where this trade newly breaks/fixes a dedicated-slot weekly gap, via
+    `_weekly_gap_changes()`/`gap_delta()`) are a secondary signal, not a
+    third independent valuation axis - `lineup_delta`/`lineup_delta_after_drops`
+    stay the primary read for whether a trade is worth it (this league's
+    rebuild strategy is explicitly about multi-season roster strength, not
+    week-to-week patching), and this is meant to break ties or justify an
+    otherwise-marginal trade, the way `suggested_trades()` uses it. Computed
+    unconditionally (unlike `callouts`, gated behind `compute_callouts`)
+    since `find_trade_offers()`'s combinatorial search loop runs with
+    `compute_callouts=False` for cost but still needs this to rank offers.
+
     `callouts` (RT-18) surfaces non-obvious value the two headline deltas
-    can miss - a bye-week gap this trade opens or closes, an incoming
+    can miss - the same weekly-gap change as text, an incoming
     player who handcuffs one of this roster's own current RBs, an outgoing
     player who was buried on this bench or an incoming one who'd start
     immediately, and where an involved pick ranks in its own class. All
@@ -327,11 +349,13 @@ def evaluate_trade(
         else after_value
     )
 
+    after_roster = {**roster, "players": roster_after_drops}
+    weekly_gaps_opened, weekly_gaps_closed = _weekly_gap_changes(roster, after_roster, players, byes, league)
+
     callouts: list[str] = []
     if compute_callouts:
-        after_roster = {**roster, "players": roster_after_drops}
         callouts = (
-            _bye_gap_callouts(roster, after_roster, players, byes, league)
+            _weekly_gap_callouts(weekly_gaps_opened, weekly_gaps_closed)
             + _handcuff_callouts(current_ids, outgoing_set, incoming_player_ids, players, handcuffs or {})
             + _buried_to_starter_callouts(
                 current_ids, roster_after_drops, outgoing_player_ids, incoming_player_ids,
@@ -348,6 +372,8 @@ def evaluate_trade(
         "roster_size_after": len(roster_after),
         "capacity": capacity,
         "recommended_drops": recommended_drops,
+        "weekly_gaps_opened": weekly_gaps_opened,
+        "weekly_gaps_closed": weekly_gaps_closed,
         "callouts": callouts,
     }
 
@@ -926,11 +952,17 @@ def suggested_trades(
     `leaguewide_trade_candidates()`'s own `marginal_value > 0` "worth
     surfacing at all" filter one stage earlier; see
     `.claude/conventions/valuation_principles.md`'s "worth surfacing" filter
-    rule) before being ranked by that same number - the same number
-    `_show_trade_side()` already surfaces per offer today, not a new
-    metric - and capped to `top_n`. Each returned entry is a
-    `find_trade_offers()` result dict with `roster_id`/`target_player_id`
-    added, so a caller can label which partner owns the suggestion.
+    rule) before being ranked primarily by that same number - the same
+    number `_show_trade_side()` already surfaces per offer today, not a new
+    metric. `your_side["weekly_gaps_closed"]`/`["weekly_gaps_opened"]` (RT-27
+    follow-up) break ties only - this league's rebuild strategy means
+    multi-season roster strength stays the primary question `suggested_trades()`
+    answers, with which weeks a trade smooths over a recurring starter gap as
+    a secondary nudge between otherwise-similar options, never able to
+    outrank a real `lineup_delta_after_drops` difference. Capped to `top_n`.
+    Each returned entry is a `find_trade_offers()` result dict with
+    `roster_id`/`target_player_id` added, so a caller can label which
+    partner owns the suggestion.
     """
     results = []
     for candidate in candidates:
@@ -952,5 +984,10 @@ def suggested_trades(
                 {**offer_result, "roster_id": candidate["roster_id"], "target_player_id": candidate["player_id"]}
             )
 
-    results.sort(key=lambda r: r["offers"][0]["your_side"]["lineup_delta_after_drops"], reverse=True)
+    def _rank_key(result: dict) -> tuple[float, int]:
+        your_side = result["offers"][0]["your_side"]
+        net_gap_improvement = len(your_side["weekly_gaps_closed"]) - len(your_side["weekly_gaps_opened"])
+        return your_side["lineup_delta_after_drops"], net_gap_improvement
+
+    results.sort(key=_rank_key, reverse=True)
     return results[:top_n]

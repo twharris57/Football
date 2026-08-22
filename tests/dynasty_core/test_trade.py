@@ -368,6 +368,8 @@ class TestEvaluateTradeCallouts:
         result = dc.evaluate_trade(roster, ["wr_out"], ["wr_in"], players, fc_by_id, byes, league)
 
         assert any("open a weekly starting gap in week(s) 5" in c for c in result["callouts"])
+        assert result["weekly_gaps_opened"] == [5]
+        assert result["weekly_gaps_closed"] == []
 
     def test_bye_gap_callout_fires_when_trade_closes_an_existing_gap(self):
         league = {"roster_positions": ["WR", "BN"]}
@@ -385,6 +387,31 @@ class TestEvaluateTradeCallouts:
         result = dc.evaluate_trade(roster, ["wr_out"], ["wr_in"], players, fc_by_id, byes, league)
 
         assert any("close an existing weekly starting gap in week(s) 5" in c for c in result["callouts"])
+        assert result["weekly_gaps_closed"] == [5]
+        assert result["weekly_gaps_opened"] == []
+
+    def test_weekly_gap_fields_are_populated_even_when_compute_callouts_is_false(self):
+        # find_trade_offers()'s search loop runs with compute_callouts=False
+        # for cost, but still needs weekly_gaps_opened/closed to rank offers
+        # - unlike the text callouts, these must not be gated behind it.
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {
+            "wr_keep": make_player("WR", team="AAA", full_name="Keep WR"),
+            "wr_out": make_player("WR", team="BBB", full_name="Out WR"),
+            "wr_in": make_player("WR", team="AAA", full_name="In WR"),  # same bye as wr_keep
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr_keep", 100), fc_entry("wr_out", 100), fc_entry("wr_in", 100)]
+        )
+        roster = {"players": ["wr_keep", "wr_out"], "taxi": [], "reserve": []}
+        byes = {"AAA": 5, "BBB": 9}
+
+        result = dc.evaluate_trade(
+            roster, ["wr_out"], ["wr_in"], players, fc_by_id, byes, league, compute_callouts=False
+        )
+
+        assert result["callouts"] == []
+        assert result["weekly_gaps_opened"] == [5]
 
     def test_handcuff_callout_fires_for_an_incoming_backup_to_a_kept_starter(self):
         league = {"roster_positions": ["RB", "BN"]}
@@ -1114,6 +1141,57 @@ class TestSuggestedTrades:
         )
 
         assert len(results) == 2
+
+    def test_ties_on_lineup_gain_are_broken_by_net_weekly_gap_improvement(self, monkeypatch):
+        # find_trade_offers() itself already has full coverage elsewhere
+        # (TestFindTradeOffers) - stubbing it here isolates suggested_trades()'s
+        # own ranking/tie-break logic from having to hand-derive a real bye/value
+        # scenario that produces an exact lineup_delta_after_drops tie, which
+        # would be fragile given how many interacting parts evaluate_trade() has.
+        your_roster, players, replacement_level = self._base_roster_and_players()
+        rosters_by_id = {
+            1: your_roster,
+            2: {"roster_id": 2, "players": ["target_a"]},
+            3: {"roster_id": 3, "players": ["target_b"]},
+        }
+        candidates = [
+            {"player_id": "target_a", "roster_id": 2, "marginal_value": 1.0, "drop": None},
+            {"player_id": "target_b", "roster_id": 3, "marginal_value": 2.0, "drop": None},
+        ]
+        # Both targets give an identical +70 lineup gain - target_a also closes
+        # a real weekly gap, target_b opens one - so the tie-break should favor
+        # target_a despite the identical primary number, and despite target_b's
+        # higher Stage 1 marginal_value (irrelevant here - suggested_trades()
+        # ranks its own results, not the incoming candidate order).
+        gaps_by_target = {
+            "target_a": {"weekly_gaps_opened": [], "weekly_gaps_closed": [5]},
+            "target_b": {"weekly_gaps_opened": [9], "weekly_gaps_closed": []},
+        }
+
+        def fake_find_trade_offers(
+            your_roster,
+            partner_roster,
+            players,
+            fc_by_sleeper_id,
+            byes,
+            league,
+            replacement_level,
+            pick_value_table,
+            handcuffs=None,
+            target_player_id=None,
+            target_pick_name=None,
+            top_n=3,
+        ):
+            your_side = {"lineup_delta_after_drops": 70.0, **gaps_by_target[target_player_id]}
+            return {"offers": [{"your_side": your_side, "combo": []}]}
+
+        monkeypatch.setattr(trade_module, "find_trade_offers", fake_find_trade_offers)
+
+        results = dc.suggested_trades(
+            your_roster, rosters_by_id, players, {}, {}, self.LEAGUE, replacement_level, EMPTY_PICKS, candidates
+        )
+
+        assert [r["target_player_id"] for r in results] == ["target_a", "target_b"]
 
 
 def _scripted_evaluate_trade(script):
