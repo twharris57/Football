@@ -22,6 +22,7 @@ NAS) rather than run only interactively — `confidence_pool/football.py` and
 @.claude/conventions/docker_guidelines.md
 @.claude/conventions/app_deployment_reference.md
 @.claude/conventions/valuation_principles.md
+@.claude/conventions/confidence_pool_principles.md
 
 ## Architecture
 
@@ -202,6 +203,9 @@ conventions.
 - `/valuation-review` — deep fantasy-stats-methodology review of the dynasty valuation
   logic on a branch/PR (or the whole pipeline), filed into `PROJECT_PLAN_DYNASTY.md` and
   `valuation_principles.md`
+- `/confidence-pool-review` — deep sports-betting/reliability-methodology review of the
+  confidence-pool picking logic on a branch/PR (or the whole app), filed into
+  `PROJECT_PLAN_CONFIDENCE_POOL.md` and `confidence_pool_principles.md`
 
 ## Domain Concepts
 
