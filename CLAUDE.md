@@ -2,11 +2,15 @@
 
 ## Project Overview
 
-A personal tool for picking an NFL confidence pool. It pulls live schedule, odds,
-and injury data via `nfl_data_py`, converts Vegas moneylines into implied win
-probabilities, and ranks that week's games by confidence to assign N..1 points
-(standard confidence-pool scoring). Single user, run locally and interactively —
-not a deployed service.
+A personal tool for picking an NFL confidence pool (the "Legion pool" — see
+`docs/confidence-pool-web-app.md` for its bylaws-derived rules), plus a
+separate Sleeper dynasty league toolkit. The confidence-pool side pulls live
+schedule and odds data via `nfl_data_py`, converts Vegas moneylines into
+implied win probabilities, and ranks that week's games by confidence to
+assign N..1 points (standard confidence-pool scoring). Both subsystems are
+single-user but deployed as web services (Streamlit + Docker, on the user's
+NAS) rather than run only interactively — `confidence_pool/football.py` and
+`football_enhanced.py` remain as the original, standalone-only scripts.
 
 ## Active Conventions
 
@@ -48,6 +52,19 @@ else stays flat, on purpose.
   into either picker and still has a placeholder API key.
 - `confidence_pool/football.ipynb` mirrors `football.py`'s logic as a
   notebook for interactive exploration.
+- **Confidence pool web app**: `picks_core.py` is a fresh library (not a
+  refactor of `football_enhanced.py`, which stays untouched as the proven
+  reference implementation this reuses the math from) — current-week
+  detection, the Legion pool's own game-selection rules (bylaws rule 14:
+  Sunday-afternoon/Monday-night for weeks 1-16, Saturday-only for weeks
+  17-18), Vegas-odds ranking, and the pick-submission deadline.
+  `store.py` persists each week's evaluated games and generated picks to
+  SQLite (`confidence_pool_data/picks.db`, anchored via `data_dir.py`
+  mirroring `dynasty/cache_dir.py`'s pattern), locking a week once its
+  deadline passes. `streamlit_app.py` + `panels/` (named to avoid
+  colliding with `dynasty/tabs/` when both subsystems share a `sys.path`,
+  e.g. under `pytest`) is the two-tab (Picks, Settings) web UI. Full
+  design in `docs/confidence-pool-web-app.md`.
 - **Dynasty league tools** (Sleeper), all under `dynasty/`: `sleeper_api.py`
   is a thin client for Sleeper's public read-only API, with local disk
   caching for the ~14MB players reference dataset (`.cache/` at the repo
@@ -65,26 +82,37 @@ else stays flat, on purpose.
   module per non-trivial tab). Full methodology in
   `docs/rookie-draft-big-board.md`; web/Docker details in
   `docs/dynasty-draft-web-app.md`.
-- **Web + Docker**: `web_guidelines.md` applies to `dynasty/streamlit_app.py`/
-  `dynasty/tabs/`, and `docker_guidelines.md` applies to the
-  `Dockerfile`/compose setup below. `python:3.12-slim` is used instead of the
-  guideline's alpine default — a deliberate exception, since `nfl_data_py`'s
+- **Web + Docker**: `web_guidelines.md` applies to both Streamlit UIs
+  (`dynasty/streamlit_app.py`/`dynasty/tabs/` and
+  `confidence_pool/streamlit_app.py`/`confidence_pool/panels/`), and
+  `docker_guidelines.md` applies to each app's own Dockerfile (root
+  `Dockerfile` for dynasty, `confidence_pool/Dockerfile` for the
+  confidence pool, port 8501 vs. 8502) plus the shared compose setup
+  below. `python:3.12-slim` is used instead of the guideline's alpine
+  default for both — a deliberate exception, since `nfl_data_py`'s
   `fastparquet`/`cramjam` dependency often lacks prebuilt musl wheels (same
   call made in the sibling `Finance-Dashboards` project). GitHub Actions
-  (`.github/workflows/docker-publish.yml`) builds and pushes the image to
-  GHCR (`ghcr.io/twharris57/football-dynasty-draft`) on every push to `main`.
-  `docker-compose.deploy.yml` is this repo's deployment reference per
-  `app_deployment_reference.md`; the deployment repo that reads and adapts
-  it is `../nas-configs` (`football/football-compose.yaml`). Local dev
-  (`docker-compose.yml`) still builds from source.
+  (`.github/workflows/docker-publish.yml`) builds and pushes both images to
+  GHCR (`ghcr.io/twharris57/football-dynasty-draft`,
+  `ghcr.io/twharris57/football-confidence-pool`) on every push to `main`,
+  via a build matrix. `docker-compose.deploy.yml` is this repo's
+  deployment reference per `app_deployment_reference.md`, with one service
+  per app; the deployment repo that reads and adapts it is
+  `../nas-configs` (`football/football-compose.yaml`). Local dev
+  (`docker-compose.yml`) still builds both from source.
 
 ## Key Constraints
 
-- Year/week/gamedays are hardcoded per script and must be edited by hand each
-  week — there's no CLI argument parsing yet (confidence pool scripts only;
-  the dynasty tools do take CLI args).
+- `confidence_pool/football.py`/`football_enhanced.py` (the legacy CLI
+  scripts only) hardcode year/week/gamedays, edited by hand each week — the
+  web app (`picks_core.py`) auto-detects the current week instead.
 - Fully dependent on `nfl_data_py`'s upstream data availability (schedules,
-  odds, injuries); no offline fallback or caching.
+  odds, injuries); no offline fallback. The web app caches the schedule
+  fetch briefly (`st.cache_data`, 15m TTL) but has no persistent cache of
+  its own beyond the weekly picks/games snapshots in `store.py`.
+- Weeks 17-18's pick deadline (`season_config`) needs manual correction
+  once the commissioner announces each year's actual cutoff — see
+  `.claude/PROJECT_PLAN_CONFIDENCE_POOL.md`'s `CP-1`.
 - `team_metadata_batch.py` needs a real OpenWeatherMap API key to function and
   is currently non-functional / not integrated into the picking flow.
 - Dynasty tools depend on two external, unauthenticated public APIs (Sleeper,
@@ -96,10 +124,16 @@ else stays flat, on purpose.
 
 ```
 confidence_pool/
-  football.py              Simple standalone confidence-pool picker (moneyline ranking + injury report)
-  football_enhanced.py     Weighted multi-signal picker framework (only Vegas odds active so far)
+  football.py              Simple standalone confidence-pool picker (moneyline ranking + injury report) - legacy, untouched
+  football_enhanced.py     Weighted multi-signal picker framework (only Vegas odds active so far) - legacy, untouched
   team_metadata_batch.py   Prototype: team altitude/temperature/style enrichment via OpenWeatherMap (unintegrated)
   football.ipynb           Notebook version of football.py for interactive experimentation
+  picks_core.py            Web app's core library: current-week detection, game-selection rules, Vegas-odds ranking, deadline
+  store.py                 SQLite persistence: weekly evaluated games + generated picks, season config, lock-in
+  data_dir.py              Shared DATA_DIR/DB_PATH, anchored to the repo root (mirrors dynasty/cache_dir.py's pattern)
+  streamlit_app.py         Web app entry point (thin orchestrator)
+  panels/                  One module per Streamlit tab (Picks, Settings) - named to avoid colliding with dynasty/tabs/
+  Dockerfile               Image for confidence_pool/streamlit_app.py (python:3.12-slim, non-root, port 8502)
 dynasty/
   sleeper_api.py           Sleeper API client + local players-dataset cache
   fantasycalc_api.py       FantasyCalc dynasty trade-value client
@@ -116,14 +150,15 @@ dynasty/
 tests/
   dynasty_core/            pytest suite mirroring dynasty_core/'s submodules, plus helpers.py fixtures
   test_player_scoring.py
-Dockerfile               Image for dynasty/streamlit_app.py (python:3.12-slim, non-root)
-docker-compose.yml       Local dev: builds the image from source
-docker-compose.deploy.yml  Deployment reference (pulls the prebuilt GHCR image; ../nas-configs deploys the adapted copy)
+  confidence_pool/         pytest suite for picks_core.py and store.py (synthetic schedule data, in-memory SQLite)
+Dockerfile               Image for dynasty/streamlit_app.py (python:3.12-slim, non-root, port 8501)
+docker-compose.yml       Local dev: builds both apps' images from source
+docker-compose.deploy.yml  Deployment reference, one service per app (pulls prebuilt GHCR images; ../nas-configs deploys the adapted copy)
 .env.example             Deployment reference env vars for docker-compose.deploy.yml (secrets left blank + a comment on source)
-.github/workflows/       CI: ci.yml runs pytest on every PR; docker-publish.yml builds+pushes to GHCR on push to main
-requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, streamlit, ...)
-.claude/                 Claude Code conventions, commands, and PROJECT_PLAN_DYNASTY.md
-docs/                    Design docs for completed features
+.github/workflows/       CI: ci.yml runs pytest on every PR; docker-publish.yml builds+pushes both images to GHCR (matrix) on push to main
+requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, streamlit, ...) - shared by both apps
+.claude/                 Claude Code conventions, commands, and one PROJECT_PLAN_<SUBSYSTEM>.md per subsystem
+docs/                    Design docs for completed features, grouped by subsystem (see docs/README.md)
 ```
 
 ## Development Commands
@@ -133,15 +168,16 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 
-python confidence_pool/football.py            # simple picker
-python confidence_pool/football_enhanced.py   # weighted picker
+python confidence_pool/football.py            # legacy simple picker (untouched)
+python confidence_pool/football_enhanced.py   # legacy weighted picker (untouched)
+streamlit run confidence_pool/streamlit_app.py # confidence pool web app (port 8502)
 
 python dynasty/rookie_draft.py         # dynasty rookie draft big board, interactive refresh loop
 python dynasty/rookie_draft.py --once  # one snapshot, no prompt
 
-streamlit run dynasty/streamlit_app.py # dynasty rookie draft big board, web dashboard
+streamlit run dynasty/streamlit_app.py # dynasty rookie draft big board, web dashboard (port 8501)
 
-docker compose up --build      # local: build and run the dashboard in Docker
+docker compose up --build      # local: build and run both apps in Docker
 
 pytest tests/ -v                # ranking/lineup/valuation logic (runs in CI on every PR)
 ```
@@ -150,9 +186,12 @@ Test coverage is intentionally narrow so far: `tests/dynasty_core/` covers
 `assign_starters`, the capacity-aware drop logic, `season_average_starter_value`'s
 bye-week handling, and `roster_weekly_gaps`, one file per `dynasty_core/` submodule;
 `tests/test_player_scoring.py` covers the per-player real-scoring correction's
-`_sane_ratio` guard and multiplier fallback chain. Both run against synthetic data
-(no real API calls). The confidence-pool scripts and the Sleeper/FantasyCalc clients
-themselves still have none. See `testing.md` for general conventions.
+`_sane_ratio` guard and multiplier fallback chain; `tests/confidence_pool/` covers
+`picks_core.py`'s game-selection/ranking/deadline logic and `store.py`'s
+persistence round-trip and lock enforcement. All run against synthetic data
+(no real API calls). The legacy confidence-pool scripts and the Sleeper/
+FantasyCalc clients themselves still have none. See `testing.md` for general
+conventions.
 
 ## Available Skills
 
@@ -175,7 +214,13 @@ themselves still have none. See `testing.md` for general conventions.
   moneylines are underdogs, negative are favorites.
 - **Toss-up**: a game with `|home_moneyline| < 150` — close to even money,
   where the odds alone don't strongly separate the two teams, so injury
-  reports are checked as a tiebreaker.
+  reports are checked as a tiebreaker (`football.py` only; the web app
+  doesn't use injury data).
+- **Legion pool sheet rules**: not every game in a week counts — only
+  Sunday-afternoon/Monday-night games for weeks 1-16, Saturday-only for
+  weeks 17-18, per the pool's own bylaws. See `docs/confidence-pool-web-app.md`
+  for the full derivation and `picks_core.select_games()`/`week_deadline()`
+  for the implementation.
 - **Dynasty league**: keeps every player on the roster year to year (no
   re-draft) — rookies are the only new players entering the league, and only
   via the annual rookie draft.
