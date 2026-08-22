@@ -17,7 +17,7 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-6`.
+**ID tracker** (last number assigned): `CP-7`.
 
 ## Current branch — fix before merge
 
@@ -33,6 +33,13 @@ Empty right now — nothing blocking.
 
 ## Backlog
 
+- [ ] **CP-7: Map team abbreviations (e.g. `LAC`) to the display names
+  used on the Legion pool's own pick sheet** (e.g. "LA Chargers",
+  "DENVER", "DALLAS") when rendering picks in the UI — user-flagged
+  2026-08-22, high priority for the near future. The sheet's own naming
+  isn't a consistent format across teams (some city+mascot, some
+  city-only/all-caps), so this needs the real 32-team mapping from the
+  user, not a guessed convention — do not fabricate the mapping table.
 - [ ] **CP-1: Confirm/correct 2026's weeks 17–18 cutoff in `season_config`
   once the commissioner announces it.** Seeded at build time with a
   placeholder based on 2025's pattern (Saturday games, early-afternoon ET
