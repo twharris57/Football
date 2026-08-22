@@ -122,7 +122,7 @@ docker-compose.deploy.yml  Deployment reference (pulls the prebuilt GHCR image; 
 .env.example             Deployment reference env vars for docker-compose.deploy.yml (secrets left blank + a comment on source)
 .github/workflows/       CI: ci.yml runs pytest on every PR; docker-publish.yml builds+pushes to GHCR on push to main
 requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, streamlit, ...)
-.claude/                 Claude Code conventions, commands, and PROJECT_PLAN.md
+.claude/                 Claude Code conventions, commands, and PROJECT_PLAN_DYNASTY.md
 docs/                    Design docs for completed features
 ```
 
@@ -161,7 +161,7 @@ themselves still have none. See `testing.md` for general conventions.
 - `/pr` — create or update a pull request following the project's PR conventions
 - `/update-from-agentconfig` — pull upstream AgentConfig changes selectively
 - `/valuation-review` — deep fantasy-stats-methodology review of the dynasty valuation
-  logic on a branch/PR (or the whole pipeline), filed into `PROJECT_PLAN.md` and
+  logic on a branch/PR (or the whole pipeline), filed into `PROJECT_PLAN_DYNASTY.md` and
   `valuation_principles.md`
 
 ## Domain Concepts
@@ -190,7 +190,7 @@ themselves still have none. See `testing.md` for general conventions.
   accumulate young talent and accept being near the bottom of the league
   short-term, aiming to be competitive within ~2-3 years. This should bias
   any recommendation logic (rookie value, trade sense) toward long-term
-  asset value over immediate win-now moves. See `.claude/PROJECT_PLAN.md`
+  asset value over immediate win-now moves. See `.claude/PROJECT_PLAN_DYNASTY.md`
   for the current state of dynasty tooling.
 - **Rookie draft big board**: shows the whole incoming rookie class (drafted
   players stay listed, annotated with who took them), valued via FantasyCalc
@@ -241,3 +241,15 @@ When a task requires using a library, framework, or API the project hasn't used 
 briefly explain what it does and why you're reaching for it — not a line-by-line code
 walkthrough, but enough context for a developer unfamiliar with it to understand the
 model and look up further detail independently.
+
+### Bulk renames and multi-file edits
+
+`sed` (or an equivalent blind scripted substitution) is a last resort, not a default —
+reach for it only when it's genuinely the best-fitting tool for the operation and
+nothing else reasonably fits. Prefer, in order: the `Edit` tool (with `replace_all` for
+a single file), or `Grep` to enumerate every match first followed by per-file `Edit`
+calls when a rename spans multiple files or needs different handling per occurrence.
+These keep each change visible and diffable instead of applying a blind pattern sweep.
+`sed` is acceptable when the substitution is truly mechanical, unambiguous, and
+scoped (e.g. a fixed string across many files with no contextual judgment needed) —
+not as a shortcut to avoid enumerating matches first.
