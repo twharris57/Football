@@ -13,10 +13,25 @@ services:
     image: ghcr.io/twharris57/football-dynasty-draft:latest
     pull_policy: always
     ports:
-      - "${HOST_PORT:-8501}:8501"
+      - "${DYNASTY_HOST_PORT:-8501}:8501"
     volumes:
       - nfl_data_cache:/app/.cache
     restart: unless-stopped
 
+  confidence-pool:
+    image: ghcr.io/twharris57/football-confidence-pool:latest
+    pull_policy: always
+    ports:
+      - "${CONFIDENCE_POOL_HOST_PORT:-8502}:8502"
+    volumes:
+      - confidence_pool_data:/app/confidence_pool_data
+    restart: unless-stopped
+
 volumes:
   nfl_data_cache:
+  # Weekly picks/games history -- see docs/confidence-pool-web-app.md and
+  # .claude/PROJECT_PLAN_CONFIDENCE_POOL.md's CP-2: confirm this volume is
+  # actually covered by the NAS's offsite backup (it's durable across
+  # container restarts either way, but backup coverage is a separate,
+  # NAS-side question).
+  confidence_pool_data:
