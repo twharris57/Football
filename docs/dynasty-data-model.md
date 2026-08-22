@@ -3,7 +3,7 @@
 How state actually flows through the dynasty tools: what's cached where, on
 what freshness policy, and which layer a new feature's data should live in.
 Current-state reference only, per `docs/README.md`'s convention — active/open
-work belongs in `.claude/PROJECT_PLAN.md`, not here.
+work belongs in `.claude/PROJECT_PLAN_DYNASTY.md`, not here.
 
 ## The four persistence layers today
 
@@ -51,7 +51,7 @@ draft currently being reconciled gets renamed with an `.orphaned` suffix (a
 draft's own file stops being written to once the draft ends, so its mtime
 is a reasonable proxy for "this draft is over"). This is a soft,
 reversible marker, not deletion — actual removal of `.orphaned` files is
-still open, tracked as `DL-8`'s Phase 2 in `.claude/PROJECT_PLAN.md`.
+still open, tracked as `DL-8`'s Phase 2 in `.claude/PROJECT_PLAN_DYNASTY.md`.
 
 ## The conceptual split: import vs. cached-derived vs. cheap-derived vs. on-demand
 
@@ -136,6 +136,6 @@ them — none of which is true today.
 
 Open work on this data model (consolidating the two accumulator snapshot
 files, ingest-time filtering, structured pick identity, etc.) is tracked in
-`.claude/PROJECT_PLAN.md` under `CQ-6`, `DL-9`, and `CQ-5` — not here; fold a
+`.claude/PROJECT_PLAN_DYNASTY.md` under `CQ-6`, `DL-9`, and `CQ-5` — not here; fold a
 finished item's outcome into the relevant section above when it lands,
 rather than describing planned-but-not-yet-true state in this doc.

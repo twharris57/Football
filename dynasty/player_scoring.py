@@ -145,7 +145,7 @@ def _derive_rookie_buckets(season_totals: pd.DataFrame, current_season: str) -> 
 
     Only ever produces entries for players in this year's combine class
     (`current_season`) - explicitly rescoped to rookies, not a general
-    veteran-inclusive bucket system (see PROJECT_PLAN.md step A).
+    veteran-inclusive bucket system (see PROJECT_PLAN_DYNASTY.md step A).
     """
     historical_combine = _combine_data(list(range(2000, int(current_season))))
     rookie_combine = _combine_data([int(current_season)])

@@ -250,7 +250,7 @@ def roster_total_capacity(
     taxi slot — `True` (default) for rookies, always taxi-eligible in this
     draft; `False` for `free_agent_board`/`evaluate_trade`'s candidates,
     since Sleeper's real accrued-experience taxi rule isn't modeled here
-    (see `.claude/PROJECT_PLAN.md`'s `RT-8`) and most veteran free agents
+    (see `.claude/PROJECT_PLAN_DYNASTY.md`'s `RT-8`) and most veteran free agents
     or trade targets wouldn't actually qualify. When `taxi_eligible=False`,
     the ceiling still credits `taxi_filled` (the roster's actual current
     taxi headcount, same shape as `reserve_filled`) rather than dropping

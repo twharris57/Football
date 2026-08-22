@@ -10,7 +10,7 @@ import pandas as pd
 from .constants import FANTASY_POSITIONS
 
 # Position-level correction for FantasyCalc's known scoring mismatch (see
-# PROJECT_PLAN.md): FantasyCalc's values assume 4pt passing TDs and no TE
+# PROJECT_PLAN_DYNASTY.md): FantasyCalc's values assume 4pt passing TDs and no TE
 # premium, not this league's real 6pt passing TDs / +0.5-per-reception TE
 # premium. Computed as the ratio of total fantasy points, under this
 # league's real rule vs FantasyCalc's assumed baseline rule, holding every
@@ -23,11 +23,11 @@ from .constants import FANTASY_POSITIONS
 # `python scripts/derive_position_multipliers.py` whenever a fresher
 # season becomes available — that script uses the same lookback-from-
 # current-season logic, so it doesn't need editing to stay current, only
-# re-running (see PROJECT_PLAN.md for the longer-term plan to automate
+# re-running (see PROJECT_PLAN_DYNASTY.md for the longer-term plan to automate
 # this fully). This corrects only the two largest, most clearly
 # attributable gaps — it does NOT correct for the smaller long-TD/first-down
-# bonus gaps also noted in PROJECT_PLAN.md. A real per-player recompute
-# (see PROJECT_PLAN.md's Active valuation work) would replace this; this is
+# bonus gaps also noted in PROJECT_PLAN_DYNASTY.md. A real per-player recompute
+# (see PROJECT_PLAN_DYNASTY.md's Active valuation work) would replace this; this is
 # the deliberately lightweight version.
 POSITION_VALUE_MULTIPLIER = {
     "QB": 1.175,

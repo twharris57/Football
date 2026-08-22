@@ -12,7 +12,7 @@ class TestFantasyRelevantTeamedPlayers:
     """fantasy_relevant_teamed_players should be every fantasy-relevant, real-NFL-team
     player regardless of fantasy-roster status - the broader population free_agent_pool
     narrows down further, and what pickup_snapshots.py tracks so a fantasy-roster drop
-    can't masquerade as a real NFL-team signing (see RT-22 in PROJECT_PLAN.md)."""
+    can't masquerade as a real NFL-team signing (see RT-22 in PROJECT_PLAN_DYNASTY.md)."""
 
     def test_includes_rostered_players_unlike_free_agent_pool(self):
         players = {

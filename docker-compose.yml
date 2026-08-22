@@ -11,5 +11,16 @@ services:
       - nfl_data_cache:/app/.cache
     restart: unless-stopped
 
+  confidence-pool:
+    build:
+      context: .
+      dockerfile: confidence_pool/Dockerfile
+    ports:
+      - "8502:8502"
+    volumes:
+      - confidence_pool_data:/app/confidence_pool_data
+    restart: unless-stopped
+
 volumes:
   nfl_data_cache:
+  confidence_pool_data:

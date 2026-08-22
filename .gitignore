@@ -4,6 +4,7 @@ __pycache__/
 .ipynb_checkpoints/
 .vscode/settings.json
 .cache/
+confidence_pool_data/
 .env
 .pytest_cache/
 tmp/*

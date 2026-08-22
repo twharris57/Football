@@ -57,7 +57,7 @@ can be computed outside the main per-refresh pass.
 
 **Not built:** a league-wide summary view (one row per team — value,
 biggest need, capacity — scannable before drilling into one team); see
-`.claude/PROJECT_PLAN.md`. The team-selector approach answers "how does the
+`.claude/PROJECT_PLAN_DYNASTY.md`. The team-selector approach answers "how does the
 tool see this *one* team" well; it doesn't answer "which teams across the
 league are worth scouting first."
 
@@ -88,7 +88,7 @@ in `tabs/components.py`) defining VOR, power score, and adj. value.
 ### Sellable veterans / Free agents / Draft pick trade values
 
 Three sections in the Roster tab, added for trade/roster-move evaluation
-— see `docs/rookie-draft-big-board.md` and `.claude/PROJECT_PLAN.md` for
+— see `docs/rookie-draft-big-board.md` and `.claude/PROJECT_PLAN_DYNASTY.md` for
 what's deliberately out of scope.
 
 "Sellable veterans" sits right after Roster value analysis, and "Free
@@ -147,7 +147,7 @@ owning team since there's no longer a single implied partner. Results
 persist across reruns via `st.session_state["suggested_trades_results"]`
 rather than needing a re-click on every unrelated page interaction —
 tagged with `state["version"]` and dropped on a mismatch
-(`docs/data-model.md`'s "versioned on-demand-result pattern") so a stale
+(`docs/dynasty-data-model.md`'s "versioned on-demand-result pattern") so a stale
 scan can't outlive a real refresh.
 
 A third section, "Suggest an improvement" (`RT-14`), sits directly below
