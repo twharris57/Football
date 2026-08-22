@@ -22,6 +22,7 @@ BASE_URL = "https://api.sleeper.app/v1"
 PLAYERS_CACHE_PATH = CACHE_DIR / "players.json"
 PLAYERS_CACHE_TTL_SECONDS = 12 * 60 * 60
 TRANSACTIONS_CACHE_TTL_SECONDS = 12 * 60 * 60
+PROJECTIONS_CACHE_TTL_SECONDS = 60 * 60
 
 
 def _build_session() -> requests.Session:
@@ -111,6 +112,37 @@ def get_transactions(league_id: str, season: str, current_leg: int, force_refres
     CACHE_DIR.mkdir(exist_ok=True)
     cache_path.write_text(json.dumps(transactions), encoding="utf-8")
     return transactions
+
+
+def get_weekly_projections(season: str, week: int, force_refresh: bool = False) -> dict[str, dict[str, float]]:
+    """Return this week's per-player stat-category projections, keyed by player_id.
+
+    An unofficial, undocumented endpoint (no `/league/{id}` scoping - Sleeper
+    computes one projection set per NFL week, shared across every league) -
+    confirmed live to return real per-stat weekly projections (`rec`,
+    `rec_yd`, `rush_td`, etc.) in the same stat-key vocabulary
+    `league["scoring_settings"]` already uses, not just an ADP number. Since
+    it's undocumented, the call site (`state.py`) wraps this in its own
+    try/except rather than this function swallowing failures itself - same
+    isolation pattern as `get_transactions`/`get_players`.
+
+    Cached to disk per (season, week) with a much shorter TTL than
+    `players.json`'s 12h - unlike the player reference data, projections
+    shift during the week (injury designations, etc.), so a stale cache is a
+    real accuracy risk, not just a mild inefficiency.
+    """
+    cache_path = CACHE_DIR / f"projections_{season}_{week}.json"
+    if not force_refresh and cache_path.exists():
+        age_seconds = time.time() - cache_path.stat().st_mtime
+        if age_seconds < PROJECTIONS_CACHE_TTL_SECONDS:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+
+    logger.info("Refreshing weekly projections from Sleeper (season %s, week %d)...", season, week)
+    data = _get(f"/projections/nfl/regular/{season}/{week}")
+
+    CACHE_DIR.mkdir(exist_ok=True)
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+    return data
 
 
 def get_players(force_refresh: bool = False) -> dict[str, Any]:

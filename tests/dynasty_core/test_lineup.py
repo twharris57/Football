@@ -48,6 +48,79 @@ class TestLineupBreakdown:
         assert list(ir["name"]) == [players["ir1"]["full_name"]]
 
 
+class TestWeeklyProjectedValueRows:
+    def test_computes_dot_product_against_scoring_settings(self):
+        players = {"a": make_player("WR")}
+        projections = {"a": {"rec": 5.0, "rec_yd": 50.0, "rec_td": 1.0}}
+        scoring_settings = {"rec": 1.0, "rec_yd": 0.1, "rec_td": 6.0}
+
+        rows = dc.weekly_projected_value_rows(["a"], players, projections, scoring_settings)
+
+        assert rows == [{"player_id": "a", "pos": "WR", "adj_value": 16.0}]  # 5*1 + 50*0.1 + 1*6
+
+    def test_missing_projection_entry_yields_none_adj_value(self):
+        players = {"a": make_player("WR")}
+
+        rows = dc.weekly_projected_value_rows(["a"], players, {}, {"rec": 1.0})
+
+        assert rows[0]["adj_value"] is None
+
+    def test_non_fantasy_position_is_excluded(self):
+        players = {"a": {"position": "DEF", "team": "AAA", "full_name": "Defense"}}
+        projections = {"a": {"def_td": 1.0}}
+
+        rows = dc.weekly_projected_value_rows(["a"], players, projections, {"def_td": 6.0})
+
+        assert rows == []
+
+
+class TestWeeklyLineupBreakdown:
+    def test_disagrees_with_dynasty_value_ranking_when_projections_differ(self):
+        # wr1 is the better dynasty asset; wr2 is projected to score far more
+        # this week - the two rankings should pick different starters,
+        # proving weekly_lineup_breakdown() actually plumbs projected points
+        # through assign_starters(), not a copy of the dynasty-value ranking.
+        players = {"wr1": make_player("WR"), "wr2": make_player("WR")}
+        roster = {"players": list(players.keys())}
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr1", 500, position="WR"), fc_entry("wr2", 100, position="WR")]
+        )
+        projections = {"wr1": {"rec_yd": 10.0}, "wr2": {"rec_yd": 200.0}}
+        league = {"roster_positions": ["WR"], "scoring_settings": {"rec_yd": 0.1}}
+
+        value_starters, *_ = dc.lineup_breakdown(roster, players, fc_by_id, league)
+        weekly_starters, *_ = dc.weekly_lineup_breakdown(roster, players, projections, league)
+
+        assert list(value_starters["name"]) == [players["wr1"]["full_name"]]
+        assert list(weekly_starters["name"]) == [players["wr2"]["full_name"]]
+
+    def test_taxi_and_reserve_players_are_split_from_bench(self):
+        players = {
+            "starter": make_player("QB"),
+            "bench1": make_player("RB"),
+            "taxi1": make_player("WR"),
+            "ir1": make_player("TE"),
+        }
+        roster = {"players": list(players.keys()), "taxi": ["taxi1"], "reserve": ["ir1"]}
+        projections = {pid: {"pass_yd": 1.0} for pid in players}
+        league = {"roster_positions": ["QB", "BN"], "scoring_settings": {"pass_yd": 1.0}}
+
+        _starters, bench, taxi, ir = dc.weekly_lineup_breakdown(roster, players, projections, league)
+
+        assert list(bench["name"]) == [players["bench1"]["full_name"]]
+        assert list(taxi["name"]) == [players["taxi1"]["full_name"]]
+        assert list(ir["name"]) == [players["ir1"]["full_name"]]
+
+    def test_empty_projections_degrades_to_all_none_values_not_a_crash(self):
+        players = {"wr1": make_player("WR")}
+        roster = {"players": list(players.keys())}
+        league = {"roster_positions": ["WR"], "scoring_settings": {"rec_yd": 0.1}}
+
+        starters, *_ = dc.weekly_lineup_breakdown(roster, players, {}, league)
+
+        assert list(starters["adj_value"]) == [None]
+
+
 class TestAssignStarters:
     """assign_starters: most-restrictive-slot-first, provably optimal for nested eligibility."""
 

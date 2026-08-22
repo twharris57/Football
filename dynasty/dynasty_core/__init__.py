@@ -54,6 +54,8 @@ from .lineup import (
     player_value_rows,
     roster_capacity,
     roster_total_capacity,
+    weekly_lineup_breakdown,
+    weekly_projected_value_rows,
 )
 from .marginal_value import (
     best_position_relevant_drop,
@@ -243,5 +245,7 @@ __all__ = [
     "team_name_by_roster_id",
     "team_power_timeline_scores",
     "team_roster_analysis",
+    "weekly_lineup_breakdown",
+    "weekly_projected_value_rows",
     "won_bid_sample",
 ]

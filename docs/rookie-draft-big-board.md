@@ -614,11 +614,24 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   crosswalk (`nfl.import_ids()`) generally hasn't caught up with the
   incoming class yet, not a join bug; `handcuff_to` fills in gradually
   later in the year, not all at once.
-- **Lineup** — the `assign_starters` breakdown exposed directly as its own
-  view (current-value snapshot; not week- or injury-aware yet — a planned
-  refinement), with separate Starters/Bench/Taxi/IR sections
-  (`lineup_breakdown()`) — taxi and IR players are both in
-  `roster["players"]` alongside the real bench, so they're split out by
+- **Lineup** (`RT-27`) — the `assign_starters` breakdown exposed directly as
+  its own view, with a mode switch between two different ranking
+  questions, both reusing `assign_starters()`/the taxi-IR-bench split
+  unchanged (`_lineup_breakdown_from_rows()` in `dynasty_core/lineup.py`):
+  **By value (dynasty)** — the long-run asset-value snapshot
+  (`lineup_breakdown()`), unchanged from before, still what trade/drop/
+  draft-plan decisions use (see `valuation_principles.md`'s "one valuation
+  strategy" rule) — not week- or injury-aware by design. **This week's
+  projection** — `weekly_lineup_breakdown()`, ranking by Sleeper's own
+  per-player weekly projections (`sleeper_api.get_weekly_projections()`,
+  an unofficial, undocumented endpoint) dot-producted against this
+  league's real `scoring_settings` (both sides already speak Sleeper's own
+  stat-key vocabulary — confirmed live to line up 1:1, no crosswalk
+  needed). Current week only (`league["settings"]["leg"]`), no week
+  selector; degrades to an "unavailable" message rather than crashing if
+  the projections fetch fails (`data_warnings`, same isolation pattern as
+  byes/handcuffs). Taxi and IR players are both in `roster["players"]`
+  alongside the real bench in both modes, so they're split out by
   cross-referencing `roster["taxi"]`/`roster["reserve"]` rather than left
   lumped into "bench".
 - **Draft plan** — every pick the user owns this draft. Rounds already
@@ -685,7 +698,11 @@ candidates.
   a real limitation, not a bug, given Sleeper never records which drop was
   "for" which pick.
 - `roster_weekly_gaps` doesn't model FLEX/SUPER_FLEX, only dedicated slots.
-- Lineup and handcuff logic have no injury-status awareness.
+- Handcuff logic and the Lineup tab's "By value" mode have no
+  injury-status awareness. The "This week's projection" mode (`RT-27`) is
+  a partial exception — Sleeper's own weekly projections presumably
+  reflect official injury designations to whatever degree Sleeper itself
+  accounts for them, but this app doesn't verify or model that directly.
 - Handcuffs are RB-only — the standard fantasy usage of the term.
 - `free_agent_board` treats every candidate as active-roster-only
   (`taxi_eligible=False`) and shows FAAB budget for context without any
@@ -730,3 +747,4 @@ is a deliberate decision, not a silent bug:
 | `SUGGESTED_TRADE_SCAN_TOP_K = 15` | `leaguewide_trade_candidates`/`suggested_trades` (`dynasty_core/trade.py`) | How many of Stage 1's cheap, affordability-filtered leaguewide candidates get Stage 2's expensive real search — bounds Suggested Trades' scan cost to a constant regardless of league size, sized to the same order of magnitude as the original single-partner whole-roster scan concept | Raise if 15 candidates routinely produce fewer than 3 viable offers in practice; lower if a scan feels slow |
 | A historical winning bid's comparable value is the player's *current* `adj_value`, not their value at the time of the bid | `won_bid_sample` (`dynasty_core/waiver_bids.py`) | Not reconstructable without historical roster/value snapshots this project doesn't keep. Reasonable for the short in-season windows FAAB guidance covers today; gets progressively less accurate the further back a comparable bid is from, which is exactly why extending this to prior seasons (`RT-25`) needs a recency-aware sample, not a flat pool | Revisit if bid guidance ever extends beyond the current season, or starts looking systematically off for older in-season comparables |
 | `COMPARABLE_NEAREST_K = 5` / `MIN_SAME_POSITION = 3` / `MIN_COMPARABLE_SAMPLE = 3` / `COMPARABLE_MAX_DISTANCE_PCT = 0.5` / `COMPARABLE_MIN_ABSOLUTE_DISTANCE = 50.0` | `dynasty_core/waiver_bids.py` | Judgment calls sizing the FAAB bid-guidance comparable sample and its value-distance tolerance, not derived from any league rule | Adjust by feel once a full season of real bid history exists to judge against |
+| `GET /projections/nfl/regular/{season}/{week}`'s path shape and its stat-key vocabulary lining up 1:1 with `league["scoring_settings"]` | `sleeper_api.get_weekly_projections`, `dynasty_core/lineup.py`'s `_weekly_projected_points` | An undocumented, unofficial Sleeper endpoint — no contract to rely on. Confirmed live (2026-08-21) to return real per-stat projections in the same stat-key vocabulary this league's `scoring_settings` already uses, and wrapped in its own try/except (`gather_state`) so a breaking change degrades to a `data_warnings` entry and an "unavailable" Lineup-tab mode, not a crash | Re-verify the live response shape if the weekly-projection lineup mode ever starts looking systematically wrong; add a stat-key crosswalk if Sleeper's projection keys and `scoring_settings` keys ever diverge |

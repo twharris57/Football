@@ -180,6 +180,24 @@ def gather_state(
             "comparable bids, which does not mean there aren't any."
         )
 
+    # RT-27: this week's per-player projections, for the Lineup tab's
+    # "this week's projected lineup" mode - an unofficial, undocumented
+    # Sleeper endpoint (see sleeper_api.get_weekly_projections), so this
+    # degrades to "unavailable" rather than breaking the refresh if it
+    # breaks. Same current-week signal roster_tab.py's bye-impact view
+    # already uses, not a new one.
+    projection_week = league["settings"].get("leg", 1)
+    try:
+        projections = sleeper.get_weekly_projections(league["season"], projection_week, force_refresh=force_full_refresh)
+    except Exception:
+        logger.warning("Failed to fetch weekly projections; skipping this-week lineup mode", exc_info=True)
+        projections = {}
+        data_warnings.append(
+            "This week's player projections are unavailable this refresh - the Lineup tab's "
+            "\"this week's projected lineup\" mode will show no ranking, which does not mean "
+            "the players themselves are unavailable."
+        )
+
     user_roster_id = resolve_user_roster_id(users, rosters, username)
     team_names = team_name_by_roster_id(rosters, users)
     user_roster = next(r for r in rosters if r["roster_id"] == user_roster_id)
@@ -299,7 +317,15 @@ def gather_state(
 
     replacement_level = position_replacement_levels(rosters, players, fc_by_sleeper_id, league["roster_positions"])
     user_analysis = team_roster_analysis(
-        user_roster, players, fc_by_sleeper_id, byes, league, handcuffs, replacement_level, available_free_agents
+        user_roster,
+        players,
+        fc_by_sleeper_id,
+        byes,
+        league,
+        handcuffs,
+        replacement_level,
+        available_free_agents,
+        projections,
     )
 
     # Leaguewide "worth pursuing" pre-rank for Suggested Trades (RT-15) -
@@ -367,6 +393,14 @@ def gather_state(
         # free-agent candidate is currently selected, not precomputed here
         # for the whole board every refresh.
         "transactions": transactions,
+        # RT-27: this week's raw per-player projections and the week number
+        # they're for - a UI computes weekly_lineup_* on demand for
+        # whichever team it's showing (see team_roster_analysis) rather than
+        # this being precomputed for every team every refresh. Empty dict
+        # means the fetch failed this refresh (see data_warnings above), not
+        # that no player has a projection.
+        "projections": projections,
+        "projection_week": projection_week,
         # League-wide, computed once per refresh regardless of which team's
         # roster is being viewed (see position_replacement_levels) - exposed
         # so the Roster tab's team selector can pass it into an
