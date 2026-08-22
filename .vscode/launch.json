@@ -38,7 +38,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "streamlit",
-            "args": ["run", "confidence_pool/streamlit_app.py", "--server.headless=true"],
+            "args": ["run", "confidence_pool/streamlit_app.py", "--server.port=8502", "--server.headless=true"],
             "cwd": "${workspaceFolder}",
             "justMyCode": false,
             "console": "integratedTerminal"
