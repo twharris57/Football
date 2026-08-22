@@ -466,7 +466,10 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
     `.claude/conventions/valuation_principles.md`'s "one valuation
     strategy" rule): a weekly starting gap this trade opens or closes
     (`gap_delta()`, called in both directions — swapping before/after finds
-    the "closes an existing gap" case, not just "opens a new one"); an
+    the "closes an existing gap" case, not just "opens a new one"; the same
+    two week-lists are also returned as real data —
+    `weekly_gaps_opened`/`weekly_gaps_closed` — not just formatted text, so
+    `suggested_trades()` can use them as a ranking tie-break, see below); an
     incoming player who handcuffs one of this roster's own *kept* RBs
     (`handcuff_targets()` in `dynasty_core/handcuffs.py`, shared with the
     Draft Plan's identical "also handcuffs your own X" reason — a starter
@@ -536,13 +539,21 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   - **Stage 2**, `suggested_trades()` — the real, expensive search, but only
     for Stage 1's already-short list: calls the unmodified
     `find_trade_offers()` once per candidate, drops any with no viable
-    offer, and ranks survivors by their best offer's
-    `lineup_delta_after_drops`. Bounded to a constant K regardless of
-    league size — the actual answer to the scan-cost question, not just a
-    smaller version of the original per-partner scan. Triggered by an
-    explicit "Scan the league for offers" button (this part is still
-    expensive enough to keep off the reactive path), unlike Stage 1's
-    candidate list, which needs no button since it's already computed.
+    offer, and ranks survivors primarily by their best offer's
+    `lineup_delta_after_drops` — multi-season roster strength, matching this
+    league's rebuild strategy, stays the primary question. Ties are broken
+    (RT-27 follow-up, 2026-08-22) by net weekly-gap improvement (weeks
+    closed minus weeks opened, from the same `weekly_gaps_opened`/
+    `weekly_gaps_closed` the manual evaluator's callouts already compute) —
+    a real but secondary signal for when a trade is otherwise-equal on
+    long-run value but meaningfully smooths over a recurring weekly hole,
+    never able to outrank a genuine `lineup_delta_after_drops` difference.
+    Bounded to a constant K regardless of league size — the actual answer to
+    the scan-cost question, not just a smaller version of the original
+    per-partner scan. Triggered by an explicit "Scan the league for offers"
+    button (this part is still expensive enough to keep off the reactive
+    path), unlike Stage 1's candidate list, which needs no button since it's
+    already computed.
 
   An optional target picker sits alongside the leaguewide view — choosing
   one specific player from any other roster skips both stages and runs a
