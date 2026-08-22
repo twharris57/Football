@@ -167,7 +167,7 @@ capacity (`roster_total_capacity()`: active roster slots + taxi slots +
 reserve/IR slots). Covered by `tests/dynasty_core/test_marginal_value.py`
 (`TestCapacityAwareDrop`). Rookies are assumed taxi-eligible for this check
 (true for every candidate in this draft); a general accrued-experience
-eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
+eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
 
 ## Features
 
@@ -336,7 +336,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   Deliberately out of scope: selling an actual starter (not just depth),
   and trade-block monitoring (watching for a specific player another team
   is shopping) — both need a real strategic judgment call or a signal
-  Sleeper doesn't expose, tracked in `.claude/PROJECT_PLAN.md`.
+  Sleeper doesn't expose, tracked in `.claude/PROJECT_PLAN_DYNASTY.md`.
 - **Free agents** (`free_agent_board()`) — every non-rostered fantasy-relevant
   player on a real NFL team (`free_agent_pool()`; Sleeper has no dedicated
   free-agent endpoint, same generalized approach as `rookie_pool`), ranked
@@ -353,7 +353,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN.md`).
   otherwise catch that. Once the draft is complete, this exclusion is an
   empty set and any still-undrafted rookie becomes a real free agent again
   automatically, no special-casing needed. Two further deliberate v1
-  simplifications, both tracked in `.claude/PROJECT_PLAN.md`:
+  simplifications, both tracked in `.claude/PROJECT_PLAN_DYNASTY.md`:
   - **Active-roster-only capacity** — passes `taxi_eligible=False` to
     `roster_total_capacity()`/`rank_by_marginal_value()` (a new parameter,
     default `True` so the rookie draft plan's own behavior is unaffected),
@@ -723,12 +723,12 @@ candidates.
   (non-league-scoped) projections endpoint could ever emit directly.
   Whether other threshold/long-play bonus categories this league scores
   (`rush_fd`, `rec_fd`, `*_40p`/`*_50p`) are actually present in Sleeper's
-  projections is unverified (`.claude/PROJECT_PLAN.md`'s `VA-7`).
+  projections is unverified (`.claude/PROJECT_PLAN_DYNASTY.md`'s `VA-7`).
 - Handcuffs are RB-only — the standard fantasy usage of the term.
 - `free_agent_board` treats every candidate as active-roster-only
   (`taxi_eligible=False`) and shows FAAB budget for context without any
   bid-sizing logic — see the "Free agents" bullet above and
-  `.claude/PROJECT_PLAN.md`'s `RT-8`/`RT-10`.
+  `.claude/PROJECT_PLAN_DYNASTY.md`'s `RT-8`/`RT-10`.
 - `find_trade_offers` targets one asset at a time (not a bundle), and its
   need-match ranking checks the partner's roster as it stands today, not
   the hypothetical roster after the trade — see the "Suggested Trades"
@@ -758,7 +758,7 @@ is a deliberate decision, not a silent bug:
 | Roster only uses QB/RB/WR/TE/FLEX/SUPER_FLEX slot types | `assign_starters`, `roster_weekly_gaps` | Any other Sleeper slot type (`WRRB_FLEX`, `REC_FLEX`, K, DEF, IDP) would be silently ignored — not assigned, not counted, no error | Extend `FLEX_ELIGIBLE_POSITIONS`/`SUPERFLEX_ELIGIBLE_POSITIONS` and the slot-processing loop for the new type |
 | `POSITION_VALUE_MULTIPLIER` (`QB: 1.175`, `TE: 1.202`) | `dynasty_core/player_pools.py` | Last-resort fallback only — stale numbers only matter if the whole `player_scoring.py` enrichment fails for a refresh | Re-run `scripts/derive_position_multipliers.py`; not urgent since it's a fallback, not the primary path |
 | `player_scoring.BASELINE_SCORING` (FantasyCalc's assumed scoring model) | `player_scoring.py` | The entire per-player correction ratio is only as good as this guess — FantasyCalc doesn't publish its real formula, so it can't be verified directly | No way to verify against FantasyCalc directly; revisit only if FantasyCalc publishes methodology notes, or the correction looks systematically off |
-| `BASELINE_SCORING["rec"] = 1.0`, hardcoded independent of the real `ppr` sent to FantasyCalc | `player_scoring.py` | Harmless while the league stays full PPR; if PPR ever changes, the correction ratio would silently conflate the intended scoring delta with an unpriced PPR delta (`.claude/PROJECT_PLAN.md`, Valuation & data accuracy) | Thread the real `ppr` value into `BASELINE_SCORING["rec"]` instead of the literal `1.0` |
+| `BASELINE_SCORING["rec"] = 1.0`, hardcoded independent of the real `ppr` sent to FantasyCalc | `player_scoring.py` | Harmless while the league stays full PPR; if PPR ever changes, the correction ratio would silently conflate the intended scoring delta with an unpriced PPR delta (`.claude/PROJECT_PLAN_DYNASTY.md`, Valuation & data accuracy) | Thread the real `ppr` value into `BASELINE_SCORING["rec"]` instead of the literal `1.0` |
 | `player_scoring.QUALIFYING_VOLUME` (QB ≥200 att / RB ≥100 carries / WR ≥50 targets / TE ≥30 targets) | `player_scoring.py` | Not derived from any league rule — a manual judgment call for "enough volume to trust a personalized ratio" | Revisit only if personalized ratios look noisy for borderline players |
 | `YOUNG_CORE_MAX_YOE` / `YOUNG_CORE_NEED_THRESHOLD` / `LOW_VALUE_YOUNG_AGE` / `LOW_VALUE_AGING_AGE` | `dynasty_core/roster_needs.py`, `constants.py`, `roster_value.py` | Subjective heuristics behind the rebuild-strategy "need"/"low value" flags, not derived from any league setting | Adjust by feel as the roster ages into (or out of) the rebuild window |
 | `WIN_PCT_SHRINKAGE_K = 4` (games worth of shrinkage weight toward `0.5`) | `dynasty_core/power_timeline.py` | A judgment call for how fast `win_pct_shrunk` (the power/timeline read's z-scoring input, not the displayed `win_pct`) should trust a real record over the neutral prior — not derived from any league setting or statistical fit | Adjust by feel if early-season `power_score` still looks too swingy or too damped |

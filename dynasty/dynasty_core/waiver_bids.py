@@ -48,7 +48,7 @@ def won_bid_sample(
     which isn't reconstructable without historical roster/value snapshots
     this project doesn't keep (a documented simplification, reasonable for
     the short in-season windows this covers - see RT-25 in
-    `.claude/PROJECT_PLAN.md` for why this gets materially less accurate
+    `.claude/PROJECT_PLAN_DYNASTY.md` for why this gets materially less accurate
     over a longer, multi-season lookback and needs revisiting before this
     extends that far).
 

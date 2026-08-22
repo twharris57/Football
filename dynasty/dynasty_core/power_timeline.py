@@ -34,7 +34,7 @@ def _weighted_average_age(roster: dict, players: dict[str, dict], fc_by_sleeper_
 # label - a judgment call to revisit by feel (see valuation_principles.md),
 # not a derived constant. The continuous score itself, not this label, is
 # what anything downstream (trade targets, power-timeline-read consumers)
-# should actually reason about - see PROJECT_PLAN.md's "consider a
+# should actually reason about - see PROJECT_PLAN_DYNASTY.md's "consider a
 # continuous score, not just discrete phase labels" note.
 PHASE_THRESHOLDS = (-0.3, 0.3)
 

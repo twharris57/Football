@@ -160,7 +160,7 @@ class TestPickTradeValues:
         # silent-failure mode this join is exposed to (name-string match,
         # no other stable join key for picks) - it must degrade to an
         # empty value column, not raise, so gather_state's own
-        # all-NaN check (see PROJECT_PLAN.md's "Current branch" review
+        # all-NaN check (see PROJECT_PLAN_DYNASTY.md's "Current branch" review
         # findings) has something real to detect.
         ownership = [dc.DraftPickSlot(round=1, overall_pick=1, original_roster_id=1, owner_roster_id=1)]
         fc_values = [{"player": {"name": "totally different naming scheme", "position": "PICK"}, "value": 7000}]

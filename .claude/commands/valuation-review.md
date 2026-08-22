@@ -5,7 +5,7 @@ roster-analysis logic (`dynasty/dynasty_core/`, `dynasty/player_scoring.py`,
 `dynasty/fantasycalc_api.py`, and anything that consumes their output) — plus the docs
 and conventions that describe it.
 Written so the review always ends in the same durable artifacts, not just a chat
-message: fix-before-merge items in `.claude/PROJECT_PLAN.md`, deferred items filed in
+message: fix-before-merge items in `.claude/PROJECT_PLAN_DYNASTY.md`, deferred items filed in
 the right thematic section, and any newly-discovered failure mode captured as a rule in
 `.claude/conventions/valuation_principles.md` so it can't quietly resurface later.
 
@@ -94,7 +94,7 @@ Sort findings into three tiers before writing anything down:
 
 This tier determines where each finding goes in step 4.
 
-### 4. Write findings to `.claude/PROJECT_PLAN.md` in the right place
+### 4. Write findings to `.claude/PROJECT_PLAN_DYNASTY.md` in the right place
 
 - **Tier 1 findings** go in a **"Current branch — fix before merge"** section at the
   very top of the file, right after the intro paragraph and before "Now — blocking"
@@ -126,7 +126,7 @@ issue, not this file growing without bound.
 
 If a finding reveals a real gap in `docs/rookie-draft-big-board.md`'s "Known gaps" or
 "Static assumptions" sections, add it there too — but don't duplicate the same content
-across all three files. `PROJECT_PLAN.md` is the action item; `valuation_principles.md`
+across all three files. `PROJECT_PLAN_DYNASTY.md` is the action item; `valuation_principles.md`
 is the durable rule; `docs/` is the current-state description. Most findings only need
 one or two of the three, not all three by default.
 

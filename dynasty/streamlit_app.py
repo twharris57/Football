@@ -81,7 +81,7 @@ if refresh or apply_advanced:
     # A widget button/checkbox's value is only current on the exact run it
     # was clicked - any later rerun (e.g. opening an expander) can see a
     # stale/default value again. load_state's cache key must not depend on
-    # that raw, one-run-only value (it did before - see PROJECT_PLAN.md),
+    # that raw, one-run-only value (it did before - see PROJECT_PLAN_DYNASTY.md),
     # or the very next rerun after a refresh click gets a different key,
     # misses cache, and silently re-fetches for no reason. These two flags
     # are durable session_state instead, stable across reruns until the
@@ -109,7 +109,7 @@ def load_state(
     # silently kept returning whatever was cached under the first-ever
     # (league_id, username, force_full_refresh, force_scoring_refresh) call in
     # the process's lifetime. This is the actual root cause of the "Refresh
-    # doesn't pick up new picks" bug two earlier fixes (see PROJECT_PLAN.md)
+    # doesn't pick up new picks" bug two earlier fixes (see PROJECT_PLAN_DYNASTY.md)
     # attempted and failed to fix, since both only changed the *value* being
     # passed in, never the fact that the name made the value irrelevant.
     state = dynasty_core.gather_state(league_id, username, force_full_refresh, force_scoring_refresh)
@@ -125,7 +125,7 @@ def load_state(
     # result can carry alongside itself and compare against later, to detect
     # "this was computed against an earlier state" rather than silently
     # displaying it as current (see trade_tab.py's suggested-trades scan for
-    # the first consumer of this, docs/data-model.md for the pattern).
+    # the first consumer of this, docs/dynasty-data-model.md for the pattern).
     state["version"] = token
     return state
 

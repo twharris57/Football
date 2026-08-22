@@ -4,7 +4,7 @@ Durable rules for how player/pick/roster value is computed in the dynasty
 tools (`dynasty/dynasty_core/`, `dynasty/player_scoring.py`, `dynasty/fantasycalc_api.py`). This
 file is the *rules to follow* when extending or changing that logic — see
 `docs/rookie-draft-big-board.md` for the current methodology itself, and
-`.claude/PROJECT_PLAN.md` for what's still open. Grew out of a 2026-07-31
+`.claude/PROJECT_PLAN_DYNASTY.md` for what's still open. Grew out of a 2026-07-31
 valuation review; keep it updated as the methodology evolves rather than
 letting it drift into a historical snapshot.
 
@@ -161,7 +161,7 @@ Before trusting a hardcoded value as harmless, check whether it's coupled
 to something that *is* pulled live elsewhere in the same computation — a
 hardcoded number that happens to match today's live value can silently stop
 matching if that live value ever changes (see `BASELINE_SCORING`'s `rec: 1.0`
-vs. the real `ppr` param sent to FantasyCalc, `.claude/PROJECT_PLAN.md`'s
+vs. the real `ppr` param sent to FantasyCalc, `.claude/PROJECT_PLAN_DYNASTY.md`'s
 `VA-2`, found only because this happened to be audited, not because
 anything would have failed loudly).
 
@@ -233,7 +233,7 @@ rules.
 `roster_total_capacity()`'s `taxi_eligible` flag is meant to answer one
 narrow question: can a *new* player (a free-agent add, or the incoming
 side of a trade) land on an open taxi slot? `free_agent_board()` and
-`evaluate_trade()` (RT-2, 2026-08-02 review, see `.claude/PROJECT_PLAN.md`'s
+`evaluate_trade()` (RT-2, 2026-08-02 review, see `.claude/PROJECT_PLAN_DYNASTY.md`'s
 fix-before-merge section and `RT-11`) both pass `taxi_eligible=False` for
 veteran candidates — correctly refusing to count an *unused* taxi slot as
 room for them. But the same flag also zeroes `taxi_slots` out of the
@@ -354,7 +354,7 @@ season/round) is already known at the point its display label is built,
 attach it as its own field there and have every consumer read the field —
 never re-derive it from the label later, where each call site can (and
 here, already did) get the derivation subtly wrong in its own way. Tracked
-as a deferred cleanup, `CQ-5` in `.claude/PROJECT_PLAN.md`.
+as a deferred cleanup, `CQ-5` in `.claude/PROJECT_PLAN_DYNASTY.md`.
 
 ## A "right now" list needs to anchor on the live current week, not raw order
 

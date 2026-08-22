@@ -61,7 +61,7 @@ def _mark_orphaned_snapshots(current_draft_id: str) -> None:
     reconciled - by appending an `.orphaned` suffix.
 
     Deliberately a soft, reversible marking step rather than deletion
-    (DL-8, .claude/PROJECT_PLAN.md): actually removing these files is a
+    (DL-8, .claude/PROJECT_PLAN_DYNASTY.md): actually removing these files is a
     deferred follow-up, to be added once this marking step has been
     confirmed correct against real data, not assumed correct from launch.
     A `.orphaned` file no longer matches the glob below, so a later sweep
