@@ -412,7 +412,7 @@ def gather_state(
         # on-demand team_roster_analysis() calls don't each recompute it.
         "available_free_agents": available_free_agents,
         # Informational only - no bid-threshold modeling yet (see
-        # .claude/PROJECT_PLAN.md). league["settings"]["waiver_budget"] is
+        # .claude/PROJECT_PLAN_DYNASTY.md). league["settings"]["waiver_budget"] is
         # this league's total per-team FAAB budget (confirmed FAAB, not
         # priority waivers: waiver_type == 2); waiver_budget_used is each
         # roster's own spend so far, both already pulled with no new fetch.

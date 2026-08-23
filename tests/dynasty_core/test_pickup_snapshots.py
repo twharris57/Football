@@ -17,7 +17,7 @@ def pool_player(team: str | None, depth_chart_order: int | None = None, status: 
 def tracked_player(team: str | None, depth_chart_order: int | None = None, status: str | None = None) -> dict:
     # Same shape as pool_player - separate name in the tests below that are
     # specifically about the *tracked universe* being broader than "the
-    # current free-agent pool" (see RT-22 in PROJECT_PLAN.md), so the two
+    # current free-agent pool" (see RT-22 in PROJECT_PLAN_DYNASTY.md), so the two
     # concepts don't read as interchangeable just because they share a shape.
     return pool_player(team, depth_chart_order, status)
 

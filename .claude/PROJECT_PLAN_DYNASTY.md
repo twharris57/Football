@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-28`, `VA-7`, `CQ-9`, `DL-9`.
+below): `NB-2`, `RT-28`, `VA-7`, `CQ-10`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -49,6 +49,8 @@ active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
 **Nice to have (no deadline, worth doing when there's room):**
+- [ ] `CQ-10` — restructure top-level tab navigation (subtabs/collapsing to
+  cut vertical scroll), starting with Roster and Trade Evaluator.
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
@@ -505,6 +507,31 @@ cutoff.
   helper (e.g. `_pick_value_lookup(pick_value_table)` returning both the
   dict and a `sum(names)` closure) next time either function is touched,
   rather than a third copy appearing.
+- [ ] **CQ-10: Restructure top-level tab navigation — unclear where things
+  live, too much vertical scroll per tab** (user-flagged 2026-08-22) —
+  `streamlit_app.py` currently has 6 flat top-level tabs (Draft Plan,
+  Lineup, Draft Board, Roster, Trade Evaluator, Summary), each rendering
+  its whole section (often several `st.subheader`-delimited blocks plus
+  "How this works" expanders — see `DL-5`, a related but distinct
+  cleanup) as one long scrolling page with no further structure. User's
+  read: it's not always obvious which tab a given piece of information is
+  under, and several tabs (Roster and Trade Evaluator especially, given
+  how many `team_roster_analysis` sub-sections they each render — needs,
+  value, sellable, free agents, bye conflicts, weekly gaps, handcuffs,
+  lineup) require a lot of scrolling to reach content lower on the page.
+  Needs a concrete redesign pass, not just this note: candidates include
+  splitting a tab's own sub-sections into `st.tabs`/`st.segmented_control`
+  subtabs (mirroring how `_render_lineup_tab`'s "By value"/"This week's
+  projection" radio already splits one tab's content in two), collapsing
+  less-frequently-needed sections into expanders by default, or
+  re-grouping what currently lives under which top-level tab entirely.
+  Should land as its own scoped UX pass (per `web_guidelines.md` and
+  `docs/dynasty-draft-web-app.md`'s existing layout conventions) rather
+  than bundled into unrelated feature work — worth sketching the proposed
+  new tab/section structure and checking it against a live phone session
+  (this app is explicitly meant to be usable from a phone during a live
+  draft, per `streamlit_app.py`'s own module docstring) before committing
+  to a layout.
 - [ ] **CQ-8: Add signal handlers for graceful container shutdown**
   (user-flagged 2026-08-20) — `docker_guidelines.md`'s existing "Graceful
   Shutdown" section already covers half of this (`CMD` exec form so

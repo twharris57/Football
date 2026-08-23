@@ -6,7 +6,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: twharris57/football-dynasty-draft
 
 jobs:
   build-and-push:
@@ -14,6 +13,13 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      matrix:
+        include:
+          - image: twharris57/football-dynasty-draft
+            dockerfile: Dockerfile
+          - image: twharris57/football-confidence-pool
+            dockerfile: confidence_pool/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -21,6 +27,7 @@ jobs:
         id: tags
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
+          IMAGE="${{ matrix.image }}"
           echo "tags=${REGISTRY}/${IMAGE}:latest,${REGISTRY}/${IMAGE}:${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
@@ -37,8 +44,9 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           build-args: GIT_SHA=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

@@ -1,0 +1,102 @@
+# Confidence Pool Principles
+
+Durable rules for how the confidence-pool app (`confidence_pool/picks_core.py`,
+`confidence_pool/store.py`, `confidence_pool/panels/`) derives, ranks, and
+persists a week's picks. This file is the *rules to follow* when extending
+or changing that logic — see `docs/confidence-pool-web-app.md` for the
+current design itself, and `.claude/PROJECT_PLAN_CONFIDENCE_POOL.md` for
+what's still open. Mirrors `valuation_principles.md`'s role for the
+dynasty subsystem, kept as its own file because the two subsystems share
+no code and are tracked separately on purpose (see `CLAUDE.md`'s
+"Architecture"). Grew out of the 2026-08-22 confidence-pool review; keep
+it updated as the methodology evolves rather than letting it drift into a
+historical snapshot.
+
+## A persisted flag must be written for every evaluated candidate, not just the ones that pass
+
+`picks_tab.py`'s "Regenerate picks" and deadline auto-lock (`CP-8`,
+2026-08-22 review) both used to call `store.save_week()` with only the
+*included* subset of that week's auto-selected games
+(`chosen.assign(included=True)`) — an unchecked/excluded game was never
+written to `weekly_games` at all, not stored with `included=0`, just
+absent from the table. On the next load, `included_map` (rebuilt from
+whatever rows actually exist) had no entry for that game, and the lookup
+defaulted back to `True` — silently re-including a game the user had
+deliberately excluded. The schema already supported the negative case
+(`weekly_games.included INTEGER NOT NULL DEFAULT 1`); only the caller
+never used it, because filtering to the "passing" subset before the save
+call looked like the natural thing to do.
+
+**The rule**: when persisting the result of a filter/checkbox/review step
+that a later load needs to reconstruct, save the *full* evaluated set
+with an explicit flag per row — never just the subset that passed. A
+missing row and an explicitly-excluded row are different facts, and if
+only the passing subset is ever written, the two become indistinguishable
+on reload, with the default swallowing the negative case. Fixed via
+`picks_core.games_with_included_flags()`, called before every
+`store.save_week()`, not by post-hoc special-casing the reload path.
+
+## An automated fallback must prefer the last human-reviewed state over recomputing from live inputs
+
+The deadline auto-lock (`CP-9`, 2026-08-22 review) always re-ran
+`rank_games()` against whatever odds happened to be live at the moment
+the page loaded past the deadline, even when a manually-generated
+snapshot (`saved_picks`) already existed from an earlier "Regenerate
+picks" click. Moneylines move over the course of a week, so the
+locked-in row — the permanent historical record `CP-3`/`CP-4` are meant
+to build on — could silently diverge from the picks the user actually
+reviewed and (in reality) submitted to the pool earlier. The bug wasn't
+in the math; it was in reusing "recompute fresh" as the automated
+fallback's default action, when a canonical human-reviewed result was
+already sitting there to reuse.
+
+**The rule**: this app's whole purpose is a reliable fallback for when
+the user *can't* check in personally (see `docs/confidence-pool-web-app.md`'s
+opening motivation) — so any automated action taken in the user's absence
+must prefer the last state the user actually reviewed over recomputing
+from whatever the outside world looks like right now. Recompute from live
+data only when there's genuinely nothing else to fall back on. Fixed via
+`picks_core.resolve_week_lock()`, which checks `saved_picks` first.
+
+## A safety-net path that can silently no-op needs a user-visible signal when it does
+
+Same auto-lock block (`CP-10`, 2026-08-22 review): if a selected game's
+odds hadn't posted yet at the deadline, the code simply skipped the
+`store.save_week(..., lock=True)` call — nothing saved, `locked` stayed
+`False`, and the tab fell through to the normal unlocked edit view with
+no indication anything was wrong. Most likely on weeks 17-18, where
+`configured_deadline` is deliberately set earlier than that week's real
+kickoffs, i.e. exactly when Vegas may not have posted every line yet. A
+user checking the app after the real deadline had passed would see
+nothing to suggest the safety net had failed.
+
+**The rule**: this is the same shape as the dynasty side's
+"silent data-degradation must surface as a warning" rule
+(`valuation_principles.md`), independently rediscovered here — a
+computation that can quietly do nothing instead of its intended action
+must say so where the user will see it, not just fail to act. Applies
+doubly hard to any code whose entire job is being a safety net for an
+unattended moment (a deadline lock, a scheduled auto-save, a background
+retry) — that is precisely the moment nobody is present to notice a
+silent no-op. Fixed by having `resolve_week_lock()` return an explicit
+`warning` string the panel renders via `st.warning()`.
+
+## Business logic that decides what to persist belongs in the tested library, not the panel
+
+All three bugs above lived entirely in `panels/picks_tab.py`, which has
+zero test coverage — `tests/confidence_pool/` covers `picks_core.py` and
+`store.py` thoroughly, but nothing exercises the panels, because they're
+meant to be thin Streamlit orchestrators (`CLAUDE.md`'s Architecture
+section). The auto-lock/inclusion-merge logic was a real exception to
+that split: multi-branch decision logic with no Streamlit dependency,
+just sitting inline in the panel where it couldn't be unit-tested.
+
+**The rule**: before adding a new `if`/branch to a `panels/` module that
+decides *what gets saved* (as opposed to *what gets rendered*), ask
+whether it could be written as a plain function taking/returning
+dataclasses or DataFrames with no `st.*` calls. If so, put it in
+`picks_core.py` (or `store.py` for persistence-shape decisions) and give
+it a test — the panel should only call it and render the result. This is
+what let `CP-8`-`CP-10` all get fixed with real unit tests
+(`games_with_included_flags`, `resolve_week_lock`) instead of relying on
+manual QA against a live deadline.

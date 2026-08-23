@@ -30,7 +30,7 @@ def recent_complete_seasons_weekly_data(current_season: str, lookback: int = 3) 
     rather than a hardcoded season list that goes stale. Used to
     (re-)derive POSITION_VALUE_MULTIPLIER (see
     scripts/derive_position_multipliers.py); will also back the eventual
-    full per-player scoring recompute (see PROJECT_PLAN.md).
+    full per-player scoring recompute (see PROJECT_PLAN_DYNASTY.md).
     """
     candidate = int(current_season) - 1
     frames = []

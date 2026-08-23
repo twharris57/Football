@@ -9,7 +9,7 @@ button, the session_state write, and the spinner all "worked," but the
 token's value never actually affected caching, so a plain Refresh silently
 kept returning whatever was cached under the first-ever call in the
 process's lifetime (found live on the Synology deployment, 2026-08-16 - see
-PROJECT_PLAN.md). Two earlier fixes changed the token's *value* without
+PROJECT_PLAN_DYNASTY.md). Two earlier fixes changed the token's *value* without
 renaming it, so neither actually fixed the bug.
 
 Drives the real app via Streamlit's AppTest, monkeypatching

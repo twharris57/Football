@@ -265,7 +265,7 @@ def _render_improve_offer_section(
     The result is tagged with a signature of everything it was computed
     from (which teams, which assets, and state["version"]) and dropped on
     a mismatch - the same versioned-on-demand-result pattern
-    docs/data-model.md documents for Suggested Trades (RT-24), extended
+    docs/dynasty-data-model.md documents for Suggested Trades (RT-24), extended
     here to also cover the user's own selection changing, not just a
     refresh. Unlike RT-24, no "data changed" message on invalidation -
     the trigger here is the user's own edit to the selection, not a
@@ -419,7 +419,7 @@ def _render_leaguewide_scan(state: dict, trade_players: dict, trade_pick_values:
         # since (another manager's trade, a waiver claim, a fresh Refresh
         # click), so the offers it found are no longer guaranteed valid.
         # Drop it rather than silently keep showing it; the button above is
-        # right there to re-scan (see docs/data-model.md's "versioned
+        # right there to re-scan (see docs/dynasty-data-model.md's "versioned
         # on-demand-result pattern").
         del st.session_state["suggested_trades_results"]
         cached = None

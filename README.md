@@ -25,6 +25,9 @@ pip install -r requirements.txt
 
 - [`CLAUDE.md`](CLAUDE.md) — architecture, conventions, and how this repo is
   organized, for both humans and AI agents working in it.
-- [`.claude/PROJECT_PLAN.md`](.claude/PROJECT_PLAN.md) — what's actively being
-  worked on, what's next, and future ideas.
-- [`docs/`](docs/) — design docs for completed features.
+- [`.claude/PROJECT_PLAN_DYNASTY.md`](.claude/PROJECT_PLAN_DYNASTY.md) and
+  [`.claude/PROJECT_PLAN_CONFIDENCE_POOL.md`](.claude/PROJECT_PLAN_CONFIDENCE_POOL.md)
+  — what's actively being worked on, what's next, and future ideas, per
+  subsystem (the two share no code and are tracked separately).
+- [`docs/`](docs/) — design docs for completed features, grouped by
+  subsystem in [`docs/README.md`](docs/README.md).

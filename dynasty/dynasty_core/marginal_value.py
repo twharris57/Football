@@ -86,7 +86,7 @@ def best_position_relevant_drop(
     no-op for every candidate: `eligible_positions` always expands to every
     fantasy position, so `drop_pool` is effectively the same as
     `recommend_drop()`'s whole-roster pool (RT-17, confirmed 2026-08-06 -
-    `.claude/PROJECT_PLAN.md`). This doesn't make the *result* wrong: the
+    `.claude/PROJECT_PLAN_DYNASTY.md`). This doesn't make the *result* wrong: the
     search still runs the real `season_average_starter_value()` simulation
     over that pool and returns whichever drop empirically maximizes
     marginal value, so correctness rests entirely on the simulation, not on
@@ -250,7 +250,7 @@ def free_agent_board(
     Passes `taxi_eligible=False`: Sleeper's real accrued-experience taxi rule
     isn't modeled here, so a candidate is only ever added to an open active
     roster slot or via a drop, never assumed to fit an open taxi slot the
-    way a rookie safely can - a documented gap (`.claude/PROJECT_PLAN.md`),
+    way a rookie safely can - a documented gap (`.claude/PROJECT_PLAN_DYNASTY.md`),
     not a silent one. Also passes `taxi_filled` (this roster's actual current
     taxi headcount) so an existing taxi stash - the norm for a rebuilding
     roster in this league - isn't misread as already over capacity before
