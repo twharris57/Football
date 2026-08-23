@@ -33,13 +33,6 @@ Empty right now — nothing blocking.
 
 ## Backlog
 
-- [ ] **CP-7: Map team abbreviations (e.g. `LAC`) to the display names
-  used on the Legion pool's own pick sheet** (e.g. "LA Chargers",
-  "DENVER", "DALLAS") when rendering picks in the UI — user-flagged
-  2026-08-22, high priority for the near future. The sheet's own naming
-  isn't a consistent format across teams (some city+mascot, some
-  city-only/all-caps), so this needs the real 32-team mapping from the
-  user, not a guessed convention — do not fabricate the mapping table.
 - [ ] **CP-1: Confirm/correct 2026's weeks 17–18 cutoff in `season_config`
   once the commissioner announces it.** Seeded at build time with a
   placeholder based on 2025's pattern (Saturday games, early-afternoon ET
@@ -174,11 +167,11 @@ Empty right now — nothing blocking.
 - [ ] **CP-19: Move bylaws-derived constants (`SUNDAY_AFTERNOON_CUTOFF`,
   `LATE_SEASON_WEEKS`) into per-season database configuration instead of
   hardcoded Python constants** (user, PR #46 review, 2026-08-23). Part of
-  the eventual confidence-pool database-design pass the user flagged
-  (see `CP-7`'s note: "once we get team names in place, the next thing is
-  probably a database design task where we look at this in great detail
-  and really think about what we need to be tracking from day 1") — see
-  also `CP-13`, `CP-20`-`CP-23`, all part of the same eventual pass.
+  the eventual confidence-pool database-design pass the user flagged: "once
+  we get team names in place [done — see `team_display_names`], the next
+  thing is probably a database design task where we look at this in great
+  detail and really think about what we need to be tracking from day 1" —
+  see also `CP-13`, `CP-20`-`CP-23`, all part of the same eventual pass.
 - [ ] **CP-20: Split the SQL schema into a dedicated namespace/module for
   schema maintenance, including real migration scripts** (user, PR #46
   review, 2026-08-23). `store.SCHEMA`'s single `CREATE TABLE IF NOT

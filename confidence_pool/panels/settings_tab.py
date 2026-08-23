@@ -58,3 +58,26 @@ def render_settings_tab(conn: sqlite3.Connection, active_season: int) -> None:
             store.set_late_season_deadline(conn, season, week, deadline)
             st.success(f"{label} deadline set to {deadline.strftime('%a %b %d, %I:%M %p ET')}.")
             st.rerun()
+
+    st.subheader("Team display names")
+    st.caption(
+        "The Legion pool's own pick sheet doesn't use nfl_data_py's raw team "
+        "abbreviations (e.g. `LAC`) — these overrides control what's shown "
+        "instead on the Picks tab. Purely a display label; doesn't affect "
+        "ranking or scoring."
+    )
+    team_names = store.get_team_display_names(conn)
+    edited: dict[str, str] = {}
+    cols = st.columns(4)
+    for i, abbr in enumerate(pc.NFL_TEAM_ABBREVIATIONS):
+        with cols[i % 4]:
+            edited[abbr] = st.text_input(
+                abbr, value=team_names.get(abbr, abbr), key=f"team_name_{abbr}"
+            )
+    if st.button("Save team display names"):
+        for abbr, name in edited.items():
+            name = name.strip()
+            if name:
+                store.set_team_display_name(conn, abbr, name)
+        st.success("Team display names saved.")
+        st.rerun()
