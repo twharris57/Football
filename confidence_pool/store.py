@@ -55,7 +55,54 @@ CREATE TABLE IF NOT EXISTS weekly_picks (
     confidence REAL NOT NULL,
     PRIMARY KEY (season_year, week, game_id)
 );
+
+CREATE TABLE IF NOT EXISTS team_display_names (
+    abbreviation TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL
+);
 """
+
+# Seeded once into `team_display_names` on first connect (`INSERT OR IGNORE`, so a
+# later Settings-tab edit is never clobbered on a later app restart). Sourced from
+# the user directly (2026-08-23) against a real late-season 2025 Legion pool sheet,
+# covering all 32 of nfl_data_py's team abbreviations (see
+# `picks_core.NFL_TEAM_ABBREVIATIONS`). Still editable via Settings if the pool
+# sheet's naming ever changes -- this is just the starting basis, not a fixed
+# constant.
+DEFAULT_TEAM_DISPLAY_NAMES: dict[str, str] = {
+    "ARI": "Arizona",
+    "ATL": "Atlanta",
+    "BAL": "Baltimore",
+    "BUF": "Buffalo",
+    "CAR": "Carolina",
+    "CHI": "Chicago",
+    "CIN": "Cincinnati",
+    "CLE": "Cleveland",
+    "DAL": "Dallas",
+    "DEN": "Denver",
+    "DET": "Detroit",
+    "GB": "Green Bay",
+    "HOU": "Houston",
+    "IND": "Indianapolis",
+    "JAX": "Jacksonville",
+    "KC": "Kansas City",
+    "LA": "LA Rams",
+    "LAC": "LA Chargers",
+    "LV": "Las Vegas",
+    "MIA": "Miami",
+    "MIN": "Minnesota",
+    "NE": "New England",
+    "NO": "New Orleans",
+    "NYG": "NY Giants",
+    "NYJ": "NY Jets",
+    "PHI": "Philadelphia",
+    "PIT": "Pittsburgh",
+    "SEA": "Seattle",
+    "SF": "San Francisco",
+    "TB": "Tampa Bay",
+    "TEN": "Tennessee",
+    "WAS": "Washington",
+}
 
 
 def connect(db_path: str) -> sqlite3.Connection:
@@ -63,7 +110,19 @@ def connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _seed_default_team_display_names(conn)
     return conn
+
+
+def _seed_default_team_display_names(conn: sqlite3.Connection) -> None:
+    """Insert `DEFAULT_TEAM_DISPLAY_NAMES` for any team that has no override
+    yet. `INSERT OR IGNORE` -- safe to call on every `connect()`, never
+    overwrites a name already set (via Settings, or a prior call here)."""
+    with conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO team_display_names (abbreviation, display_name) VALUES (?, ?)",
+            list(DEFAULT_TEAM_DISPLAY_NAMES.items()),
+        )
 
 
 def get_season_config(conn: sqlite3.Connection, season_year: int) -> dict | None:
@@ -128,6 +187,27 @@ def get_week_status(conn: sqlite3.Connection, season_year: int, week: int) -> di
         (season_year, week),
     ).fetchone()
     return dict(row) if row else None
+
+
+def get_team_display_names(conn: sqlite3.Connection) -> dict[str, str]:
+    """Return every configured team-abbreviation -> pool-sheet display-name
+    override. A team with no entry here has no override yet -- callers
+    should fall back to showing its raw abbreviation."""
+    rows = conn.execute("SELECT abbreviation, display_name FROM team_display_names").fetchall()
+    return {row["abbreviation"]: row["display_name"] for row in rows}
+
+
+def set_team_display_name(conn: sqlite3.Connection, abbreviation: str, display_name: str) -> None:
+    """Set (or update) the pool-sheet display name shown for a team abbreviation."""
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO team_display_names (abbreviation, display_name)
+            VALUES (?, ?)
+            ON CONFLICT(abbreviation) DO UPDATE SET display_name = excluded.display_name
+            """,
+            (abbreviation, display_name),
+        )
 
 
 def save_week(

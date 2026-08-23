@@ -71,6 +71,29 @@ class TestSeasonConfig:
         assert config["week18_deadline"] == w18.isoformat()
 
 
+class TestTeamDisplayNames:
+    """Pool-sheet display-name overrides for nfl_data_py's team abbreviations."""
+
+    def test_connect_seeds_the_known_defaults(self, conn):
+        names = store.get_team_display_names(conn)
+
+        assert names["LAC"] == "LA Chargers"
+        assert names["LA"] == "LA Rams"
+        assert len(names) == 32
+
+    def test_set_team_display_name_overrides_the_seeded_default(self, conn):
+        store.set_team_display_name(conn, "SEA", "Seahawks")
+
+        assert store.get_team_display_names(conn)["SEA"] == "Seahawks"
+
+    def test_reseeding_does_not_clobber_a_prior_edit(self, conn):
+        store.set_team_display_name(conn, "SEA", "Seahawks")
+
+        store._seed_default_team_display_names(conn)  # simulates a later app restart
+
+        assert store.get_team_display_names(conn)["SEA"] == "Seahawks"
+
+
 class TestSaveAndLoadWeek:
     def test_round_trips_games_and_picks(self, conn):
         store.save_week(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))

@@ -53,8 +53,9 @@ yet (Settings tab).
 
 ## Persistence (`store.py`)
 
-SQLite, four tables, all keyed by `(season_year, week[, game_id])` so
-multiple seasons coexist in one store:
+SQLite, five tables. Four are keyed by `(season_year, week[, game_id])` so
+multiple seasons coexist in one store; `team_display_names` is global
+(not season-scoped) since team abbreviations don't vary by season:
 
 | Table | Holds |
 |---|---|
@@ -62,6 +63,7 @@ multiple seasons coexist in one store:
 | `week_status` | `locked`/`locked_at`/`generated_at` per week |
 | `weekly_games` | The evaluated game list at generation time (teams, moneylines, kickoff, `included`) |
 | `weekly_picks` | The generated recommendation (points, predicted winner, confidence) |
+| `team_display_names` | Per-team override of what's shown in place of `nfl_data_py`'s raw abbreviation (e.g. `LAC` -> "LA Chargers") |
 
 Every week's evaluated games and generated picks get saved as part of the
 normal flow (not just on request) so future analysis — what-if scoring
@@ -101,6 +103,23 @@ it's announced. The active-season switch is the same table's `active`
 flag, letting the Picks tab default to the right season without a code
 change each year either.
 
+## Team display names (Settings tab)
+
+The Legion pool's own pick sheet doesn't use `nfl_data_py`'s raw team
+abbreviations (`LAC`, `LA`, ...) — it uses its own naming, inconsistent
+across teams (some city+mascot, some city-only or all-caps). The Picks
+tab shows `team_display_names`'s override wherever a team name appears
+(the game checklist, the picks table) instead of the raw abbreviation,
+falling back to the abbreviation itself for any team with no override
+set. `store.DEFAULT_TEAM_DISPLAY_NAMES` seeds all 32 teams on first
+connect (`INSERT OR IGNORE`, so it never overwrites a later edit) from
+names the user supplied directly against a real 2025 late-season pick
+sheet — a starting basis, not a fixed constant, since the whole point of
+storing this in the database (rather than a Python constant) is that it's
+a UI label the user can correct or update themselves via Settings without
+a code change or redeploy, the same reasoning as `season_config`'s
+weeks-17/18 deadline above.
+
 ## Docker (`confidence_pool/Dockerfile`)
 
 Same base image and non-root pattern as the dynasty app's root `Dockerfile`
@@ -112,9 +131,6 @@ actually covers it.
 
 ## Known gaps
 
-- **Team display names**: the UI shows `nfl_data_py`/Sleeper team
-  abbreviations (`LAC`), not the names printed on the Legion pool's own
-  pick sheet (`LA Chargers`, `DENVER`, `DALLAS`, ...) — `CP-7`.
 - **Odds not yet posted**: a selected game missing a moneyline is
   surfaced separately as "pending" rather than ranked (see
   `picks_core.rank_games()`) — can happen early in a week before Vegas

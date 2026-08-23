@@ -20,6 +20,8 @@ def _cached_schedule(year: int) -> pd.DataFrame:
 
 
 def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) -> None:
+    team_names = store.get_team_display_names(conn)
+
     try:
         schedule = _cached_schedule(active_season)
     except OSError as exc:
@@ -87,14 +89,16 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
 
     if locked:
         st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
-        _render_picks_table(saved_games, saved_picks)
+        _render_picks_table(saved_games, saved_picks, team_names)
         return
 
     st.write("Games evaluated this week — uncheck any that shouldn't count:")
     included: dict[str, bool] = {}
     for _, row in auto_games.iterrows():
         default = included_map.get(row["game_id"], True)
-        label = f"{row['away_team']} @ {row['home_team']} — {row['weekday']} {row['gametime']}"
+        away = team_names.get(row["away_team"], row["away_team"])
+        home = team_names.get(row["home_team"], row["home_team"])
+        label = f"{away} @ {home} — {row['weekday']} {row['gametime']}"
         included[row["game_id"]] = st.checkbox(
             label, value=default, key=f"include_{season}_{week}_{row['game_id']}"
         )
@@ -112,14 +116,16 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         st.rerun()
     elif not saved_picks.empty:
         st.caption(f"Last generated: {status['generated_at']}")
-        _render_picks_table(saved_games, saved_picks)
+        _render_picks_table(saved_games, saved_picks, team_names)
     else:
         st.info("No picks generated yet for this week — click Regenerate picks.")
 
 
-def _render_picks_table(games: pd.DataFrame, picks: pd.DataFrame) -> None:
+def _render_picks_table(games: pd.DataFrame, picks: pd.DataFrame, team_names: dict[str, str]) -> None:
     merged = picks.merge(games[["game_id", "home_team", "away_team"]], on="game_id", how="left")
     display = merged[["points", "predicted_winner", "away_team", "home_team", "confidence"]].copy()
+    for col in ("predicted_winner", "away_team", "home_team"):
+        display[col] = display[col].map(lambda t: team_names.get(t, t))
     display["confidence"] = (display["confidence"].abs() * 100).round(1).astype(str) + "%"
     display.columns = ["Points", "Pick", "Away", "Home", "Confidence"]
     st.dataframe(display, hide_index=True, width="stretch")

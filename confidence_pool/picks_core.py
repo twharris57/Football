@@ -21,6 +21,19 @@ ET = ZoneInfo("America/New_York")
 SUNDAY_AFTERNOON_CUTOFF = "13:00"
 LATE_SEASON_WEEKS = (17, 18)
 
+# The 32 team abbreviations nfl_data_py's schedule data actually uses (verified
+# against a real fetch, not guessed -- notably the Rams are "LA", not "LAR"). Lets
+# the Settings tab offer every team for a display-name override (see
+# `store.DEFAULT_TEAM_DISPLAY_NAMES`) even before it's appeared in a fetched
+# schedule this session. Stable, but not permanent -- update by hand if a team
+# relocates or rebrands (rare; e.g. WAS's 2022 renaming).
+NFL_TEAM_ABBREVIATIONS = [
+    "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN",
+    "DET", "GB", "HOU", "IND", "JAX", "KC", "LA", "LAC", "LV", "MIA",
+    "MIN", "NE", "NO", "NYG", "NYJ", "PHI", "PIT", "SEA", "SF", "TB",
+    "TEN", "WAS",
+]
+
 GAME_COLUMNS = [
     "game_id",
     "home_team",
