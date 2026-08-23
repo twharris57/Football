@@ -67,6 +67,7 @@ def connect(db_path: str) -> sqlite3.Connection:
 
 
 def get_season_config(conn: sqlite3.Connection, season_year: int) -> dict | None:
+    """Return the season's config row, or `None` if it has none yet."""
     row = conn.execute(
         "SELECT * FROM season_config WHERE season_year = ?", (season_year,)
     ).fetchone()
@@ -74,6 +75,7 @@ def get_season_config(conn: sqlite3.Connection, season_year: int) -> dict | None
 
 
 def get_active_season(conn: sqlite3.Connection) -> int | None:
+    """Return the currently active season year, or `None` if none is set."""
     row = conn.execute(
         "SELECT season_year FROM season_config WHERE active = 1"
     ).fetchone()
@@ -81,6 +83,13 @@ def get_active_season(conn: sqlite3.Connection) -> int | None:
 
 
 def set_active_season(conn: sqlite3.Connection, season_year: int) -> None:
+    """Mark `season_year` active, clearing whichever season was active before.
+
+    `with conn:` -- for `sqlite3.Connection`, this commits the block as one
+    transaction on success or rolls it all back on an exception; it does
+    *not* close the connection (a common gotcha). Every multi-statement
+    write in this module relies on that for atomicity.
+    """
     with conn:
         conn.execute("UPDATE season_config SET active = 0")
         conn.execute(
@@ -112,6 +121,8 @@ def set_late_season_deadline(
 
 
 def get_week_status(conn: sqlite3.Connection, season_year: int, week: int) -> dict | None:
+    """Return a week's lock/generation status, or `None` if nothing's been
+    saved for it yet."""
     row = conn.execute(
         "SELECT * FROM week_status WHERE season_year = ? AND week = ?",
         (season_year, week),

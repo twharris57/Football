@@ -28,10 +28,11 @@ st.set_page_config(page_title="Confidence Pool", layout="centered")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 conn = store.connect(str(DB_PATH))
 
-st.title("Legion Confidence Pool")
-
 today = datetime.now(ET).date()
 active_season = store.get_active_season(conn) or default_season_year(today)
+
+st.title("Legion Confidence Pool")
+st.caption(f"{active_season} season")
 
 tab_picks, tab_settings = st.tabs(["Picks", "Settings"])
 with tab_picks:

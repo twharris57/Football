@@ -78,6 +78,12 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
             locked = True
 
     st.caption(f"Pick deadline: {deadline.strftime('%a %b %d, %I:%M %p ET')}")
+    if week in pc.LATE_SEASON_WEEKS:
+        st.info(
+            f"Week {week} uses an early, commissioner-announced cutoff instead of "
+            "kickoff time (bylaws rule 2) — verify it against this season's actual "
+            "league rules and adjust it in the Settings tab if it's changed."
+        )
 
     if locked:
         st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
