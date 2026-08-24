@@ -89,12 +89,14 @@ class TestSelectGames:
 
         assert set(selected["game_id"]) == {"reg"}
 
-    def test_weeks_17_and_18_take_every_game_with_no_weekday_filter(self):
-        # Weeks 17-18 aren't a narrower game-selection special case -- real
-        # 2025-season results (scores up to 114, only possible with ~15
-        # games on the sheet) and the actual week-18 sheet (Saturday Jan 3
-        # + Sunday Jan 4 both listed) confirmed every game counts, unlike
-        # the Sunday-afternoon/Monday-only filter weeks 1-16 use.
+    def test_all_games_rule_takes_every_game_with_no_weekday_filter(self):
+        # 'all_games' (from store.season_week_rules -- weeks 17-18 today,
+        # but driven by data, not hardcoded here) isn't a narrower
+        # game-selection special case -- real 2025-season results (scores
+        # up to 114, only possible with ~15 games on the sheet) and the
+        # actual week-18 sheet (Saturday Jan 3 + Sunday Jan 4 both listed)
+        # confirmed every game counts, unlike 'standard's Sunday-afternoon/
+        # Monday-only filter.
         schedule = pd.DataFrame(
             [
                 _game("sat", 17, "Saturday", "16:30"),
@@ -104,9 +106,27 @@ class TestSelectGames:
             ]
         )
 
-        selected = pc.select_games(schedule, 2026, 17)
+        selected = pc.select_games(schedule, 2026, 17, selection_rule="all_games")
 
         assert set(selected["game_id"]) == {"sat", "sun_early", "sun_afternoon", "mon"}
+
+    def test_standard_rule_is_the_default(self):
+        schedule = pd.DataFrame(
+            [
+                _game("sat", 17, "Saturday", "16:30"),
+                _game("sun_afternoon", 17, "Sunday", "13:00"),
+            ]
+        )
+
+        selected = pc.select_games(schedule, 2026, 17)
+
+        assert set(selected["game_id"]) == {"sun_afternoon"}
+
+    def test_sunday_afternoon_cutoff_is_configurable(self):
+        schedule = pd.DataFrame([_game("early", 1, "Sunday", "12:00")])
+
+        assert pc.select_games(schedule, 2026, 1).empty
+        assert not pc.select_games(schedule, 2026, 1, sunday_afternoon_cutoff="12:00").empty
 
 
 class TestRankGames:
@@ -148,6 +168,13 @@ class TestRankGames:
         assert list(ranked["game_id"]) == ["has_odds"]
         assert list(pending["game_id"]) == ["no_odds"]
 
+    def test_ranked_picks_carry_the_current_algorithm_version(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00")])
+
+        ranked, _ = pc.rank_games(games)
+
+        assert ranked.loc[0, "algorithm_version"] == pc.ALGORITHM_VERSION
+
 
 class TestCurrentWeek:
     """Auto-detecting "this week" from schedule dates relative to today."""
@@ -174,10 +201,12 @@ class TestCurrentWeek:
 
 
 class TestWeekDeadline:
-    """The pick-submission cutoff -- earliest kickoff for weeks 1-16, a
-    configured override for weeks 17-18 (bylaws rule 2/14)."""
+    """The pick-submission cutoff -- earliest kickoff by default, or an
+    explicit override supplied by the caller (from `store.season_week_rules`,
+    e.g. for weeks 17-18 -- bylaws rule 2/14). `week_deadline()` itself just
+    trusts whichever the caller passes; it doesn't know which weeks are special."""
 
-    def test_early_week_deadline_is_earliest_kickoff(self):
+    def test_deadline_is_earliest_kickoff_when_unconfigured(self):
         games = pd.DataFrame(
             [
                 _game("g1", 1, "Sunday", "16:25", gameday="2026-09-13"),
@@ -185,24 +214,17 @@ class TestWeekDeadline:
             ]
         )
 
-        deadline = pc.week_deadline(games, 1, configured_deadline=None)
+        deadline = pc.week_deadline(games, configured_deadline=None)
 
         assert deadline == pc.kickoff_datetime("2026-09-13", "13:00")
 
-    def test_late_season_week_uses_configured_deadline_when_present(self):
+    def test_configured_deadline_overrides_earliest_kickoff(self):
         games = pd.DataFrame([_game("g1", 17, "Sunday", "13:00", gameday="2026-12-27")])
         configured = datetime(2026, 12, 26, 13, 0, tzinfo=pc.ET)
 
-        deadline = pc.week_deadline(games, 17, configured_deadline=configured)
+        deadline = pc.week_deadline(games, configured_deadline=configured)
 
         assert deadline == configured
-
-    def test_late_season_week_falls_back_to_earliest_kickoff_when_unconfigured(self):
-        games = pd.DataFrame([_game("g1", 17, "Sunday", "13:00", gameday="2026-12-27")])
-
-        deadline = pc.week_deadline(games, 17, configured_deadline=None)
-
-        assert deadline == pc.kickoff_datetime("2026-12-27", "13:00")
 
 
 class TestGamesWithIncludedFlags:
@@ -230,12 +252,15 @@ class TestResolveWeekLock:
         auto_games = pd.DataFrame(
             [_game("g1", 1, "Sunday", "13:00", home_moneyline=-900, away_moneyline=650)]
         )
-        saved_games = pd.DataFrame([{"game_id": "g1", "included": 1}])
+        saved_games = pd.DataFrame(
+            [{"game_id": "g1", "included": 1, "captured_at": "2026-09-10T09:00:00-04:00"}]
+        )
         saved_picks = pd.DataFrame(
             [{"game_id": "g1", "points": 1, "predicted_winner": "BBB", "confidence": 0.05}]
         )
+        now = datetime(2026, 9, 14, 13, 0, tzinfo=pc.ET)
 
-        outcome = pc.resolve_week_lock(auto_games, {}, saved_games, saved_picks)
+        outcome = pc.resolve_week_lock(auto_games, {}, saved_games, saved_picks, now)
 
         assert outcome.locked is True
         assert outcome.warning is None
@@ -243,15 +268,35 @@ class TestResolveWeekLock:
         assert outcome.picks.loc[0, "predicted_winner"] == "BBB"
         assert outcome.picks.loc[0, "confidence"] == pytest.approx(0.05)
 
+    def test_reusing_a_saved_snapshot_persists_its_own_original_timestamp_not_now(self):
+        # CP-25: locking in a prior snapshot must not overwrite its true
+        # generation time with whatever moment the lock happens to run.
+        auto_games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00")])
+        saved_games = pd.DataFrame(
+            [{"game_id": "g1", "included": 1, "captured_at": "2026-09-10T09:00:00-04:00"}]
+        )
+        saved_picks = pd.DataFrame(
+            [{"game_id": "g1", "points": 1, "predicted_winner": "AAA", "confidence": 0.2}]
+        )
+        lock_time = datetime(2026, 9, 14, 13, 0, tzinfo=pc.ET)  # days after the real generation
+
+        outcome = pc.resolve_week_lock(auto_games, {}, saved_games, saved_picks, lock_time)
+
+        assert outcome.generated_at == datetime.fromisoformat("2026-09-10T09:00:00-04:00")
+        assert outcome.generated_at != lock_time
+
     def test_computes_a_fresh_snapshot_when_nothing_was_ever_saved(self):
         auto_games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00")])
         empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)
 
-        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty)
+        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty, now)
 
         assert outcome.locked is True
         assert outcome.warning is None
         assert list(outcome.picks["game_id"]) == ["g1"]
+        # No prior snapshot to reuse -- generated_at is genuinely "now".
+        assert outcome.generated_at == now
 
     def test_excludes_a_previously_unchecked_game_from_the_fresh_snapshot(self):
         auto_games = pd.DataFrame(
@@ -261,8 +306,9 @@ class TestResolveWeekLock:
             ]
         )
         empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)
 
-        outcome = pc.resolve_week_lock(auto_games, {"drop": False}, empty, empty)
+        outcome = pc.resolve_week_lock(auto_games, {"drop": False}, empty, empty, now)
 
         assert list(outcome.picks["game_id"]) == ["keep"]
         assert set(outcome.games["game_id"]) == {"keep", "drop"}
@@ -273,13 +319,44 @@ class TestResolveWeekLock:
             [_game("g1", 1, "Sunday", "13:00", home_moneyline=None, away_moneyline=None)]
         )
         empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)
 
-        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty)
+        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty, now)
 
         assert outcome.locked is False
         assert outcome.warning is not None
+        assert outcome.generated_at is None
         assert "g1" not in outcome.warning  # matches on team names, not game_id
         assert "BBB @ AAA" in outcome.warning
+
+
+class TestIsFirstLookWindow:
+    """Gates whether a save is close enough to kickoff to count as a real
+    first look at a week, not a click-ahead preview of a future one."""
+
+    def test_within_the_window_is_eligible(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        thursday = datetime(2026, 9, 10, 9, 0, tzinfo=pc.ET)  # 3 days before kickoff
+
+        assert pc.is_first_look_window(games, thursday) is True
+
+    def test_well_before_the_window_is_not_eligible(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        weeks_early = datetime(2026, 8, 20, 9, 0, tzinfo=pc.ET)
+
+        assert pc.is_first_look_window(games, weeks_early) is False
+
+    def test_the_day_after_the_window_boundary_is_not_eligible(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        wednesday = datetime(2026, 9, 9, 9, 0, tzinfo=pc.ET)  # 4 days before kickoff
+
+        assert pc.is_first_look_window(games, wednesday) is False
+
+    def test_on_or_after_kickoff_is_still_eligible(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        monday = datetime(2026, 9, 14, 9, 0, tzinfo=pc.ET)
+
+        assert pc.is_first_look_window(games, monday) is True
 
 
 class TestIsLocked:

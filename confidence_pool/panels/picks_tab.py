@@ -46,16 +46,22 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
             st.error(f"Couldn't fetch the schedule from nfl_data_py: {exc}. Try reloading the page.")
             st.stop()
 
-    auto_games = pc.select_games(schedule, season, week)
+    store.sync_game_outcomes(conn, schedule, datetime.now(pc.ET))
+
+    season_row = store.get_season(conn, season) or {}
+    cutoff = season_row.get("sunday_afternoon_cutoff", pc.SUNDAY_AFTERNOON_CUTOFF)
+    week_rule = store.get_week_rule(conn, season, week)
+    selection_rule = week_rule["selection_rule"] if week_rule else "standard"
+
+    auto_games = pc.select_games(schedule, season, week, selection_rule, cutoff)
     if auto_games.empty:
         st.warning(f"No games matched the pool's selection rules for week {week}.")
         return
 
-    config = store.get_season_config(conn, season) or {}
     configured_deadline = None
-    if week in (17, 18) and config.get(f"week{week}_deadline"):
-        configured_deadline = datetime.fromisoformat(config[f"week{week}_deadline"])
-    deadline = pc.week_deadline(auto_games, week, configured_deadline)
+    if week_rule and week_rule.get("deadline_override"):
+        configured_deadline = datetime.fromisoformat(week_rule["deadline_override"])
+    deadline = pc.week_deadline(auto_games, configured_deadline)
 
     saved_games, saved_picks, status = store.load_week(conn, season, week)
     included_map = (
@@ -71,16 +77,20 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         # Deadline just passed with nothing explicitly locked yet -- lock the
         # last-generated snapshot (or, absent that, one final computed
         # recommendation) now rather than leaving it open to further edits.
-        outcome = pc.resolve_week_lock(auto_games, included_map, saved_games, saved_picks)
+        outcome = pc.resolve_week_lock(auto_games, included_map, saved_games, saved_picks, now)
         if outcome.warning:
             st.warning(outcome.warning)
         if outcome.locked:
-            store.save_week(conn, season, week, outcome.games, outcome.picks, now, lock=True)
+            store.save_week(
+                conn, season, week, outcome.games, outcome.picks, outcome.generated_at,
+                first_snapshot_eligible=pc.is_first_look_window(auto_games, outcome.generated_at),
+                lock=True,
+            )
             saved_games, saved_picks, status = store.load_week(conn, season, week)
             locked = True
 
     st.caption(f"Pick deadline: {deadline.strftime('%a %b %d, %I:%M %p ET')}")
-    if week in pc.LATE_SEASON_WEEKS:
+    if week_rule:
         st.info(
             f"Week {week} uses an early, commissioner-announced cutoff instead of "
             "kickoff time (bylaws rule 2) — verify it against this season's actual "
@@ -112,7 +122,11 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
                 f"{r['away_team']} @ {r['home_team']}" for _, r in pending.iterrows()
             )
             st.warning(f"Odds not posted yet for: {missing} — try again closer to kickoff.")
-        store.save_week(conn, season, week, games_all, ranked, datetime.now(pc.ET))
+        generated_at = datetime.now(pc.ET)
+        store.save_week(
+            conn, season, week, games_all, ranked, generated_at,
+            first_snapshot_eligible=pc.is_first_look_window(auto_games, generated_at),
+        )
         st.rerun()
     elif not saved_picks.empty:
         st.caption(f"Last generated: {status['generated_at']}")

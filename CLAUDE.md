@@ -64,10 +64,15 @@ else stays flat, on purpose.
   `store.py` persists each week's evaluated games and generated picks to
   SQLite (`confidence_pool_data/picks.db`, anchored via `data_dir.py`
   mirroring `dynasty/cache_dir.py`'s pattern), locking a week once its
-  deadline passes. `streamlit_app.py` + `panels/` (named to avoid
-  colliding with `dynasty/tabs/` when both subsystems share a `sys.path`,
-  e.g. under `pytest`) is the two-tab (Picks, Settings) web UI. Full
-  design in `docs/confidence-pool-web-app.md`.
+  deadline passes. The schema is normalized (stable reference data --
+  `seasons`, `teams`, `games` -- separate from per-generation snapshots in
+  `weekly_games`/`weekly_picks`) and applied via versioned migrations
+  under `db_schema/` rather than one inline `CREATE TABLE` script; see
+  `docs/confidence-pool-data-model.md` for the full design.
+  `streamlit_app.py` + `panels/` (named to avoid colliding with
+  `dynasty/tabs/` when both subsystems share a `sys.path`, e.g. under
+  `pytest`) is the two-tab (Picks, Settings) web UI. Full design in
+  `docs/confidence-pool-web-app.md`.
 - **Dynasty league tools** (Sleeper), all under `dynasty/`: `sleeper_api.py`
   is a thin client for Sleeper's public read-only API, with local disk
   caching for the ~14MB players reference dataset (`.cache/` at the repo
@@ -113,7 +118,7 @@ else stays flat, on purpose.
   odds, injuries); no offline fallback. The web app caches the schedule
   fetch briefly (`st.cache_data`, 15m TTL) but has no persistent cache of
   its own beyond the weekly picks/games snapshots in `store.py`.
-- Weeks 17-18's pick deadline (`season_config`) needs manual correction
+- Weeks 17-18's pick deadline (`season_week_rules`) needs manual correction
   once the commissioner announces each year's actual cutoff — see
   `.claude/PROJECT_PLAN_CONFIDENCE_POOL.md`'s `CP-1`.
 - `team_metadata_batch.py` needs a real OpenWeatherMap API key to function and
@@ -132,7 +137,8 @@ confidence_pool/
   team_metadata_batch.py   Prototype: team altitude/temperature/style enrichment via OpenWeatherMap (unintegrated)
   football.ipynb           Notebook version of football.py for interactive experimentation
   picks_core.py            Web app's core library: current-week detection, game-selection rules, Vegas-odds ranking, deadline
-  store.py                 SQLite persistence: weekly evaluated games + generated picks, season config, lock-in
+  store.py                 SQLite persistence: seasons/teams/games (reference data), weekly snapshots, lock-in
+  db_schema/               Migration runner + versioned *.sql migrations applied by store.connect() (not "schema" - avoids colliding with the schema PyPI package)
   data_dir.py              Shared DATA_DIR/DB_PATH, anchored to the repo root (mirrors dynasty/cache_dir.py's pattern)
   streamlit_app.py         Web app entry point (thin orchestrator)
   panels/                  One module per Streamlit tab (Picks, Settings) - named to avoid colliding with dynasty/tabs/

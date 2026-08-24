@@ -30,3 +30,4 @@ accumulates the other's items by mistake.
 | Doc | Covers |
 |---|---|
 | [`confidence-pool-web-app.md`](confidence-pool-web-app.md) | Game-selection rules derived from the Legion pool bylaws, the picks/persistence design, lock-in behavior, season configuration |
+| [`confidence-pool-data-model.md`](confidence-pool-data-model.md) | The SQLite schema itself: table-by-table design rationale, the `snapshot_type` split, migrations |
