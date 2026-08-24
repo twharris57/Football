@@ -17,7 +17,7 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-25`.
+**ID tracker** (last number assigned): `CP-26`.
 
 ## Current branch — fix before merge
 
@@ -212,3 +212,18 @@ Empty right now — nothing blocking.
   whether that convention gets adopted for real, and whether it applies
   to just this app or the dynasty app too, before wiring a version string
   into the footer.
+- [ ] **CP-26: Let the Picks tab UI switch between viewing a week's
+  `'first'` and `'current'` snapshot** (user, 2026-08-24, flagged for a
+  future feature branch — not this one). Now that both are actually
+  stored (the `snapshot_type` split from the Phase 1 schema redesign),
+  surface it: a toggle/selector on the Picks tab to view either
+  snapshot's picks table, so "what did I first see" vs. "what's it look
+  like now" is visible in the UI, not just queryable in the database.
+  Applies to unlocked weeks too, not just locked ones — `'current'`
+  keeps changing on every regenerate pre-lock, while `'first'` stays
+  frozen from the first eligible look, so the comparison is meaningful
+  either way. `store.load_week()` currently only loads `'current'`; needs
+  either a `snapshot_type` parameter or a second loader for `'first'`.
+  Worth considering a diff view (highlight which picks' points/confidence
+  moved) rather than two flat tables side by side, but the toggle itself
+  is the starting ask.
