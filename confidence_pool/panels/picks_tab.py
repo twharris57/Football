@@ -81,7 +81,11 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         if outcome.warning:
             st.warning(outcome.warning)
         if outcome.locked:
-            store.save_week(conn, season, week, outcome.games, outcome.picks, now, lock=True)
+            store.save_week(
+                conn, season, week, outcome.games, outcome.picks, now,
+                first_snapshot_eligible=pc.is_first_look_window(auto_games, now),
+                lock=True,
+            )
             saved_games, saved_picks, status = store.load_week(conn, season, week)
             locked = True
 
@@ -118,7 +122,11 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
                 f"{r['away_team']} @ {r['home_team']}" for _, r in pending.iterrows()
             )
             st.warning(f"Odds not posted yet for: {missing} — try again closer to kickoff.")
-        store.save_week(conn, season, week, games_all, ranked, datetime.now(pc.ET))
+        generated_at = datetime.now(pc.ET)
+        store.save_week(
+            conn, season, week, games_all, ranked, generated_at,
+            first_snapshot_eligible=pc.is_first_look_window(auto_games, generated_at),
+        )
         st.rerun()
     elif not saved_picks.empty:
         st.caption(f"Last generated: {status['generated_at']}")

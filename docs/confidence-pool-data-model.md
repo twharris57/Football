@@ -149,12 +149,29 @@ CREATE TABLE weekly_picks (
 `'current'` is the live working snapshot — overwritten by `store.save_week()`
 on every "Regenerate picks" click, frozen the moment `week_status.locked = 1`
 (`save_week()` refuses to touch an already-locked week). `'first'` is
-captured once, on the very first `save_week()` call ever made for a
-`(season_year, week)`, and never touched again after that — exactly two rows
-per game, ever, no unbounded growth. This is what makes "did the odds move
-between when I first checked this week and when it locked" a query
-(compare `captured_at`/`confidence` across the two `snapshot_type` rows)
-instead of something that would've needed a manual screenshot at the time.
+captured once, on the first `save_week()` call for a `(season_year, week)`
+that's also `first_snapshot_eligible` — never touched again after that,
+exactly two rows per game, ever, no unbounded growth. This is what makes
+"did the odds move between when I first checked this week and when it
+locked" a query (compare `captured_at`/`confidence` across the two
+`snapshot_type` rows) instead of something that would've needed a manual
+screenshot at the time.
+
+`first_snapshot_eligible` (caller-supplied, from `picks_core.is_first_look_window()`)
+exists because "the very first save ever" isn't actually the right
+definition of "first look" — the season/week selector lets you preview any
+week at any time, and a save made while browsing ahead (checking what week
+10 looks like while week 3 is current) shouldn't get permanently recorded
+as week 10's first real review. `is_first_look_window()` only returns
+`True` within `FIRST_LOOK_WINDOW_DAYS` (3) of that week's earliest
+kickoff, matching the actual usage pattern — check a few days before
+kickoff (Thursday/Friday, maybe re-check Saturday morning), not however
+many weeks in advance the UI happens to let you browse to. A preview
+outside that window still saves normally as `'current'`; it just can't
+claim `'first'`. If nothing ever falls inside the window before the
+deadline, `resolve_week_lock()`'s own fallback save (at/after the
+deadline, always within the window by construction) becomes the first
+real look, captured at the one moment it was actually generated for real.
 
 `home_team`/`away_team`/`gameday`/`weekday`/`gametime` live only in `games`
 now, not repeated on every snapshot — they're true for the life of the game,

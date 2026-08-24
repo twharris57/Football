@@ -216,16 +216,22 @@ def save_week(
     games: pd.DataFrame,
     picks: pd.DataFrame,
     generated_at: datetime,
+    first_snapshot_eligible: bool,
     lock: bool = False,
 ) -> None:
     """Persist a week's evaluated games + generated picks as the `'current'`
     snapshot, overwriting any prior `'current'` snapshot for that week.
     Refuses to overwrite an already-locked week.
 
-    On the very first save ever made for a `(season_year, week)`, also
-    captures an immutable `'first'` snapshot -- written once, never touched
-    again -- so odds/pick movement between the first review and the
-    eventual lock stays visible later (see `docs/confidence-pool-web-app.md`).
+    On the first save for a `(season_year, week)` that's also
+    `first_snapshot_eligible`, also captures an immutable `'first'`
+    snapshot -- written once, never touched again -- so odds/pick movement
+    between the first real review and the eventual lock stays visible
+    later (see `docs/confidence-pool-web-app.md`). Deliberately *not* just
+    "the first save ever": a save made while previewing a future week (the
+    season/week selector lets you browse ahead) shouldn't get permanently
+    recorded as that week's first look -- pass `picks_core.is_first_look_window(...)`
+    so only a save made close to the week's actual kickoffs can claim it.
 
     `games` needs `game_id`/`home_team`/`away_team`/`gameday`/`weekday`/
     `gametime`/`home_moneyline`/`away_moneyline`/`included` columns (as
@@ -236,7 +242,19 @@ def save_week(
     status = get_week_status(conn, season_year, week)
     if status and status["locked"]:
         raise ValueError(f"Week {week} ({season_year}) is locked -- cannot regenerate")
-    snapshot_types = ["current"] if status is not None else ["current", "first"]
+
+    has_first_snapshot = conn.execute(
+        """
+        SELECT 1 FROM weekly_games wg
+        JOIN games g ON wg.game_id = g.game_id
+        WHERE g.season_year = ? AND g.week = ? AND wg.snapshot_type = 'first'
+        LIMIT 1
+        """,
+        (season_year, week),
+    ).fetchone() is not None
+    snapshot_types = ["current"]
+    if not has_first_snapshot and first_snapshot_eligible:
+        snapshot_types.append("first")
 
     with conn:
         conn.executemany(

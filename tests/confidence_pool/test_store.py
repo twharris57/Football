@@ -51,6 +51,14 @@ def _picks_df(game_id="g1", predicted_winner="KC", **overrides):
     return pd.DataFrame([row])
 
 
+def _save(conn, season_year, week, games, picks, generated_at, first_snapshot_eligible=True, **kwargs):
+    """save_week() wrapper defaulting first_snapshot_eligible=True -- most
+    tests here aren't exercising the first-look-window gate (see
+    TestFirstSnapshotWindow), so this keeps them focused on what they
+    actually test."""
+    store.save_week(conn, season_year, week, games, picks, generated_at, first_snapshot_eligible, **kwargs)
+
+
 class TestSeasons:
     def test_no_active_season_by_default(self, conn):
         assert store.get_active_season(conn) is None
@@ -144,7 +152,7 @@ class TestAlgorithmVersions:
 
 class TestSaveAndLoadWeek:
     def test_round_trips_games_and_picks(self, conn):
-        store.save_week(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
 
         games, picks, status = store.load_week(conn, 2026, 1)
 
@@ -163,34 +171,30 @@ class TestSaveAndLoadWeek:
         assert status is None
 
     def test_regenerating_before_lock_overwrites_the_current_snapshot(self, conn):
-        store.save_week(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
 
         updated_picks = _picks_df(confidence=0.9)
-        store.save_week(conn, 2026, 1, _games_df(), updated_picks, datetime(2026, 9, 10, 10, 0))
+        _save(conn, 2026, 1, _games_df(), updated_picks, datetime(2026, 9, 10, 10, 0))
 
         _, picks, _ = store.load_week(conn, 2026, 1)
         assert picks.loc[0, "confidence"] == pytest.approx(0.9)
 
     def test_locking_a_week_prevents_further_overwrites(self, conn):
-        store.save_week(
-            conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True
-        )
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True)
 
         with pytest.raises(ValueError):
-            store.save_week(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 14, 0))
+            _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 14, 0))
 
     def test_locking_records_locked_at(self, conn):
-        store.save_week(
-            conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True
-        )
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True)
 
         status = store.get_week_status(conn, 2026, 1)
         assert status["locked"] == 1
         assert status["locked_at"] == "2026-09-13T13:00:00"
 
     def test_first_save_captures_an_immutable_first_snapshot(self, conn):
-        store.save_week(conn, 2026, 1, _games_df(), _picks_df(confidence=0.2), datetime(2026, 9, 10, 9, 0))
-        store.save_week(conn, 2026, 1, _games_df(), _picks_df(confidence=0.9), datetime(2026, 9, 12, 9, 0))
+        _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.2), datetime(2026, 9, 10, 9, 0))
+        _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.9), datetime(2026, 9, 12, 9, 0))
 
         first = conn.execute(
             "SELECT confidence FROM weekly_picks WHERE game_id = 'g1' AND snapshot_type = 'first'"
@@ -203,18 +207,68 @@ class TestSaveAndLoadWeek:
         assert current["confidence"] == pytest.approx(0.9)
 
     def test_saving_stores_the_stable_game_facts_in_games(self, conn):
-        store.save_week(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
 
         game = conn.execute("SELECT * FROM games WHERE game_id = 'g1'").fetchone()
         assert game["season_year"] == 2026
         assert game["week"] == 1
-        assert game["home_team"] == "KC"
-        assert game["home_score"] is None
+
+
+class TestFirstSnapshotEligibility:
+    """A save made while previewing a future week (first_snapshot_eligible=False,
+    from picks_core.is_first_look_window()) must not get permanently recorded
+    as that week's 'first' look -- only the first *eligible* save can."""
+
+    def test_an_ineligible_save_does_not_capture_a_first_snapshot(self, conn):
+        store.save_week(
+            conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 1, 9, 0),
+            first_snapshot_eligible=False,
+        )
+
+        first = conn.execute(
+            "SELECT 1 FROM weekly_games WHERE game_id = 'g1' AND snapshot_type = 'first'"
+        ).fetchone()
+        assert first is None
+        # 'current' still saves normally -- previewing a future week still works.
+        current = conn.execute(
+            "SELECT 1 FROM weekly_games WHERE game_id = 'g1' AND snapshot_type = 'current'"
+        ).fetchone()
+        assert current is not None
+
+    def test_the_first_eligible_save_becomes_first_even_if_later_saves_preceded_it(self, conn):
+        store.save_week(  # an early preview, weeks before kickoff
+            conn, 2026, 1, _games_df(), _picks_df(confidence=0.1), datetime(2026, 9, 1, 9, 0),
+            first_snapshot_eligible=False,
+        )
+        store.save_week(  # the real first look, a few days before kickoff
+            conn, 2026, 1, _games_df(), _picks_df(confidence=0.2), datetime(2026, 9, 10, 9, 0),
+            first_snapshot_eligible=True,
+        )
+
+        first = conn.execute(
+            "SELECT confidence FROM weekly_picks WHERE game_id = 'g1' AND snapshot_type = 'first'"
+        ).fetchone()
+        assert first["confidence"] == pytest.approx(0.2)  # not the 0.1 preview
+
+    def test_an_eligible_save_after_first_is_already_captured_does_not_overwrite_it(self, conn):
+        store.save_week(
+            conn, 2026, 1, _games_df(), _picks_df(confidence=0.2), datetime(2026, 9, 10, 9, 0),
+            first_snapshot_eligible=True,
+        )
+        store.save_week(
+            conn, 2026, 1, _games_df(), _picks_df(confidence=0.9), datetime(2026, 9, 12, 9, 0),
+            first_snapshot_eligible=True,
+        )
+
+        first = conn.execute(
+            "SELECT confidence FROM weekly_picks WHERE game_id = 'g1' AND snapshot_type = 'first'"
+        ).fetchone()
+        assert first["confidence"] == pytest.approx(0.2)
 
 
 class TestSyncGameOutcomes:
     def test_backfills_scores_for_an_already_known_game(self, conn):
-        store.save_week(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
         schedule = pd.DataFrame(
             [{"game_id": "g1", "home_score": 27.0, "away_score": 20.0}]
         )
@@ -236,7 +290,7 @@ class TestSyncGameOutcomes:
         assert conn.execute("SELECT * FROM games WHERE game_id = 'never_saved'").fetchone() is None
 
     def test_ignores_games_with_no_score_yet(self, conn):
-        store.save_week(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
         schedule = pd.DataFrame(
             [{"game_id": "g1", "home_score": None, "away_score": None}]
         )

@@ -239,6 +239,30 @@ def is_locked(now: datetime, deadline: datetime) -> bool:
     return now >= deadline
 
 
+# How close to a week's earliest kickoff a save has to be to count as a
+# real first look at that week, not a click-ahead preview of a future one.
+# Matches the actual usage pattern -- check a few days before kickoff
+# (Thursday/Friday, maybe re-check Saturday morning), not however many
+# weeks in advance the season/week selector happens to let you browse to.
+FIRST_LOOK_WINDOW_DAYS = 3
+
+
+def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
+    """Whether `now` is within `FIRST_LOOK_WINDOW_DAYS` of this week's
+    earliest kickoff -- used to decide whether a save is eligible to become
+    that week's immutable `'first'` snapshot (see `store.save_week`).
+    Comparing whole calendar days, not exact hours, since "Thursday" vs.
+    "the following Wednesday" is the distinction that actually matters here.
+    """
+    kickoffs = [
+        kickoff_datetime(row["gameday"], row["gametime"]) for _, row in games.iterrows()
+    ]
+    if not kickoffs:
+        return False
+    earliest_kickoff = min(kickoffs)
+    return (earliest_kickoff.date() - now.date()).days <= FIRST_LOOK_WINDOW_DAYS
+
+
 @dataclass(frozen=True)
 class LockOutcome:
     """What to do about a week whose deadline has just passed and isn't

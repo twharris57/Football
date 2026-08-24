@@ -304,6 +304,35 @@ class TestResolveWeekLock:
         assert "BBB @ AAA" in outcome.warning
 
 
+class TestIsFirstLookWindow:
+    """Gates whether a save is close enough to kickoff to count as a real
+    first look at a week, not a click-ahead preview of a future one."""
+
+    def test_within_the_window_is_eligible(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        thursday = datetime(2026, 9, 10, 9, 0, tzinfo=pc.ET)  # 3 days before kickoff
+
+        assert pc.is_first_look_window(games, thursday) is True
+
+    def test_well_before_the_window_is_not_eligible(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        weeks_early = datetime(2026, 8, 20, 9, 0, tzinfo=pc.ET)
+
+        assert pc.is_first_look_window(games, weeks_early) is False
+
+    def test_the_day_after_the_window_boundary_is_not_eligible(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        wednesday = datetime(2026, 9, 9, 9, 0, tzinfo=pc.ET)  # 4 days before kickoff
+
+        assert pc.is_first_look_window(games, wednesday) is False
+
+    def test_on_or_after_kickoff_is_still_eligible(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        monday = datetime(2026, 9, 14, 9, 0, tzinfo=pc.ET)
+
+        assert pc.is_first_look_window(games, monday) is True
+
+
 class TestIsLocked:
     def test_before_deadline_is_not_locked(self):
         deadline = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)
