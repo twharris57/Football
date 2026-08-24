@@ -87,7 +87,19 @@ def current_week(schedule: pd.DataFrame, today: date) -> int:
 def select_games(schedule: pd.DataFrame, year: int, week: int) -> pd.DataFrame:
     """Apply the Legion pool's game-selection rules (bylaws rule 14) for one
     week: regular season only, Sunday-afternoon (kickoff >= 1pm ET) and
-    Monday-night games for weeks 1-16, Saturday games only for weeks 17-18.
+    Monday-night games for weeks 1-16 -- that filter exists so the deadline
+    (the earliest *selected* kickoff) can't fall after an excluded early
+    game (Thursday, an early-Sunday international game) has already been
+    decided, which would leak information before picks are due.
+
+    Weeks 17-18 take every game that week instead, with no weekday filter:
+    their deadline is a single early cutoff *before all* of that week's
+    kickoffs (see `week_deadline()`), commissioner-announced each year, so
+    the same leak the weekday filter guards against for weeks 1-16 can't
+    happen regardless of which weekday a game falls on. Confirmed against
+    real 2025-season results: week 18's sheet included a Saturday game
+    (Jan 3) alongside the Sunday slate (Jan 4), which a Sunday/Monday-only
+    filter would have excluded.
     """
     week_games = schedule[
         (schedule["season"] == year)
@@ -96,7 +108,7 @@ def select_games(schedule: pd.DataFrame, year: int, week: int) -> pd.DataFrame:
     ]
 
     if week in LATE_SEASON_WEEKS:
-        selected = week_games[week_games["weekday"] == "Saturday"]
+        selected = week_games
     else:
         is_monday = week_games["weekday"] == "Monday"
         is_sunday_afternoon = (week_games["weekday"] == "Sunday") & (
@@ -186,7 +198,8 @@ def week_deadline(
     cutoff (earlier than any of that week's kickoffs) that the commissioner
     announces each year, so it comes from `configured_deadline`
     (`season_config`) rather than being computed -- falling back to the
-    earliest Saturday kickoff if it hasn't been configured yet.
+    earliest kickoff among that week's selected games if it hasn't been
+    configured yet.
     """
     kickoffs = [
         kickoff_datetime(row["gameday"], row["gametime"]) for _, row in games.iterrows()

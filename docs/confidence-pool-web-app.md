@@ -18,21 +18,36 @@ reference design, not a refactor of it.
 ## Game-selection rules (Legion pool bylaws, rule 14)
 
 The pool's own sheet doesn't include every game in a week — only Sunday-
-afternoon and Monday-night games "almost always" go on the sheet; weeks
-17-18 move to Saturday-only, since the bylaws' own deadline there is
-earlier than any of that week's actual kickoffs (rule 2). `picks_core.select_games()`
-encodes this as:
+afternoon and Monday-night games "almost always" go on the sheet, for
+weeks 1-16. `picks_core.select_games()` encodes this as:
 
 - `game_type == 'REG'` (excludes preseason and any playoff rows this pool
   never uses).
 - Weeks 1-16: `weekday in ('Sunday', 'Monday')`, and for Sunday,
   `gametime >= '13:00'` — this excludes Thursday Night Football and any
-  early/international Sunday game.
-- Weeks 17-18: `weekday == 'Saturday'` only. Confirmed against the real
-  2025/2026 schedules (`nfl_data_py`): week 17/18 games actually spread
-  across Thu/Sat/Sun/Mon, and the bylaws' "Weeks 17 & 18 will all feature
-  Saturday games" turned out to mean *the sheet only uses that week's
-  Saturday game(s)*, not that every game that week is on Saturday.
+  early/international Sunday game. The reason this filter exists at all:
+  the deadline (below) is "before kickoff" of the *earliest selected*
+  game, so an excluded early game's result can't leak information before
+  picks are due.
+- **Weeks 17-18: every game that week, no weekday filter.** Their
+  deadline is a single early cutoff *before all* of that week's kickoffs
+  (see "Pick-submission deadline" below), so the leak the weekday filter
+  guards against for weeks 1-16 can't happen regardless of which weekday
+  a game falls on.
+
+**Corrected 2026-08-24** — an earlier version of this doc, and
+`picks_core.select_games()` itself, restricted weeks 17-18 to `weekday ==
+'Saturday'` only, reading the bylaws' "Weeks 17 & 18 will all feature
+Saturday games" as a game-selection filter. Real 2025-season results (a
+full-season scoring sheet the user provided) contradicted that directly:
+week 18 scores as high as 114 are only mathematically possible with
+roughly 15 games on the sheet that week (points are `1..N` for `N` games,
+so max score is `N(N+1)/2`) — nowhere close to what a 1-3-game
+Saturday-only slate would produce. The actual 2025 week-18 sheet listed
+games on both Jan 3 (Saturday) and Jan 4 (Sunday), confirming the bylaws
+sentence was describing *when the deadline falls* (a Saturday, ahead of
+kickoff), not which games are eligible — and that the full slate that
+week, not a narrower one, is what actually counts.
 
 Because the bylaws themselves say "almost always" (commissioner discretion,
 exceptions happen), the Picks tab shows the auto-selected list with a
@@ -48,8 +63,8 @@ explicit early cutoff from `season_config` instead — the bylaws' own
 example (2025: Sat Dec 27 before 1:00pm ET; Sat Jan 3 before 4:30pm ET) is
 *earlier* than either week's actual kickoffs, so it's commissioner-
 announced each year, not computable from the schedule. Falls back to the
-earliest Saturday kickoff if the season's cutoff hasn't been configured
-yet (Settings tab).
+earliest kickoff among that week's selected games if the season's cutoff
+hasn't been configured yet (Settings tab).
 
 ## Persistence (`store.py`)
 
@@ -145,5 +160,4 @@ actually covers it.
 | Assumption | Where | Breaks if | How to revisit |
 |---|---|---|---|
 | Sunday-afternoon cutoff is a fixed `13:00` ET | `picks_core.SUNDAY_AFTERNOON_CUTOFF` | The pool ever includes an early Sunday game, or a normal 1pm slate game gets flexed earlier | Confirm against a season where this mattered; make configurable if it ever does |
-| Weeks 17-18 are `weekday == 'Saturday'`-only | `picks_core.select_games` | A future season's final two weeks aren't scheduled with a Saturday game at all | Falls through to an empty selection, caught by the Picks tab's "no games matched" warning — not silent |
 | `default_season_year()`'s March cutoff between "still last season" and "next season" | `picks_core.default_season_year` | Never expected to matter in practice — no one uses this app in February/early March | Not worth hardening further unless it does |
