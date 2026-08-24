@@ -46,16 +46,22 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
             st.error(f"Couldn't fetch the schedule from nfl_data_py: {exc}. Try reloading the page.")
             st.stop()
 
-    auto_games = pc.select_games(schedule, season, week)
+    store.sync_game_outcomes(conn, schedule, datetime.now(pc.ET))
+
+    season_row = store.get_season(conn, season) or {}
+    cutoff = season_row.get("sunday_afternoon_cutoff", pc.SUNDAY_AFTERNOON_CUTOFF)
+    week_rule = store.get_week_rule(conn, season, week)
+    selection_rule = week_rule["selection_rule"] if week_rule else "standard"
+
+    auto_games = pc.select_games(schedule, season, week, selection_rule, cutoff)
     if auto_games.empty:
         st.warning(f"No games matched the pool's selection rules for week {week}.")
         return
 
-    config = store.get_season_config(conn, season) or {}
     configured_deadline = None
-    if week in (17, 18) and config.get(f"week{week}_deadline"):
-        configured_deadline = datetime.fromisoformat(config[f"week{week}_deadline"])
-    deadline = pc.week_deadline(auto_games, week, configured_deadline)
+    if week_rule and week_rule.get("deadline_override"):
+        configured_deadline = datetime.fromisoformat(week_rule["deadline_override"])
+    deadline = pc.week_deadline(auto_games, configured_deadline)
 
     saved_games, saved_picks, status = store.load_week(conn, season, week)
     included_map = (
@@ -80,7 +86,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
             locked = True
 
     st.caption(f"Pick deadline: {deadline.strftime('%a %b %d, %I:%M %p ET')}")
-    if week in pc.LATE_SEASON_WEEKS:
+    if week_rule:
         st.info(
             f"Week {week} uses an early, commissioner-announced cutoff instead of "
             "kickoff time (bylaws rule 2) — verify it against this season's actual "

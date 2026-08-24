@@ -59,31 +59,26 @@ week.
 
 `picks_core.week_deadline()`: weeks 1-16 use the earliest kickoff among
 that week's selected games (rule 2: "before kick-off"). Weeks 17-18 use an
-explicit early cutoff from `season_config` instead — the bylaws' own
+explicit early cutoff from `season_week_rules` instead — the bylaws' own
 example (2025: Sat Dec 27 before 1:00pm ET; Sat Jan 3 before 4:30pm ET) is
 *earlier* than either week's actual kickoffs, so it's commissioner-
 announced each year, not computable from the schedule. Falls back to the
 earliest kickoff among that week's selected games if the season's cutoff
-hasn't been configured yet (Settings tab).
+hasn't been configured yet (Settings tab). `week_deadline()` itself just
+trusts whichever `configured_deadline` the caller passes -- it doesn't know
+which weeks are special; `panels/picks_tab.py` decides that by looking up
+`store.get_week_rule()`.
 
 ## Persistence (`store.py`)
 
-SQLite, five tables. Four are keyed by `(season_year, week[, game_id])` so
-multiple seasons coexist in one store; `team_display_names` is global
-(not season-scoped) since team abbreviations don't vary by season:
-
-| Table | Holds |
-|---|---|
-| `season_config` | Which season is active; weeks 17/18's configured deadlines |
-| `week_status` | `locked`/`locked_at`/`generated_at` per week |
-| `weekly_games` | The evaluated game list at generation time (teams, moneylines, kickoff, `included`) |
-| `weekly_picks` | The generated recommendation (points, predicted winner, confidence) |
-| `team_display_names` | Per-team override of what's shown in place of `nfl_data_py`'s raw abbreviation (e.g. `LAC` -> "LA Chargers") |
-
-Every week's evaluated games and generated picks get saved as part of the
-normal flow (not just on request) so future analysis — what-if scoring
-against real outcomes, an eventual small analytics API — has real
-historical input instead of needing to reconstruct it later (see
+SQLite, normalized around stable reference data (`seasons`, `teams`,
+`games`) versus per-generation event data (`weekly_games`/`weekly_picks`,
+split into `'current'`/`'first'` snapshots) — see
+`docs/confidence-pool-data-model.md` for the full table-by-table schema and
+design rationale. Every week's evaluated games and generated picks get
+saved as part of the normal flow (not just on request) so future analysis —
+what-if scoring against real outcomes, an eventual small analytics API —
+has real historical input instead of needing to reconstruct it later (see
 `.claude/PROJECT_PLAN_CONFIDENCE_POOL.md`'s `CP-3`/`CP-5`).
 
 ### Lock-in
@@ -110,30 +105,28 @@ that deviated from the recommendation, is deliberately not built — see
 
 ## Season configuration (Settings tab)
 
-`season_config` holds the one thing this pool's rules can't derive from
+`season_week_rules` holds the one thing this pool's rules can't derive from
 `nfl_data_py`: the commissioner-announced weeks-17/18 deadline, which
 changes every year. Editing it is a form, not a code change/redeploy —
 `CP-1` in the project plan tracks confirming/correcting 2026's value once
-it's announced. The active-season switch is the same table's `active`
-flag, letting the Picks tab default to the right season without a code
-change each year either.
+it's announced. The active-season switch is `seasons.active`, letting the
+Picks tab default to the right season without a code change each year
+either. See `docs/confidence-pool-data-model.md` for the full schema.
 
 ## Team display names (Settings tab)
 
 The Legion pool's own pick sheet doesn't use `nfl_data_py`'s raw team
 abbreviations (`LAC`, `LA`, ...) — it uses its own naming, inconsistent
 across teams (some city+mascot, some city-only or all-caps). The Picks
-tab shows `team_display_names`'s override wherever a team name appears
-(the game checklist, the picks table) instead of the raw abbreviation,
-falling back to the abbreviation itself for any team with no override
-set. `store.DEFAULT_TEAM_DISPLAY_NAMES` seeds all 32 teams on first
-connect (`INSERT OR IGNORE`, so it never overwrites a later edit) from
-names the user supplied directly against a real 2025 late-season pick
-sheet — a starting basis, not a fixed constant, since the whole point of
-storing this in the database (rather than a Python constant) is that it's
-a UI label the user can correct or update themselves via Settings without
-a code change or redeploy, the same reasoning as `season_config`'s
-weeks-17/18 deadline above.
+tab shows `teams.display_name` wherever a team name appears (the game
+checklist, the picks table) instead of the raw abbreviation. `store.DEFAULT_TEAMS`
+seeds all 32 teams on first connect (`INSERT OR IGNORE`, so it never
+overwrites a later edit) from names the user supplied directly against a
+real 2025 late-season pick sheet — a starting basis, not a fixed constant,
+since the whole point of storing this in the database (rather than a
+Python constant) is that it's a UI label the user can correct or update
+themselves via Settings without a code change or redeploy, the same
+reasoning as the weeks-17/18 deadline above.
 
 ## Docker (`confidence_pool/Dockerfile`)
 
@@ -159,5 +152,8 @@ actually covers it.
 
 | Assumption | Where | Breaks if | How to revisit |
 |---|---|---|---|
-| Sunday-afternoon cutoff is a fixed `13:00` ET | `picks_core.SUNDAY_AFTERNOON_CUTOFF` | The pool ever includes an early Sunday game, or a normal 1pm slate game gets flexed earlier | Confirm against a season where this mattered; make configurable if it ever does |
 | `default_season_year()`'s March cutoff between "still last season" and "next season" | `picks_core.default_season_year` | Never expected to matter in practice — no one uses this app in February/early March | Not worth hardening further unless it does |
+
+Schema-level assumptions (the weeks-17/18 selection rule, `game_id`
+stability, the Sunday-afternoon cutoff default) live in
+`docs/confidence-pool-data-model.md`'s own "Static assumptions" table.

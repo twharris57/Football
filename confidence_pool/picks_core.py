@@ -19,14 +19,19 @@ import pandas as pd
 
 ET = ZoneInfo("America/New_York")
 SUNDAY_AFTERNOON_CUTOFF = "13:00"
-LATE_SEASON_WEEKS = (17, 18)
+
+# Stamped onto every generated pick (see rank_games()) so a future methodology
+# change (CP-12) can tell exactly which formula produced a historical row.
+# Bump this string -- and add a row to store.py's algorithm_versions table
+# describing the change -- whenever this module's ranking math changes.
+ALGORITHM_VERSION = "vig-proportional-v1"
 
 # The 32 team abbreviations nfl_data_py's schedule data actually uses (verified
 # against a real fetch, not guessed -- notably the Rams are "LA", not "LAR"). Lets
 # the Settings tab offer every team for a display-name override (see
-# `store.DEFAULT_TEAM_DISPLAY_NAMES`) even before it's appeared in a fetched
-# schedule this session. Stable, but not permanent -- update by hand if a team
-# relocates or rebrands (rare; e.g. WAS's 2022 renaming).
+# `store.DEFAULT_TEAMS`) even before it's appeared in a fetched schedule this
+# session. Stable, but not permanent -- update by hand if a team relocates or
+# rebrands (rare; e.g. WAS's 2022 renaming).
 NFL_TEAM_ABBREVIATIONS = [
     "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN",
     "DET", "GB", "HOU", "IND", "JAX", "KC", "LA", "LAC", "LV", "MIA",
@@ -84,22 +89,33 @@ def current_week(schedule: pd.DataFrame, today: date) -> int:
     return int(last_day_by_week.index[-1])
 
 
-def select_games(schedule: pd.DataFrame, year: int, week: int) -> pd.DataFrame:
+def select_games(
+    schedule: pd.DataFrame,
+    year: int,
+    week: int,
+    selection_rule: str = "standard",
+    sunday_afternoon_cutoff: str = SUNDAY_AFTERNOON_CUTOFF,
+) -> pd.DataFrame:
     """Apply the Legion pool's game-selection rules (bylaws rule 14) for one
-    week: regular season only, Sunday-afternoon (kickoff >= 1pm ET) and
-    Monday-night games for weeks 1-16 -- that filter exists so the deadline
-    (the earliest *selected* kickoff) can't fall after an excluded early
-    game (Thursday, an early-Sunday international game) has already been
-    decided, which would leak information before picks are due.
+    week.
 
-    Weeks 17-18 take every game that week instead, with no weekday filter:
-    their deadline is a single early cutoff *before all* of that week's
-    kickoffs (see `week_deadline()`), commissioner-announced each year, so
-    the same leak the weekday filter guards against for weeks 1-16 can't
-    happen regardless of which weekday a game falls on. Confirmed against
-    real 2025-season results: week 18's sheet included a Saturday game
-    (Jan 3) alongside the Sunday slate (Jan 4), which a Sunday/Monday-only
-    filter would have excluded.
+    `selection_rule` (from `store.season_week_rules` -- only weeks whose
+    rule differs from the default get a row there, e.g. weeks 17-18):
+
+    - `'standard'` (the default): regular season only, Sunday-afternoon
+      (kickoff >= `sunday_afternoon_cutoff`) and Monday-night games. This
+      filter exists so the deadline (the earliest *selected* kickoff)
+      can't fall after an excluded early game (Thursday, an early-Sunday
+      international game) has already been decided, which would leak
+      information before picks are due.
+    - `'all_games'`: every game that week, no weekday filter. Used where
+      the deadline is a single early cutoff *before all* of that week's
+      kickoffs (see `week_deadline()`) rather than "before the earliest
+      selected kickoff" -- the leak `'standard'` guards against can't
+      happen regardless of weekday, so nothing needs excluding. Confirmed
+      against real 2025-season results: week 18's sheet included a
+      Saturday game (Jan 3) alongside the Sunday slate (Jan 4), which a
+      Sunday/Monday-only filter would have excluded.
     """
     week_games = schedule[
         (schedule["season"] == year)
@@ -107,12 +123,12 @@ def select_games(schedule: pd.DataFrame, year: int, week: int) -> pd.DataFrame:
         & (schedule["week"] == week)
     ]
 
-    if week in LATE_SEASON_WEEKS:
+    if selection_rule == "all_games":
         selected = week_games
     else:
         is_monday = week_games["weekday"] == "Monday"
         is_sunday_afternoon = (week_games["weekday"] == "Sunday") & (
-            week_games["gametime"] >= SUNDAY_AFTERNOON_CUTOFF
+            week_games["gametime"] >= sunday_afternoon_cutoff
         )
         selected = week_games[is_monday | is_sunday_afternoon]
 
@@ -126,6 +142,11 @@ def rank_games(games: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     moneyline (odds not posted yet), kept separate rather than ranked, since
     the confidence math can't run on NaN without silently producing NaN
     comparisons downstream (see `valuation_principles.md`'s NaN-handling rule).
+
+    `ranked` carries an `algorithm_version` column (`ALGORITHM_VERSION`) on
+    every row -- callers persist it as-is rather than stamping it on
+    separately, so a pick's provenance travels with it even when a stored
+    snapshot is later reused verbatim (see `resolve_week_lock()`).
     """
     has_odds = games["home_moneyline"].notna() & games["away_moneyline"].notna()
     pending = games[~has_odds].reset_index(drop=True)
@@ -157,6 +178,7 @@ def rank_games(games: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         "confidence", key=lambda s: s.abs(), ascending=False
     ).reset_index(drop=True)
     ranked.insert(0, "points", range(len(ranked), 0, -1))
+    ranked["algorithm_version"] = ALGORITHM_VERSION
     return ranked, pending
 
 
@@ -188,18 +210,17 @@ def kickoff_datetime(gameday: str, gametime: str) -> datetime:
 
 def week_deadline(
     games: pd.DataFrame,
-    week: int,
     configured_deadline: datetime | None = None,
 ) -> datetime:
     """The pick-submission cutoff for a week's selected games (bylaws rule 2).
 
-    Weeks 1-16: the earliest kickoff among the selected games -- picks are
-    due "before kick-off". Weeks 17-18: the bylaws set an explicit early
-    cutoff (earlier than any of that week's kickoffs) that the commissioner
-    announces each year, so it comes from `configured_deadline`
-    (`season_config`) rather than being computed -- falling back to the
-    earliest kickoff among that week's selected games if it hasn't been
-    configured yet.
+    Uses `configured_deadline` if given -- an explicit early cutoff from
+    `store.season_week_rules` (commissioner-announced each year for weeks
+    like 17-18, where the deadline sits before all of that week's kickoffs
+    rather than the earliest selected one). Otherwise falls back to the
+    earliest kickoff among the selected games -- picks are due "before
+    kick-off". The caller decides whether a configured override applies
+    (by looking up `season_week_rules` for this week), not this function.
     """
     kickoffs = [
         kickoff_datetime(row["gameday"], row["gametime"]) for _, row in games.iterrows()
@@ -208,7 +229,7 @@ def week_deadline(
         raise ValueError("Cannot compute a deadline with no selected games")
     earliest_kickoff = min(kickoffs)
 
-    if week in LATE_SEASON_WEEKS and configured_deadline is not None:
+    if configured_deadline is not None:
         return configured_deadline
     return earliest_kickoff
 

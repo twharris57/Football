@@ -35,10 +35,9 @@ def render_settings_tab(conn: sqlite3.Connection, active_season: int) -> None:
         "it isn't derivable from the schedule. Update these once the current season's "
         "cutoffs are announced."
     )
-    config = store.get_season_config(conn, season) or {}
-
     for week, label in ((17, "Week 17"), (18, "Week 18")):
-        existing = config.get(f"week{week}_deadline")
+        week_rule = store.get_week_rule(conn, season, week)
+        existing = week_rule.get("deadline_override") if week_rule else None
         existing_dt = datetime.fromisoformat(existing) if existing else None
         col_date, col_time = st.columns(2)
         with col_date:

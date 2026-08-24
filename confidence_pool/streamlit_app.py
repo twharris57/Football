@@ -17,7 +17,7 @@ import streamlit as st
 from data_dir import DATA_DIR, DB_PATH
 from panels.picks_tab import render_picks_tab
 from panels.settings_tab import render_settings_tab
-from picks_core import ET, default_season_year
+from picks_core import ALGORITHM_VERSION, ET, default_season_year
 
 import store
 
@@ -27,6 +27,9 @@ st.set_page_config(page_title="Confidence Pool", layout="centered")
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 conn = store.connect(str(DB_PATH))
+store.register_algorithm_version(
+    conn, ALGORITHM_VERSION, "Proportional vig-removal; confidence = |home_prob - away_prob|"
+)
 
 today = datetime.now(ET).date()
 active_season = store.get_active_season(conn) or default_season_year(today)

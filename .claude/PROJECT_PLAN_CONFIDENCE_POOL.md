@@ -33,12 +33,12 @@ Empty right now — nothing blocking.
 
 ## Backlog
 
-- [ ] **CP-1: Confirm/correct 2026's weeks 17–18 cutoff in `season_config`
-  once the commissioner announces it.** Seeded at build time with a
-  placeholder based on 2025's pattern (Saturday games, early-afternoon ET
-  cutoffs) — the exact date/time is commissioner-announced each year and
-  must be corrected via the Settings tab before those two weeks matter,
-  not hardcoded in code.
+- [ ] **CP-1: Confirm/correct 2026's weeks 17–18 cutoff in
+  `season_week_rules` once the commissioner announces it.** Seeded at
+  build time with a placeholder based on 2025's pattern (early-afternoon
+  ET cutoffs, ahead of that week's real kickoffs) — the exact date/time
+  is commissioner-announced each year and must be corrected via the
+  Settings tab before those two weeks matter, not hardcoded in code.
 - [ ] **CP-2: Verify the NAS offsite backup actually covers
   `confidence_pool_data` (the SQLite pick-history volume).** Docker named
   volumes are durable across container restarts but live under Docker's
@@ -48,8 +48,10 @@ Empty right now — nothing blocking.
   configuration question, not resolvable from this repo alone.
 - [ ] **CP-3: Join persisted weekly snapshots against real game outcomes**
   to enable what-if analysis ("what if I'd picked differently") and
-  season-long scoring. Needs a source for final scores (`nfl_data_py`'s
-  schedule data already carries these once games complete).
+  season-long scoring. The data groundwork is done as of the Phase 1
+  schema redesign — `games.home_score`/`away_score` backfill automatically
+  via `store.sync_game_outcomes()` on every Picks-tab load — what's left
+  is the actual what-if/scoring logic and UI to consume it.
 - [ ] **CP-4: Record the actual pick submitted for the current week when
   it deviates from the algorithm's recommendation.** Not something the
   user does today (deliberately trusting the algorithm, which performed
@@ -88,24 +90,13 @@ Empty right now — nothing blocking.
   the basics are in place, backtest by opening up the 2025 season and
   having the user input last season's actual picks, so the current
   algorithm's real results are on record to compare a methodology change
-  against — needs `CP-3` (join snapshots against outcomes) and `CP-13`
-  (store the raw inputs a pick was generated from) as prerequisites.
-- [ ] **CP-13: Store the raw inputs a pick was generated from, plus room
-  for supplemental fields, not just the final points/predicted-winner
-  output** (user, PR #46 review, 2026-08-23). Right now `weekly_picks`
-  only holds the derived result (`points`, `predicted_winner`,
-  `confidence`); comparing an alternative algorithm (`CP-6`, `CP-12`)
-  against what actually happened requires re-deriving the original raw
-  moneylines from `weekly_games` and hoping the math hasn't changed
-  underneath. Store the inputs (or at least a versioned pointer to which
-  algorithm/formula produced a row) alongside the output, so a future
-  methodology change can be backtested against exactly what was used at
-  the time, not an approximation of it. Ties into `CP-12`'s backtest
-  idea and the broader schema-normalization pass (`CP-19`-`CP-23`).
+  against — needs `CP-3` (join snapshots against outcomes) as the
+  remaining prerequisite; raw-input/algorithm-version storage is done
+  (`algorithm_versions`, Phase 1 schema redesign).
 - [ ] **CP-14: Replace the Picks tab's season/week `+`/`-` number inputs
   with dropdowns, scoped to real available values, with better
   defaults** (user, PR #46 review, 2026-08-23). Season should offer only
-  seasons that actually exist in `season_config`/have data, not an
+  seasons that actually exist in `seasons`/have data, not an
   arbitrary 2020-2100 range; week should offer only that season's real
   weeks. Default to the current season/week during the season; in the
   off-season, default to the last week of the previous season if the new
@@ -137,8 +128,10 @@ Empty right now — nothing blocking.
   in `docs/confidence-pool-web-app.md`; (2) an expandable row/detail view
   per pick showing the actual inputs (raw moneylines) and intermediate
   math, not just the final points/predicted-winner/confidence columns —
-  depends on `CP-13` storing those inputs if it should also work for
-  historical weeks, not just the currently-generated one.
+  the raw moneylines needed for this are already stored per-snapshot in
+  `weekly_games`, including for historical weeks, not just the
+  currently-generated one (resolved by the Phase 1 schema redesign — see
+  `docs/confidence-pool-data-model.md`).
 - [ ] **CP-17: Replace the Settings tab's season number-input + "Set as
   active season" button with a readonly display of the current season
   plus an "Open {year} season" button** (user, PR #46 review,
@@ -150,9 +143,8 @@ Empty right now — nothing blocking.
   accidentally activating the wrong year. Once this exists reliably,
   revisit whether `picks_core.default_season_year()`'s date-based
   guessing fallback is still needed as anything more than a rare
-  last-resort — `streamlit_app.py` already prefers `season_config`'s
-  active flag over it, this would just make that flag more consistently
-  populated.
+  last-resort — `streamlit_app.py` already prefers `seasons.active`
+  over it, this would just make that flag more consistently populated.
 - [ ] **CP-18: Show a semantic version number alongside the git-SHA
   build indicator** (user, PR #46 review, 2026-08-23). The footer
   currently shows only `GIT_SHA` (see `confidence_pool/Dockerfile`) —
@@ -164,32 +156,3 @@ Empty right now — nothing blocking.
   whether that convention gets adopted for real, and whether it applies
   to just this app or the dynasty app too, before wiring a version string
   into the footer.
-- [ ] **CP-19: Move bylaws-derived constants (`SUNDAY_AFTERNOON_CUTOFF`,
-  `LATE_SEASON_WEEKS`) into per-season database configuration instead of
-  hardcoded Python constants** (user, PR #46 review, 2026-08-23). Part of
-  the eventual confidence-pool database-design pass the user flagged: "once
-  we get team names in place [done — see `team_display_names`], the next
-  thing is probably a database design task where we look at this in great
-  detail and really think about what we need to be tracking from day 1" —
-  see also `CP-13`, `CP-20`-`CP-23`, all part of the same eventual pass.
-- [ ] **CP-20: Split the SQL schema into a dedicated namespace/module for
-  schema maintenance, including real migration scripts** (user, PR #46
-  review, 2026-08-23). `store.SCHEMA`'s single `CREATE TABLE IF NOT
-  EXISTS` script works for an app with no released schema history yet,
-  but has no path for evolving a table's shape once real data exists in
-  it. Part of the database-design pass — see `CP-19`.
-- [ ] **CP-21: Normalize the weeks-17/18 deadline exception into its own
-  table instead of dedicated `week17_deadline`/`week18_deadline`
-  columns** (user, PR #46 review, 2026-08-23). Would also make the
-  scheme extensible if a future season's bylaws add an exception for a
-  different week (e.g. week 16) without a new column per week. Part of
-  the database-design pass — see `CP-19`.
-- [ ] **CP-22: Further normalize `weekly_games`** (e.g. a dedicated teams
-  table) as the schema matures (user, PR #46 review, 2026-08-23). Part of
-  the database-design pass — see `CP-19`.
-- [ ] **CP-23: Write a dedicated database-design doc once the schema
-  settles** (user, PR #46 review, 2026-08-23) — covering the outcome of
-  `CP-19`-`CP-22` and any other schema decisions made along the way,
-  mirroring the dynasty subsystem's `docs/dynasty-data-model.md`. Not
-  worth starting until the schema questions above have actually been
-  decided, per the user's own framing (see `CP-19`).
