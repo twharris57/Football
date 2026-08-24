@@ -17,15 +17,71 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-23`.
+**ID tracker** (last number assigned): `CP-25`.
 
 ## Current branch — fix before merge
 
-`feature/confidence-pool-web-app` — MVP web frontend for the weekly
-confidence-pool picks (see the approved implementation plan for full
-scope). Cleared out when the branch merges.
+`feature/confidence-pool-db-design` (PR #49) — Phase 1 schema redesign:
+normalizes `seasons`/`teams`/`games` reference data and moves the
+weeks-17/18 bylaws exception from `LATE_SEASON_WEEKS` into
+`season_week_rules`. Cleared out when the branch merges.
 
-Empty right now.
+- [ ] **CP-24: Weeks 17-18 silently fall back to the `'standard'`
+  Sunday/Monday-only selection rule until a human has visited the
+  Settings tab and set that season's deadline** (assistant
+  confidence-pool review, 2026-08-23). Before this branch,
+  `LATE_SEASON_WEEKS` applied the bylaws' "every game counts, no weekday
+  filter" exception unconditionally by week number — only the *deadline*
+  had a graceful "fall back to earliest kickoff" default when
+  unconfigured. This branch collapsed both facts into one
+  `season_week_rules` row, but the only writer is
+  `store.set_late_season_deadline()`, called solely from a Settings-tab
+  button click — nothing seeds the row automatically, and
+  `panels/picks_tab.py`'s fallback (`week_rule["selection_rule"] if
+  week_rule else "standard"`) silently applies `'standard'` for an
+  unconfigured week 17/18, excluding real games (e.g. a Saturday game)
+  the bylaws say should count and producing a wrong point assignment for
+  real money — with no warning, since the `st.info` banner about the
+  week's special rule only renders `if week_rule` (i.e., after the row
+  already exists). `current_week()` will land on week 17 automatically
+  as the season progresses, with nothing prompting the user to configure
+  Settings first, so this is a near-certain hit each new season unless
+  caught proactively. Fix by seeding a default `season_week_rules` row
+  (`selection_rule='all_games'`, `deadline_override=NULL`) for weeks
+  17/18 the same way `teams` is seeded (`_seed_default_teams`'s `INSERT
+  OR IGNORE` pattern — safe to reseed, never clobbers a later edit), or
+  by having `picks_tab.py` fail loud/warn rather than silently defaulting
+  to `'standard'` for weeks 17/18 specifically. See
+  `confidence_pool_principles.md`'s new "moving a hardcoded domain rule
+  into configurable data" rule. Also update
+  `docs/confidence-pool-data-model.md`'s "Static assumptions" table entry
+  for this, which currently implies seed data already covers it. Relates
+  to `CP-1` (the deadline *value* itself still needs yearly correction
+  regardless of this fix).
+- [ ] **CP-25: The deadline auto-lock's snapshot-reuse path stamps the
+  lock-evaluation time onto the reused snapshot's `generated_at`/
+  `captured_at`, overwriting its true original generation time** (assistant
+  confidence-pool review, 2026-08-23). `resolve_week_lock()` correctly
+  reuses a prior `saved_picks` snapshot's *values* rather than
+  recomputing, but `panels/picks_tab.py` calls
+  `store.save_week(conn, season, week, outcome.games, outcome.picks, now,
+  lock=True)` — passing `now` (the moment the deadline-passed check ran)
+  as the single `generated_at` argument regardless of whether the
+  snapshot being persisted is freshly computed or reused. `save_week()`
+  stamps that value onto both `week_status.generated_at` and every
+  `'current'`-snapshot `weekly_games.captured_at` row, silently
+  overwriting the reused snapshot's real generation/capture time with an
+  unrelated timestamp — corrupting exactly the fact (when was this
+  actually generated/captured) the new `'first'`/`'current'` snapshot
+  split exists to make queryable ("did odds move between first review
+  and lock"). Fix by threading the reused snapshot's own timestamp
+  through `LockOutcome` (e.g. a `generated_at` field) instead of letting
+  the caller substitute `now()`. No test exercises this path at the
+  `save_week()` call-site level, which is also an instance of
+  `confidence_pool_principles.md`'s "business logic belongs in the tested
+  library, not the panel" rule — deciding which timestamp is correct to
+  persist is business logic currently living, untested, in
+  `picks_tab.py`.
 
 ## Now — blocking
 
