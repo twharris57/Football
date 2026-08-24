@@ -138,20 +138,41 @@ def set_active_season(conn: sqlite3.Connection, season_year: int) -> None:
 
 def get_week_rule(conn: sqlite3.Connection, season_year: int, week: int) -> dict | None:
     """Return this week's selection/deadline override, or `None` if it
-    follows the default `'standard'` rule (see `picks_core.select_games`)."""
+    follows the default `'standard'` rule (see `picks_core.select_games`).
+
+    Weeks 17-18 always return at least `{'selection_rule': 'all_games',
+    'deadline_override': None}`, even with no row yet -- unlike the
+    deadline's actual *value* (commissioner-announced, genuinely different
+    each year), the bylaws' "every game counts, only the deadline is
+    special" exception for these two weeks isn't itself something a
+    commissioner opts into; it's always true. Returning `None` here until
+    someone visits Settings would silently apply the wrong (narrower)
+    selection rule to real games in the meantime -- a missing row for any
+    other week correctly means the plain `'standard'` default applies.
+    """
     row = conn.execute(
         "SELECT * FROM season_week_rules WHERE season_year = ? AND week = ?",
         (season_year, week),
     ).fetchone()
-    return dict(row) if row else None
+    if row:
+        return dict(row)
+    if week in (17, 18):
+        return {
+            "season_year": season_year,
+            "week": week,
+            "selection_rule": "all_games",
+            "deadline_override": None,
+        }
+    return None
 
 
 def set_late_season_deadline(
     conn: sqlite3.Connection, season_year: int, week: int, deadline: datetime
 ) -> None:
     """Set the commissioner-announced early cutoff for week 17 or 18,
-    marking that week's selection rule as `'all_games'` (see `CP-19`/`CP-21`
-    -- every game counts for these weeks; only the deadline is special)."""
+    marking that week's selection rule as `'all_games'` -- every game
+    counts for these weeks; only the deadline is special (see
+    `docs/confidence-pool-data-model.md` for the full rationale)."""
     if week not in (17, 18):
         raise ValueError(f"Late-season deadline only applies to weeks 17/18, got {week}")
     with conn:
@@ -345,11 +366,16 @@ def load_week(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict | None]:
     """Load a previously-saved week's `'current'` games, picks, and status.
     Empty DataFrames (and `None` status) if nothing has been saved for it yet.
+
+    `games` carries `captured_at` (the snapshot's true generation time) so
+    a caller reusing this data verbatim -- e.g. `resolve_week_lock()`
+    locking in a prior snapshot -- can persist it under its own original
+    timestamp instead of substituting whatever moment the reuse happens.
     """
     games = pd.read_sql_query(
         """
         SELECT g.game_id, g.home_team, g.away_team, g.gameday, g.weekday, g.gametime,
-               wg.home_moneyline, wg.away_moneyline, wg.included
+               wg.home_moneyline, wg.away_moneyline, wg.included, wg.captured_at
         FROM weekly_games wg
         JOIN games g ON wg.game_id = g.game_id
         WHERE g.season_year = ? AND g.week = ? AND wg.snapshot_type = 'current'

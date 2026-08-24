@@ -252,12 +252,15 @@ class TestResolveWeekLock:
         auto_games = pd.DataFrame(
             [_game("g1", 1, "Sunday", "13:00", home_moneyline=-900, away_moneyline=650)]
         )
-        saved_games = pd.DataFrame([{"game_id": "g1", "included": 1}])
+        saved_games = pd.DataFrame(
+            [{"game_id": "g1", "included": 1, "captured_at": "2026-09-10T09:00:00-04:00"}]
+        )
         saved_picks = pd.DataFrame(
             [{"game_id": "g1", "points": 1, "predicted_winner": "BBB", "confidence": 0.05}]
         )
+        now = datetime(2026, 9, 14, 13, 0, tzinfo=pc.ET)
 
-        outcome = pc.resolve_week_lock(auto_games, {}, saved_games, saved_picks)
+        outcome = pc.resolve_week_lock(auto_games, {}, saved_games, saved_picks, now)
 
         assert outcome.locked is True
         assert outcome.warning is None
@@ -265,15 +268,35 @@ class TestResolveWeekLock:
         assert outcome.picks.loc[0, "predicted_winner"] == "BBB"
         assert outcome.picks.loc[0, "confidence"] == pytest.approx(0.05)
 
+    def test_reusing_a_saved_snapshot_persists_its_own_original_timestamp_not_now(self):
+        # CP-25: locking in a prior snapshot must not overwrite its true
+        # generation time with whatever moment the lock happens to run.
+        auto_games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00")])
+        saved_games = pd.DataFrame(
+            [{"game_id": "g1", "included": 1, "captured_at": "2026-09-10T09:00:00-04:00"}]
+        )
+        saved_picks = pd.DataFrame(
+            [{"game_id": "g1", "points": 1, "predicted_winner": "AAA", "confidence": 0.2}]
+        )
+        lock_time = datetime(2026, 9, 14, 13, 0, tzinfo=pc.ET)  # days after the real generation
+
+        outcome = pc.resolve_week_lock(auto_games, {}, saved_games, saved_picks, lock_time)
+
+        assert outcome.generated_at == datetime.fromisoformat("2026-09-10T09:00:00-04:00")
+        assert outcome.generated_at != lock_time
+
     def test_computes_a_fresh_snapshot_when_nothing_was_ever_saved(self):
         auto_games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00")])
         empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)
 
-        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty)
+        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty, now)
 
         assert outcome.locked is True
         assert outcome.warning is None
         assert list(outcome.picks["game_id"]) == ["g1"]
+        # No prior snapshot to reuse -- generated_at is genuinely "now".
+        assert outcome.generated_at == now
 
     def test_excludes_a_previously_unchecked_game_from_the_fresh_snapshot(self):
         auto_games = pd.DataFrame(
@@ -283,8 +306,9 @@ class TestResolveWeekLock:
             ]
         )
         empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)
 
-        outcome = pc.resolve_week_lock(auto_games, {"drop": False}, empty, empty)
+        outcome = pc.resolve_week_lock(auto_games, {"drop": False}, empty, empty, now)
 
         assert list(outcome.picks["game_id"]) == ["keep"]
         assert set(outcome.games["game_id"]) == {"keep", "drop"}
@@ -295,11 +319,13 @@ class TestResolveWeekLock:
             [_game("g1", 1, "Sunday", "13:00", home_moneyline=None, away_moneyline=None)]
         )
         empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)
 
-        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty)
+        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty, now)
 
         assert outcome.locked is False
         assert outcome.warning is not None
+        assert outcome.generated_at is None
         assert "g1" not in outcome.warning  # matches on team names, not game_id
         assert "BBB @ AAA" in outcome.warning
 

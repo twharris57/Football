@@ -88,6 +88,21 @@ class TestWeekRules:
     def test_unconfigured_week_has_no_rule(self, conn):
         assert store.get_week_rule(conn, 2026, 5) is None
 
+    def test_unconfigured_weeks_17_and_18_default_to_all_games(self, conn):
+        # CP-24: the "every game counts" half of the weeks-17/18 exception
+        # must apply even before a human ever visits Settings -- only the
+        # deadline *value* genuinely needs yearly configuration.
+        for week in (17, 18):
+            rule = store.get_week_rule(conn, 2026, week)
+            assert rule["selection_rule"] == "all_games"
+            assert rule["deadline_override"] is None
+
+    def test_a_real_configured_week_17_18_row_overrides_the_default(self, conn):
+        store.set_late_season_deadline(conn, 2026, 17, datetime(2026, 12, 26, 13, 0))
+
+        rule = store.get_week_rule(conn, 2026, 17)
+        assert rule["deadline_override"] == datetime(2026, 12, 26, 13, 0).isoformat()
+
     def test_late_season_deadline_rejects_weeks_outside_17_18(self, conn):
         with pytest.raises(ValueError):
             store.set_late_season_deadline(conn, 2026, 16, datetime(2026, 12, 20))

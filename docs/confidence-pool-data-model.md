@@ -49,18 +49,23 @@ CREATE TABLE season_week_rules (
 );
 ```
 
-Only *exception* weeks get a `season_week_rules` row. A week with no row
-follows the default `'standard'` rule (Sunday-afternoon + Monday,
-deadline = earliest kickoff) in `picks_core.select_games()`/`week_deadline()`
-— those functions take `selection_rule`/`configured_deadline` as plain
-parameters and don't know which weeks are special; the caller (`panels/picks_tab.py`)
-looks up `store.get_week_rule()` and decides. Weeks 17-18 get an
-`'all_games'` row (every game that week, no weekday filter — see
-"Static assumptions" below) with `deadline_override` set once the
-commissioner announces it each year (`store.set_late_season_deadline`,
-Settings tab). This is deliberately not a general rule engine (no stored
-weekday lists, no DSL) — two known rule shapes isn't enough cases to justify
-one, per this project's "wait for three concrete cases" convention.
+Real rows only ever get written for weeks 17-18 (via
+`store.set_late_season_deadline`, Settings tab, once the commissioner
+announces that year's cutoff). `store.get_week_rule()` is where the actual
+default lives: any other week with no row returns `None`, meaning
+`'standard'` applies (Sunday-afternoon + Monday, deadline = earliest
+kickoff); weeks 17-18 specifically return a synthesized `{'selection_rule':
+'all_games', 'deadline_override': None}` even with no row yet, since the
+bylaws' "every game counts, only the deadline is special" exception for
+those two weeks isn't itself something a commissioner opts into — only the
+deadline's actual *value* needs yearly configuration (`CP-1`). A real row,
+once one exists, overrides this synthesized default. `picks_core.select_games()`/
+`week_deadline()` themselves take `selection_rule`/`configured_deadline` as
+plain parameters and don't know which weeks are special at all; the
+caller (`panels/picks_tab.py`) reads `get_week_rule()`'s result and decides.
+This is deliberately not a general rule engine (no stored weekday lists,
+no DSL) — two known rule shapes isn't enough cases to justify one, per
+this project's "wait for three concrete cases" convention.
 
 ### `teams`
 
@@ -204,6 +209,6 @@ dependency elsewhere in this repo.
 
 | Assumption | Where | Breaks if | How to revisit |
 |---|---|---|---|
-| Weeks 17-18 use the `'all_games'` rule (every game that week, no weekday filter) | `season_week_rules` / `set_late_season_deadline` | **Currently broken as a default**: nothing seeds a `season_week_rules` row for weeks 17/18 automatically — the only writer is `set_late_season_deadline()`, called from a Settings-tab button click. Until a human does that for a given season, `picks_tab.py` falls back to `'standard'` for weeks 17/18, silently applying the wrong selection rule (see `CP-24`) | Fix pending (`CP-24`): seed the row automatically the same way `teams` is seeded, or fail loud when it's absent for weeks 17/18 specifically. Once fixed, a future season narrowing weeks 17-18 back to a subset is still just a `season_week_rules` row with a different `selection_rule` — no code change needed |
+| Weeks 17-18 use the `'all_games'` rule (every game that week, no weekday filter) | `store.get_week_rule()` | A future season's bylaws genuinely narrow weeks 17-18 back to a subset | `get_week_rule()` returns the `'all_games'` default for weeks 17-18 even with no `season_week_rules` row yet (only the deadline's actual *value* needs yearly Settings configuration, not the selection rule itself — a real row still overrides the default). If the rule ever needs to change for a specific season, insert a `season_week_rules` row with a different `selection_rule` for that `season_year`/week — no code change needed |
 | `game_id` stability across a season | `store.save_week`/`sync_game_outcomes`, both keyed on it | `nfl_data_py` ever changes a game's `game_id` mid-season between fetches | Not verified over a full season yet (this app re-derives `select_games()`'s output fresh every fetch and has never depended on `game_id` stability before now) -- watch for it |
 | `sunday_afternoon_cutoff` is `13:00` ET for every season so far | `seasons.sunday_afternoon_cutoff` default | The pool ever includes an earlier Sunday game, or a normal 1pm slate game gets flexed earlier | Already a per-season Settings value, not a code constant -- just needs editing if it happens |

@@ -272,6 +272,7 @@ class LockOutcome:
     games: pd.DataFrame
     picks: pd.DataFrame
     warning: str | None
+    generated_at: datetime | None
 
 
 def resolve_week_lock(
@@ -279,6 +280,7 @@ def resolve_week_lock(
     included: dict[str, bool],
     saved_games: pd.DataFrame,
     saved_picks: pd.DataFrame,
+    now: datetime,
 ) -> LockOutcome:
     """Decide what to lock in for a week whose deadline has just passed.
 
@@ -293,9 +295,20 @@ def resolve_week_lock(
     generated for the week. If odds are still pending for a selected game
     and there's no prior snapshot to fall back to, returns `locked=False`
     with an explanatory `warning` instead of locking nothing silently.
+
+    The returned `generated_at` is what the caller should persist as this
+    save's timestamp -- the *reused* snapshot's own original `captured_at`
+    (from `saved_games`) when locking in prior data verbatim, not `now`.
+    Reusing a snapshot's values but stamping the lock-evaluation moment
+    onto them would overwrite the true generation time the `'first'`/
+    `'current'` snapshot split exists to preserve.
     """
     if not saved_picks.empty:
-        return LockOutcome(locked=True, games=saved_games, picks=saved_picks, warning=None)
+        original_generated_at = datetime.fromisoformat(saved_games["captured_at"].iloc[0])
+        return LockOutcome(
+            locked=True, games=saved_games, picks=saved_picks, warning=None,
+            generated_at=original_generated_at,
+        )
 
     games_all = games_with_included_flags(auto_games, included)
     ranked, pending = rank_games(games_all[games_all["included"]])
@@ -307,5 +320,8 @@ def resolve_week_lock(
             f"Pick deadline has passed, but odds aren't posted yet for: {missing}. "
             "Picks have not been locked -- reload once odds are posted."
         )
-        return LockOutcome(locked=False, games=pd.DataFrame(), picks=pd.DataFrame(), warning=warning)
-    return LockOutcome(locked=True, games=games_all, picks=ranked, warning=None)
+        return LockOutcome(
+            locked=False, games=pd.DataFrame(), picks=pd.DataFrame(), warning=warning,
+            generated_at=None,
+        )
+    return LockOutcome(locked=True, games=games_all, picks=ranked, warning=None, generated_at=now)

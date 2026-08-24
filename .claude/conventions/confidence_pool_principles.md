@@ -175,3 +175,26 @@ it a test — the panel should only call it and render the result. This is
 what let `CP-8`-`CP-10` all get fixed with real unit tests
 (`games_with_included_flags`, `resolve_week_lock`) instead of relying on
 manual QA against a live deadline.
+
+## Code comments cite durable docs, not ephemeral backlog IDs
+
+The Phase 1 schema redesign shipped two docstrings citing `CP-19`/`CP-20`/
+`CP-21` as the reason a design choice was made (PR #49 review,
+2026-08-24). Both were already dangling the moment they were written —
+this plan file's own convention is "remove an item's entry the moment
+it's done," and those items were removed in the same branch that added
+the citations, in an earlier commit. A reader following the comment's
+pointer into `PROJECT_PLAN_CONFIDENCE_POOL.md` would find nothing.
+
+**The rule**: a `CP-<n>`/`RT-<n>`/etc. tag is a coordinates system for
+*currently open, in-progress work* — the moment an item resolves, its
+entry is deleted (that's the convention, on purpose, so the plan file
+doesn't accumulate a permanent history). A code comment is read long
+after the PR that added it merges, so citing a tag as the *reason* for a
+design choice is citing something guaranteed to eventually 404. Write the
+durable explanation directly in the comment (or point at a `docs/*.md`
+file, which *is* durable, per `docs/README.md`'s own policy) instead of
+outsourcing it to a backlog pointer. A backlog ID belongs in a *commit
+message* (permanent, historical) or in the plan file's own attribution
+line (`user, PR #46 review, 2026-08-23`) — never as the sole explanation
+inside a docstring or inline comment that will outlive the ID it points to.
