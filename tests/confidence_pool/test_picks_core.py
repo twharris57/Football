@@ -89,18 +89,24 @@ class TestSelectGames:
 
         assert set(selected["game_id"]) == {"reg"}
 
-    def test_weeks_17_and_18_keep_only_saturday_games(self):
+    def test_weeks_17_and_18_take_every_game_with_no_weekday_filter(self):
+        # Weeks 17-18 aren't a narrower game-selection special case -- real
+        # 2025-season results (scores up to 114, only possible with ~15
+        # games on the sheet) and the actual week-18 sheet (Saturday Jan 3
+        # + Sunday Jan 4 both listed) confirmed every game counts, unlike
+        # the Sunday-afternoon/Monday-only filter weeks 1-16 use.
         schedule = pd.DataFrame(
             [
                 _game("sat", 17, "Saturday", "16:30"),
-                _game("sun", 17, "Sunday", "13:00"),
+                _game("sun_early", 17, "Sunday", "09:30"),
+                _game("sun_afternoon", 17, "Sunday", "13:00"),
                 _game("mon", 17, "Monday", "20:15"),
             ]
         )
 
         selected = pc.select_games(schedule, 2026, 17)
 
-        assert set(selected["game_id"]) == {"sat"}
+        assert set(selected["game_id"]) == {"sat", "sun_early", "sun_afternoon", "mon"}
 
 
 class TestRankGames:
@@ -184,7 +190,7 @@ class TestWeekDeadline:
         assert deadline == pc.kickoff_datetime("2026-09-13", "13:00")
 
     def test_late_season_week_uses_configured_deadline_when_present(self):
-        games = pd.DataFrame([_game("g1", 17, "Saturday", "16:30", gameday="2026-12-26")])
+        games = pd.DataFrame([_game("g1", 17, "Sunday", "13:00", gameday="2026-12-27")])
         configured = datetime(2026, 12, 26, 13, 0, tzinfo=pc.ET)
 
         deadline = pc.week_deadline(games, 17, configured_deadline=configured)
@@ -192,11 +198,11 @@ class TestWeekDeadline:
         assert deadline == configured
 
     def test_late_season_week_falls_back_to_earliest_kickoff_when_unconfigured(self):
-        games = pd.DataFrame([_game("g1", 17, "Saturday", "16:30", gameday="2026-12-26")])
+        games = pd.DataFrame([_game("g1", 17, "Sunday", "13:00", gameday="2026-12-27")])
 
         deadline = pc.week_deadline(games, 17, configured_deadline=None)
 
-        assert deadline == pc.kickoff_datetime("2026-12-26", "16:30")
+        assert deadline == pc.kickoff_datetime("2026-12-27", "13:00")
 
 
 class TestGamesWithIncludedFlags:

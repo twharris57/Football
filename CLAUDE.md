@@ -57,8 +57,10 @@ else stays flat, on purpose.
   refactor of `football_enhanced.py`, which stays untouched as the proven
   reference implementation this reuses the math from) — current-week
   detection, the Legion pool's own game-selection rules (bylaws rule 14:
-  Sunday-afternoon/Monday-night for weeks 1-16, Saturday-only for weeks
-  17-18), Vegas-odds ranking, and the pick-submission deadline.
+  Sunday-afternoon/Monday-night for weeks 1-16, every game with no
+  weekday filter for weeks 17-18, since their deadline sits before all of
+  that week's kickoffs rather than the earliest selected one), Vegas-odds
+  ranking, and the pick-submission deadline.
   `store.py` persists each week's evaluated games and generated picks to
   SQLite (`confidence_pool_data/picks.db`, anchored via `data_dir.py`
   mirroring `dynasty/cache_dir.py`'s pattern), locking a week once its
@@ -221,9 +223,12 @@ conventions.
   reports are checked as a tiebreaker (`football.py` only; the web app
   doesn't use injury data).
 - **Legion pool sheet rules**: not every game in a week counts — only
-  Sunday-afternoon/Monday-night games for weeks 1-16, Saturday-only for
-  weeks 17-18, per the pool's own bylaws. See `docs/confidence-pool-web-app.md`
-  for the full derivation and `picks_core.select_games()`/`week_deadline()`
+  Sunday-afternoon/Monday-night games for weeks 1-16, per the pool's own
+  bylaws. Weeks 17-18 flip that: every game that week counts (no weekday
+  filter), because their deadline is a single early, commissioner-announced
+  cutoff before all of that week's kickoffs rather than "before the
+  earliest selected kickoff." See `docs/confidence-pool-web-app.md` for
+  the full derivation and `picks_core.select_games()`/`week_deadline()`
   for the implementation.
 - **Dynasty league**: keeps every player on the roster year to year (no
   re-draft) — rookies are the only new players entering the league, and only
