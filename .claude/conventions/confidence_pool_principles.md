@@ -43,9 +43,10 @@ The deadline auto-lock (`CP-9`, 2026-08-22 review) always re-ran
 the page loaded past the deadline, even when a manually-generated
 snapshot (`saved_picks`) already existed from an earlier "Regenerate
 picks" click. Moneylines move over the course of a week, so the
-locked-in row — the permanent historical record `CP-3`/`CP-4` are meant
-to build on — could silently diverge from the picks the user actually
-reviewed and (in reality) submitted to the pool earlier. The bug wasn't
+locked-in row — the permanent historical record future what-if analysis
+and actual-vs-algorithm comparison are meant to build on — could silently
+diverge from the picks the user actually reviewed and (in reality)
+submitted to the pool earlier. The bug wasn't
 in the math; it was in reusing "recompute fresh" as the automated
 fallback's default action, when a canonical human-reviewed result was
 already sitting there to reuse.

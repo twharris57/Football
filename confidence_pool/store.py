@@ -397,3 +397,52 @@ def load_week(
     )
     status = get_week_status(conn, season_year, week)
     return games, picks, status
+
+
+def save_actual_picks(
+    conn: sqlite3.Connection,
+    season_year: int,
+    week: int,
+    picks: pd.DataFrame,
+    entered_at: datetime,
+) -> None:
+    """Persist what the user actually submitted to the pool for a week,
+    overwriting any prior entry for it -- a correction re-saves cleanly,
+    same as `save_week()`'s `'current'` snapshot. `picks` needs
+    `game_id`/`points`/`predicted_winner` columns; `points` must be a
+    unique value per week (enforced at the DB level too, via `actual_picks`'
+    `UNIQUE(season_year, week, points)`).
+    """
+    with conn:
+        conn.execute(
+            "DELETE FROM actual_picks WHERE season_year = ? AND week = ?",
+            (season_year, week),
+        )
+        conn.executemany(
+            """
+            INSERT INTO actual_picks (season_year, week, game_id, points, predicted_winner, entered_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    season_year, week, row["game_id"], int(row["points"]),
+                    row["predicted_winner"], entered_at.isoformat(),
+                )
+                for _, row in picks.iterrows()
+            ],
+        )
+
+
+def load_actual_picks(conn: sqlite3.Connection, season_year: int, week: int) -> pd.DataFrame:
+    """Load the user's actual submitted picks for a week. Empty DataFrame
+    if nothing has been entered yet."""
+    return pd.read_sql_query(
+        """
+        SELECT game_id, points, predicted_winner, entered_at
+        FROM actual_picks
+        WHERE season_year = ? AND week = ?
+        ORDER BY points DESC
+        """,
+        conn,
+        params=(season_year, week),
+    )

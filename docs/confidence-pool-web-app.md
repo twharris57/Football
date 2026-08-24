@@ -89,7 +89,7 @@ A week can be regenerated freely before its deadline (`Picks` tab's
 decides what to lock: the last manually-generated snapshot if one exists
 (reused as-is, not recomputed against whatever odds happen to be live at
 that moment — moneylines move over a week, and the locked row is the
-permanent historical record `CP-3`/`CP-4` depend on), or one final
+permanent historical record `CP-3` depends on), or one final
 computed snapshot if nothing was ever generated. If odds are still
 pending for a selected game and there's no prior snapshot to fall back
 on, the week is left unlocked with an explicit warning rather than
@@ -99,9 +99,14 @@ There's no background scheduler: "locked" is computed from `now` vs. the
 deadline on every page load/regenerate attempt, which is sufficient since
 checking the app close to game time is the whole point of using it.
 
-Manually overriding a locked week, or recording an actual submitted pick
-that deviated from the recommendation, is deliberately not built — see
-`CP-4` in the project plan.
+Manually overriding a locked week's algorithm recommendation is
+deliberately not built — the locked snapshot is a permanent record, not
+an editable one. What *is* built: once a week locks, the Picks tab shows
+an "Your actual submission" form (`actual_picks`, `store.save_actual_picks()`)
+defaulting every field to the algorithm's own recommendation, so you can
+record what you actually wrote on the pool sheet if it ever deviated —
+without re-entering every game by hand when it didn't. Purely a record
+for future comparison; it has no effect on the locked picks themselves.
 
 ## Season configuration (Settings tab)
 

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime
 
 import pandas as pd
@@ -279,6 +280,56 @@ class TestFirstSnapshotEligibility:
             "SELECT confidence FROM weekly_picks WHERE game_id = 'g1' AND snapshot_type = 'first'"
         ).fetchone()
         assert first["confidence"] == pytest.approx(0.2)
+
+
+class TestActualPicks:
+    """What the user actually submitted to the pool, tracked separately
+    from the algorithm's recommendation (weekly_picks)."""
+
+    def test_loading_an_unentered_week_returns_empty(self, conn):
+        assert store.load_actual_picks(conn, 2026, 1).empty
+
+    def test_round_trips(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        actual = pd.DataFrame([{"game_id": "g1", "points": 1, "predicted_winner": "BUF"}])
+
+        store.save_actual_picks(conn, 2026, 1, actual, datetime(2026, 9, 13, 12, 0))
+
+        loaded = store.load_actual_picks(conn, 2026, 1)
+        assert len(loaded) == 1
+        assert loaded.loc[0, "predicted_winner"] == "BUF"
+        assert loaded.loc[0, "points"] == 1
+
+    def test_resaving_overwrites_the_prior_entry(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        store.save_actual_picks(
+            conn, 2026, 1,
+            pd.DataFrame([{"game_id": "g1", "points": 1, "predicted_winner": "KC"}]),
+            datetime(2026, 9, 13, 12, 0),
+        )
+
+        store.save_actual_picks(
+            conn, 2026, 1,
+            pd.DataFrame([{"game_id": "g1", "points": 1, "predicted_winner": "BUF"}]),
+            datetime(2026, 9, 13, 13, 0),
+        )
+
+        loaded = store.load_actual_picks(conn, 2026, 1)
+        assert len(loaded) == 1  # not two rows
+        assert loaded.loc[0, "predicted_winner"] == "BUF"
+
+    def test_duplicate_points_within_a_week_are_rejected(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        _save(conn, 2026, 1, _games_df(game_id="g2"), _picks_df(game_id="g2"), datetime(2026, 9, 10, 9, 0))
+        dupes = pd.DataFrame(
+            [
+                {"game_id": "g1", "points": 1, "predicted_winner": "KC"},
+                {"game_id": "g2", "points": 1, "predicted_winner": "KC"},  # same points twice
+            ]
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            store.save_actual_picks(conn, 2026, 1, dupes, datetime(2026, 9, 13, 12, 0))
 
 
 class TestSyncGameOutcomes:

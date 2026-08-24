@@ -30,6 +30,7 @@ current."
 | `weekly_games` | A game's evaluated odds/inclusion at a point in time (`snapshot_type`: `'current'` or `'first'`) |
 | `weekly_picks` | The generated recommendation for a game at a point in time, same `snapshot_type` split |
 | `week_status` | `locked`/`locked_at`/`generated_at` per `(season_year, week)` |
+| `actual_picks` | What the user actually submitted to the pool for a game -- tracked separately from `weekly_picks`' recommendation |
 
 ### `seasons` and `season_week_rules`
 
@@ -182,6 +183,41 @@ real look, captured at the one moment it was actually generated for real.
 now, not repeated on every snapshot — they're true for the life of the game,
 not just one generation event.
 
+### `actual_picks`
+
+```sql
+CREATE TABLE actual_picks (
+    season_year INTEGER NOT NULL,
+    week INTEGER NOT NULL,
+    game_id TEXT NOT NULL REFERENCES games(game_id),
+    points INTEGER NOT NULL,
+    predicted_winner TEXT NOT NULL REFERENCES teams(abbreviation),
+    entered_at TEXT NOT NULL,
+    PRIMARY KEY (season_year, week, game_id),
+    UNIQUE (season_year, week, points)
+);
+```
+
+A plain parallel to `weekly_picks`, entered manually via a form on the
+Picks tab once a week is locked -- defaults every field to the algorithm's
+own recommendation, so recording "I agreed with the algorithm" is just
+hitting save, not re-entering every game by hand. `store.save_actual_picks()`
+deletes and re-inserts the whole week on every save (same overwrite
+semantics as `weekly_games`'s `'current'` snapshot), so a correction
+replaces cleanly rather than accumulating stale rows.
+
+`UNIQUE(season_year, week, points)` enforces the confidence-pool
+constraint (each point value `1..N` used exactly once) at the database
+level, not just in the form's own validation -- the panel checks it too
+(`sorted(points) == range(1, N+1)`) so a mistake is caught with a clear
+message before it ever reaches the database, but the constraint is the
+backstop against any other write path getting it wrong.
+
+Deliberately no 2025-season backfill here -- comparing "actual vs.
+algorithm" requires a `weekly_picks` row to compare against, and
+`picks_core` didn't exist in 2025. Starts populating with the 2026
+season, going forward only.
+
 ## Schema migrations
 
 ```
@@ -190,6 +226,7 @@ confidence_pool/
     __init__.py          # apply_migrations(conn)
     migrations/
       0001_initial.sql
+      0002_actual_picks.sql
 ```
 
 `store.connect()` calls `db_schema.apply_migrations(conn)`, which tracks
@@ -199,7 +236,10 @@ recorded there, in ascending numeric-prefix order, each as its own
 transaction. `0001_initial.sql` is the schema above in full — a fresh
 origin migration for a greenfield deploy, not a replay of the app's
 pre-migration development history (which never held real production data).
-Every schema change from here forward gets its own numbered migration file.
+`0002_actual_picks.sql` is the first real proof of the migration path
+working as intended: adds `actual_picks` without touching any existing
+table. Every schema change from here forward gets its own numbered
+migration file.
 
 Named `db_schema`, not `schema`, specifically to avoid ever colliding with
 the `schema` PyPI package (a validation library) if that's added as a

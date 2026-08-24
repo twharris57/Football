@@ -21,10 +21,10 @@ it names is completed and deleted. Cross-reference other items by tag
 
 ## Current branch — fix before merge
 
-`feature/confidence-pool-db-design` (PR #49) — Phase 1 schema redesign:
-normalizes `seasons`/`teams`/`games` reference data and moves the
-weeks-17/18 bylaws exception from `LATE_SEASON_WEEKS` into
-`season_week_rules`. Cleared out when the branch merges.
+`feature/confidence-pool-actual-picks` — Phase 2 of the schema redesign:
+adds `actual_picks` (what you really submitted, tracked separately from
+the algorithm's `weekly_picks` recommendation) and a locked-week entry
+form on the Picks tab. Resolves `CP-4`. Cleared out when the branch merges.
 
 Empty right now.
 
@@ -53,12 +53,6 @@ Empty right now — nothing blocking.
   schema redesign — `games.home_score`/`away_score` backfill automatically
   via `store.sync_game_outcomes()` on every Picks-tab load — what's left
   is the actual what-if/scoring logic and UI to consume it.
-- [ ] **CP-4: Record the actual pick submitted for the current week when
-  it deviates from the algorithm's recommendation.** Not something the
-  user does today (deliberately trusting the algorithm, which performed
-  well last season), but wanted eventually so recommended-vs-actual can be
-  compared. Needs an `actual_pick` column/table added to the schema when
-  this is picked up.
 - [ ] **CP-5: Expose weekly pick history via a small analytics API** once
   there's an actual second consumer for it (e.g. `CP-3`'s what-if
   analysis) — likely a small FastAPI service reading the same SQLite
