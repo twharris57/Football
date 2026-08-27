@@ -43,11 +43,15 @@ Empty right now — nothing blocking.
   with the three weeks/three dates listed earlier in the same rule —
   treating the three explicit dates as authoritative, not the summary
   phrase, which reads as leftover wording from a prior year's version of
-  this document.) This can't be resolved directly from this repo — it
-  needs an actual visit to the deployed app's Settings tab, this isn't a
-  code change. `store.set_late_season_deadline()` and the Settings tab
+  this document.) `store.set_late_season_deadline()` and the Settings tab
   now accept week 16 (previously hard-blocked -- see
-  `confidence_pool_principles.md`'s newest rule).
+  `confidence_pool_principles.md`'s newest rule). **Narrowed 2026-08-27
+  (usability pass):** these three values are now the Settings tab's
+  default for an unconfigured week 16-18 in the 2026 season
+  (`settings_tab.KNOWN_2026_LATE_SEASON_DEADLINES`) — a real visit still
+  needs to happen once deployed (each week's "Save" button still has to
+  be clicked to actually persist a `season_week_rules` row), but it's a
+  review-and-confirm, not data entry from scratch.
 - [ ] **CP-2: Verify the NAS offsite backup actually covers
   `confidence_pool_data` (the SQLite pick-history volume).** Docker named
   volumes are durable across container restarts but live under Docker's

@@ -104,16 +104,16 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         _render_week_score(conn, season, week, saved_picks, team_names, status)
         return
 
-    st.write("Games evaluated this week — uncheck any that shouldn't count:")
     included: dict[str, bool] = {}
-    for _, row in auto_games.iterrows():
-        default = included_map.get(row["game_id"], True)
-        away = team_names.get(row["away_team"], row["away_team"])
-        home = team_names.get(row["home_team"], row["home_team"])
-        label = f"{away} @ {home} — {row['weekday']} {row['gametime']}"
-        included[row["game_id"]] = st.checkbox(
-            label, value=default, key=f"include_{season}_{week}_{row['game_id']}"
-        )
+    with st.expander("Games evaluated this week — uncheck any that shouldn't count", expanded=False):
+        for _, row in auto_games.iterrows():
+            default = included_map.get(row["game_id"], True)
+            away = team_names.get(row["away_team"], row["away_team"])
+            home = team_names.get(row["home_team"], row["home_team"])
+            label = f"{away} @ {home} — {row['weekday']} {row['gametime']}"
+            included[row["game_id"]] = st.checkbox(
+                label, value=default, key=f"include_{season}_{week}_{row['game_id']}"
+            )
 
     if st.button("Regenerate picks"):
         games_all = pc.games_with_included_flags(auto_games, included)
@@ -137,6 +137,14 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         st.info("No picks generated yet for this week — click Regenerate picks.")
 
 
+def _full_table_height(num_rows: int) -> int:
+    """A `st.dataframe` height (px) tall enough to show every row without an
+    internal scrollbar -- a confidence-pool week never has more than ~16
+    games, so a tiny embedded scrollbar is a poor fit for a table this
+    short. ~35px/row + header, matching Streamlit's own row height."""
+    return 35 * (num_rows + 1) + 3
+
+
 def _render_picks_table(games: pd.DataFrame, picks: pd.DataFrame, team_names: dict[str, str]) -> None:
     merged = picks.merge(games[["game_id", "home_team", "away_team"]], on="game_id", how="left")
     display = merged[["points", "predicted_winner", "away_team", "home_team", "confidence"]].copy()
@@ -144,7 +152,9 @@ def _render_picks_table(games: pd.DataFrame, picks: pd.DataFrame, team_names: di
         display[col] = display[col].map(lambda t: team_names.get(t, t))
     display["confidence"] = (display["confidence"].abs() * 100).round(1).astype(str) + "%"
     display.columns = ["Points", "Pick", "Away", "Home", "Confidence"]
-    st.dataframe(display, hide_index=True, width="stretch")
+    st.dataframe(
+        display, hide_index=True, width="stretch", height=_full_table_height(len(display))
+    )
 
 
 def _render_actual_picks_form(
@@ -326,7 +336,11 @@ def _render_week_score(
                         "Points awarded": r.points_awarded,
                     }
                 )
-            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+            breakdown = pd.DataFrame(rows)
+            st.dataframe(
+                breakdown, hide_index=True, width="stretch",
+                height=_full_table_height(len(breakdown)),
+            )
     else:
         st.caption("No actual submission recorded for this week yet.")
 
