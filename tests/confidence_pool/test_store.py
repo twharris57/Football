@@ -377,6 +377,54 @@ class TestActualPicks:
         assert bool(loaded.loc[0, "late"]) is False
 
 
+class TestGameOutcomesAndReportedScore:
+    def test_get_game_outcomes_returns_known_games_for_the_week(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+
+        outcomes = store.get_game_outcomes(conn, 2026, 1)
+
+        assert len(outcomes) == 1
+        assert outcomes.loc[0, "home_team"] == "KC"
+        assert pd.isna(outcomes.loc[0, "home_score"])
+
+    def test_get_game_outcomes_includes_synced_scores(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        store.sync_game_outcomes(
+            conn, pd.DataFrame([{"game_id": "g1", "home_score": 27.0, "away_score": 20.0}]),
+            datetime(2026, 9, 14, 12, 0),
+        )
+
+        outcomes = store.get_game_outcomes(conn, 2026, 1)
+
+        assert outcomes.loc[0, "home_score"] == 27.0
+
+    def test_set_reported_score_round_trips(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True)
+
+        store.set_reported_score(conn, 2026, 1, 42, datetime(2026, 9, 15, 9, 0))
+
+        status = store.get_week_status(conn, 2026, 1)
+        assert status["reported_score"] == 42
+        assert status["reported_score_entered_at"] is not None
+
+    def test_unset_reported_score_defaults_to_none(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True)
+
+        status = store.get_week_status(conn, 2026, 1)
+
+        assert status["reported_score"] is None
+
+    def test_clearing_a_reported_score_stores_no_timestamp(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True)
+        store.set_reported_score(conn, 2026, 1, 42, datetime(2026, 9, 15, 9, 0))
+
+        store.set_reported_score(conn, 2026, 1, None, datetime(2026, 9, 16, 9, 0))
+
+        status = store.get_week_status(conn, 2026, 1)
+        assert status["reported_score"] is None
+        assert status["reported_score_entered_at"] is None
+
+
 class TestSyncGameOutcomes:
     def test_backfills_scores_for_an_already_known_game(self, conn):
         _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))

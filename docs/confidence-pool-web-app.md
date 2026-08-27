@@ -127,6 +127,35 @@ blocking the save (`picks_core.check_actual_picks()` explains which
 bylaws rule applies whenever one of these is present, both right after
 saving and on any later visit to an already-recorded week).
 
+## Weekly scoring (once outcomes are known)
+
+Once a locked week's games start finishing, the Picks tab shows the
+algorithm's hypothetical score next to what you actually submitted —
+`picks_core.score_picks()` scores either set of picks (`weekly_picks` or
+`actual_picks` — same `game_id -> (predicted_winner, points)` shape, one
+scoring function for both) against `games.home_score`/`away_score`,
+applying bylaws rule 6 (a tied game awards no points to anyone) and rule 7
+(two games sharing a points value are credited that value once, not
+twice). A game without a final score yet is excluded from the running
+total but still counted, so a mid-week check shows a partial, clearly-
+labeled score ("6/9 games decided so far") instead of quietly scoring an
+undecided game as wrong. An expander below the actual score breaks it down
+game by game — pick, points assigned, actual winner, points actually
+awarded — mainly so a reported-score mismatch (below) is diagnosable
+instead of just a bare "these don't match."
+
+Bylaws rule 2's late-card penalty (10 points below the field's lowest
+card that week) is the one thing this can't compute — it needs every
+other pool entrant's score, and this is a single-user tool that's never
+tracked that. Instead, the same section lets you record the pool's
+*officially reported* score for the week once the commissioner posts it
+(`store.set_reported_score`) — authoritative for a late card, and for an
+on-time card, a sanity check against the app's own computed total
+(`picks_core.check_reported_score` flags a mismatch, skipped entirely for
+a late card since a mismatch there is expected, not a bug). Manual entry
+is the interim step before an eventual score-sheet/PDF import — see the
+project plan's backlog.
+
 ## Season configuration (Settings tab)
 
 `season_week_rules` holds the one thing this pool's rules can't derive from

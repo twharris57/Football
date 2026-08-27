@@ -415,6 +415,169 @@ class TestCheckActualPicks:
         assert "Chiefs @ Bills" in issues[0]
 
 
+def _outcomes(*rows):
+    """rows: (game_id, home_team, away_team, home_score, away_score)."""
+    return pd.DataFrame(
+        rows, columns=["game_id", "home_team", "away_team", "home_score", "away_score"]
+    )
+
+
+class TestScorePicks:
+    """Scoring a set of picks (algorithm's or actual submission's -- same
+    shape) against real outcomes, applying bylaws rules 6/7/15/16."""
+
+    def test_correct_pick_awards_its_points(self):
+        entries = {"g1": ("KC", 3)}
+        outcomes = _outcomes(("g1", "KC", "BUF", 27, 20))
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.total_points == 3
+        assert score.games_decided == 1
+        assert score.games_total == 1
+        assert score.results[0].correct is True
+        assert score.results[0].points_awarded == 3
+
+    def test_incorrect_pick_awards_nothing(self):
+        entries = {"g1": ("BUF", 3)}
+        outcomes = _outcomes(("g1", "KC", "BUF", 27, 20))
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.total_points == 0
+        assert score.results[0].correct is False
+
+    def test_tied_game_awards_no_points_regardless_of_pick(self):
+        # Bylaws rule 6: "all points picked in games ending in a tie will be lost."
+        entries = {"g1": ("KC", 5)}
+        outcomes = _outcomes(("g1", "KC", "BUF", 24, 24))
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.total_points == 0
+        assert score.results[0].actual_winner is None
+        assert score.results[0].correct is False
+        assert score.results[0].decided is True
+
+    def test_blank_winner_is_scored_as_incorrect(self):
+        # Bylaws rule 16.
+        entries = {"g1": (None, 3)}
+        outcomes = _outcomes(("g1", "KC", "BUF", 27, 20))
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.total_points == 0
+        assert score.results[0].correct is False
+
+    def test_blank_points_awards_nothing_even_when_correct(self):
+        # Bylaws rule 15.
+        entries = {"g1": ("KC", None)}
+        outcomes = _outcomes(("g1", "KC", "BUF", 27, 20))
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.total_points == 0
+        assert score.results[0].correct is True
+        assert score.results[0].points_awarded == 0
+
+    def test_duplicate_points_credited_once_when_one_game_correct(self):
+        # Bylaws rule 7: a shared points value counts once, not per game.
+        entries = {"g1": ("KC", 3), "g2": ("SF", 3)}
+        outcomes = _outcomes(
+            ("g1", "KC", "BUF", 27, 20),  # correct
+            ("g2", "SF", "LA", 10, 24),  # SF picked, LA actually won -- incorrect
+        )
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.total_points == 3
+
+    def test_duplicate_points_credited_only_once_when_both_correct(self):
+        entries = {"g1": ("KC", 3), "g2": ("SF", 3)}
+        outcomes = _outcomes(
+            ("g1", "KC", "BUF", 27, 20),
+            ("g2", "SF", "LA", 24, 10),
+        )
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.total_points == 3  # not 6
+
+    def test_duplicate_points_awards_nothing_when_neither_correct(self):
+        entries = {"g1": ("BUF", 3), "g2": ("LA", 3)}
+        outcomes = _outcomes(
+            ("g1", "KC", "BUF", 27, 20),
+            ("g2", "SF", "LA", 24, 10),
+        )
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.total_points == 0
+
+    def test_undecided_game_is_excluded_from_the_total_but_still_counted(self):
+        entries = {"g1": ("KC", 3), "g2": ("SF", 2)}
+        outcomes = _outcomes(
+            ("g1", "KC", "BUF", 27, 20),
+            ("g2", "SF", "LA", None, None),  # not played yet
+        )
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.total_points == 3
+        assert score.games_decided == 1
+        assert score.games_total == 2
+
+    def test_game_missing_from_outcomes_entirely_is_treated_as_undecided(self):
+        entries = {"g1": ("KC", 3)}
+        outcomes = _outcomes()
+
+        score = pc.score_picks(entries, outcomes)
+
+        assert score.games_decided == 0
+        assert score.games_total == 1
+        assert score.results[0].decided is False
+
+
+class TestCheckReportedScore:
+    """Cross-checking the pool's officially reported score against this
+    app's own computed total -- the interim stand-in for bylaws rule 2's
+    unresolvable late-card penalty."""
+
+    def _week_score(self, total_points, games_decided=1, games_total=1):
+        return pc.WeekScore(
+            total_points=total_points, games_decided=games_decided,
+            games_total=games_total, results=[],
+        )
+
+    def test_no_reported_score_yet_is_not_flagged(self):
+        assert pc.check_reported_score(self._week_score(10), None, late=False) is None
+
+    def test_incomplete_week_is_not_flagged(self):
+        score = self._week_score(10, games_decided=1, games_total=2)
+
+        assert pc.check_reported_score(score, 99, late=False) is None
+
+    def test_late_card_is_never_flagged_even_on_mismatch(self):
+        # Rule 2's real penalty isn't verifiable without the field's scores.
+        score = self._week_score(10)
+
+        assert pc.check_reported_score(score, 0, late=True) is None
+
+    def test_matching_score_is_not_flagged(self):
+        score = self._week_score(10)
+
+        assert pc.check_reported_score(score, 10, late=False) is None
+
+    def test_mismatched_score_is_flagged(self):
+        score = self._week_score(10)
+
+        message = pc.check_reported_score(score, 7, late=False)
+
+        assert message is not None
+        assert "10" in message
+        assert "7" in message
+
+
 class TestIsLocked:
     def test_before_deadline_is_not_locked(self):
         deadline = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)

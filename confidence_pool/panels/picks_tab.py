@@ -101,6 +101,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
         _render_picks_table(saved_games, saved_picks, team_names)
         _render_actual_picks_form(conn, season, week, saved_games, saved_picks, team_names)
+        _render_week_score(conn, season, week, saved_picks, team_names, status)
         return
 
     st.write("Games evaluated this week — uncheck any that shouldn't count:")
@@ -256,3 +257,96 @@ def _render_actual_picks_form(
         st.rerun()
     elif not existing.empty:
         st.caption(f"Last recorded: {existing['entered_at'].iloc[0]}")
+
+
+def _entries_from_picks(picks: pd.DataFrame) -> dict[str, tuple[str | None, int | None]]:
+    return {
+        row["game_id"]: (
+            row["predicted_winner"] if pd.notna(row["predicted_winner"]) else None,
+            int(row["points"]) if pd.notna(row["points"]) else None,
+        )
+        for _, row in picks.iterrows()
+    }
+
+
+def _render_week_score(
+    conn: sqlite3.Connection,
+    season: int,
+    week: int,
+    saved_picks: pd.DataFrame,
+    team_names: dict[str, str],
+    status: dict | None,
+) -> None:
+    """A locked week's real score, once outcomes are known -- the
+    algorithm's hypothetical total next to what you actually submitted, per
+    `picks_core.score_picks`. Also where the pool's officially reported
+    score gets recorded, since bylaws rule 2's late-card penalty needs
+    every other entrant's score, which this app doesn't track -- see
+    `picks_core.check_reported_score`.
+    """
+    outcomes = store.get_game_outcomes(conn, season, week)
+    algo_score = pc.score_picks(_entries_from_picks(saved_picks), outcomes)
+    if algo_score.games_decided == 0:
+        st.caption("This week's games haven't finished yet -- scores will appear here once results are in.")
+        return
+
+    st.subheader("This week's result")
+    partial = algo_score.games_decided < algo_score.games_total
+    suffix = (
+        f" ({algo_score.games_decided}/{algo_score.games_total} games decided so far)"
+        if partial
+        else ""
+    )
+    st.write(f"Algorithm score: **{algo_score.total_points}**{suffix}")
+
+    actual = store.load_actual_picks(conn, season, week)
+    late = bool(actual["late"].iloc[0]) if not actual.empty else False
+    actual_score = pc.score_picks(_entries_from_picks(actual), outcomes) if not actual.empty else None
+    if actual_score is not None:
+        st.write(f"Your actual score: **{actual_score.total_points}**{suffix}")
+        if late:
+            st.caption(
+                "Bylaws rule 2's late-card penalty (10 points below the field's "
+                "lowest card) isn't reflected above -- this app has no visibility "
+                "into other entrants' scores. Enter the commissioner's reported "
+                "score below once it's posted."
+            )
+        with st.expander("Game-by-game breakdown"):
+            rows = []
+            for r in actual_score.results:
+                rows.append(
+                    {
+                        "Your pick": team_names.get(r.predicted_winner, r.predicted_winner)
+                        if r.predicted_winner
+                        else "(not marked)",
+                        "Points assigned": r.points if r.points is not None else "(blank)",
+                        "Actual winner": team_names.get(r.actual_winner, r.actual_winner)
+                        if r.actual_winner
+                        else ("tied" if r.decided else "TBD"),
+                        "Points awarded": r.points_awarded,
+                    }
+                )
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    else:
+        st.caption("No actual submission recorded for this week yet.")
+
+    max_score = algo_score.games_total * (algo_score.games_total + 1) // 2
+    reported = status.get("reported_score") if status else None
+    reported_input = st.number_input(
+        "Reported score from the pool (0 = not yet entered)",
+        min_value=0,
+        max_value=max_score,
+        value=int(reported) if reported is not None else 0,
+        step=1,
+        key=f"reported_score_{season}_{week}",
+    )
+    if st.button("Save reported score", key=f"save_reported_score_{season}_{week}"):
+        store.set_reported_score(
+            conn, season, week, reported_input if reported_input > 0 else None, datetime.now(pc.ET)
+        )
+        st.success("Reported score saved.")
+        st.rerun()
+    elif actual_score is not None and reported is not None:
+        mismatch = pc.check_reported_score(actual_score, int(reported), late)
+        if mismatch:
+            st.warning(mismatch)

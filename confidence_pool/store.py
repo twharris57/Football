@@ -245,6 +245,51 @@ def sync_game_outcomes(conn: sqlite3.Connection, schedule: pd.DataFrame, synced_
         )
 
 
+def get_game_outcomes(conn: sqlite3.Connection, season_year: int, week: int) -> pd.DataFrame:
+    """Return `game_id`/`home_team`/`away_team`/`home_score`/`away_score`
+    for every `games` row known for a week -- scores are `NULL` until
+    `sync_game_outcomes` backfills them. Feeds `picks_core.score_picks`."""
+    return pd.read_sql_query(
+        """
+        SELECT game_id, home_team, away_team, home_score, away_score
+        FROM games
+        WHERE season_year = ? AND week = ?
+        """,
+        conn,
+        params=(season_year, week),
+    )
+
+
+def set_reported_score(
+    conn: sqlite3.Connection,
+    season_year: int,
+    week: int,
+    score: int | None,
+    entered_at: datetime,
+) -> None:
+    """Record the pool's officially reported score for a week -- the only
+    way bylaws rule 2's late-card penalty ever gets reflected here, since
+    this single-user app has no visibility into other entrants' scores
+    (see `picks_core.check_reported_score`). Updates `week_status`, whose
+    row is guaranteed to already exist -- the UI only offers this on an
+    already-locked week, and locking always writes `week_status` first via
+    `save_week`."""
+    with conn:
+        conn.execute(
+            """
+            UPDATE week_status
+            SET reported_score = ?, reported_score_entered_at = ?
+            WHERE season_year = ? AND week = ?
+            """,
+            (
+                score,
+                entered_at.isoformat() if score is not None else None,
+                season_year,
+                week,
+            ),
+        )
+
+
 def get_week_status(conn: sqlite3.Connection, season_year: int, week: int) -> dict | None:
     """Return a week's lock/generation status, or `None` if nothing's been
     saved for it yet."""

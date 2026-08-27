@@ -29,7 +29,7 @@ current."
 | `algorithm_versions` | Every `picks_core.ALGORITHM_VERSION` string that's ever generated a pick, with a description |
 | `weekly_games` | A game's evaluated odds/inclusion at a point in time (`snapshot_type`: `'current'` or `'first'`) |
 | `weekly_picks` | The generated recommendation for a game at a point in time, same `snapshot_type` split |
-| `week_status` | `locked`/`locked_at`/`generated_at` per `(season_year, week)` |
+| `week_status` | `locked`/`locked_at`/`generated_at`, and the pool's officially reported score, per `(season_year, week)` |
 | `actual_picks` | What the user actually submitted to the pool for a game -- tracked separately from `weekly_picks`' recommendation |
 
 ### `seasons` and `season_week_rules`
@@ -234,6 +234,50 @@ algorithm" requires a `weekly_picks` row to compare against, and
 `picks_core` didn't exist in 2025. Starts populating with the 2026
 season, going forward only.
 
+## `week_status` and weekly scoring
+
+```sql
+CREATE TABLE week_status (
+    season_year INTEGER NOT NULL,
+    week INTEGER NOT NULL,
+    locked INTEGER NOT NULL DEFAULT 0,
+    locked_at TEXT,
+    generated_at TEXT NOT NULL,
+    reported_score INTEGER,
+    reported_score_entered_at TEXT,
+    PRIMARY KEY (season_year, week)
+);
+```
+
+`reported_score`/`reported_score_entered_at` (added by migration
+`0003_reported_score.sql`) hold the pool's officially reported score for
+the week, entered manually via `store.set_reported_score()` once the
+commissioner posts it. The row always exists by the time this is
+settable -- the UI only offers it on an already-locked week, and locking
+always writes `week_status` first via `save_week()`.
+
+Scoring itself lives in `picks_core.score_picks()`, which takes a set of
+picks (`game_id -> (predicted_winner, points)` -- the same shape
+`check_actual_picks()` already uses, so one function scores both
+`weekly_picks` and `actual_picks` rather than two parallel
+implementations) against `store.get_game_outcomes()`'s real per-game
+scores, and applies bylaws rule 6 (a tied game awards nobody points) and
+rule 7 (a points value shared by more than one game is credited once, not
+per game). A game without a final score yet is excluded from the total
+but still counted, so a mid-week score reads as provisional
+(`games_decided < games_total`) rather than silently wrong.
+
+`reported_score` exists specifically because rule 2's late-card penalty
+(10 points below the field's lowest card) needs every other pool
+entrant's score -- data this single-user app has never tracked and can't
+derive from `nfl_data_py`. Once entered, `picks_core.check_reported_score()`
+either treats it as authoritative (a late card) or cross-checks it
+against the app's own computed total (an on-time card, where a mismatch
+is worth investigating rather than expected). Manual entry is the interim
+step before an eventual score-sheet/PDF import (project plan backlog);
+season-long cumulative standings across weeks are a separate, later
+backlog item, once per-week figures like these exist to sum.
+
 ## Schema migrations
 
 ```
@@ -243,6 +287,7 @@ confidence_pool/
     migrations/
       0001_initial.sql
       0002_actual_picks.sql
+      0003_reported_score.sql
 ```
 
 `store.connect()` calls `db_schema.apply_migrations(conn)`, which tracks
@@ -254,8 +299,9 @@ origin migration for a greenfield deploy, not a replay of the app's
 pre-migration development history (which never held real production data).
 `0002_actual_picks.sql` is the first real proof of the migration path
 working as intended: adds `actual_picks` without touching any existing
-table. Every schema change from here forward gets its own numbered
-migration file.
+table. `0003_reported_score.sql` adds `week_status.reported_score`/
+`reported_score_entered_at` the same way. Every schema change from here
+forward gets its own numbered migration file.
 
 Named `db_schema`, not `schema`, specifically to avoid ever colliding with
 the `schema` PyPI package (a validation library) if that's added as a
