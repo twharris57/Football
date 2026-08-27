@@ -17,7 +17,7 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-26`.
+**ID tracker** (last number assigned): `CP-27`.
 
 ## Current branch — fix before merge
 
@@ -172,6 +172,14 @@ Empty right now — nothing blocking.
   whether that convention gets adopted for real, and whether it applies
   to just this app or the dynasty app too, before wiring a version string
   into the footer.
+- [ ] **CP-27: Make the pick-submission deadline more prominent on the
+  Picks tab** (user, 2026-08-27). Currently rendered as a plain
+  `st.caption` (`panels/picks_tab.py`) — easy to miss at a glance,
+  especially for a week using an early commissioner-announced cutoff
+  (`week_rule`) rather than kickoff time. Give it real visual weight —
+  e.g. a header-level element, a countdown, or a warning-style callout
+  once the deadline is close — rather than the same low-emphasis caption
+  style used for incidental notes elsewhere on the tab.
 - [ ] **CP-26: Let the Picks tab UI switch between viewing a week's
   `'first'` and `'current'` snapshot** (user, 2026-08-24, flagged for a
   future feature branch — not this one). Now that both are actually
