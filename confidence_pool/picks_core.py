@@ -435,10 +435,12 @@ def score_picks(
     - Rule 7 (duplicate points): when more than one game shares the same
       points value, that value is credited at most once for the whole
       group -- only if at least one game in the group was correct (and
-      only once even if more than one was). This is the most literal
-      reading available of `check_actual_picks`' existing "the lower value
-      counts... or either if both were" wording without the raw bylaws
-      text in hand; revisit if that phrasing is ever clarified.
+      only once even if more than one was). Confirmed against the actual
+      2026 rules document: "If a card has two numbers of the same value,
+      the player receives the lower of the two numbers" whether one or
+      both choices were correct -- since the two numbers are equal by the
+      rule's own premise, "the lower" is trivially that shared value,
+      credited once.
 
     A game with no known outcome yet (`home_score`/`away_score` still
     `NULL`) is excluded from scoring but still counted in `games_total`, so

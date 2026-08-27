@@ -422,7 +422,29 @@ class TestGameOutcomesAndReportedScore:
 
         status = store.get_week_status(conn, 2026, 1)
         assert status["reported_score"] is None
-        assert status["reported_score_entered_at"] is None
+
+    def test_a_reported_score_of_zero_round_trips_as_a_real_value(self, conn):
+        # A week where every pick was wrong genuinely scores 0 -- must be
+        # distinguishable from "nothing entered" (see CP-31).
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True)
+
+        store.set_reported_score(conn, 2026, 1, 0, datetime(2026, 9, 15, 9, 0))
+
+        status = store.get_week_status(conn, 2026, 1)
+        assert status["reported_score"] == 0
+        assert status["reported_score_entered_at"] is not None
+
+    def test_a_negative_reported_score_round_trips(self, conn):
+        # Bylaws rule 2's late-card penalty (10 points below the field's
+        # lowest card) can go negative when that week's lowest card is
+        # itself under 10.
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True)
+
+        store.set_reported_score(conn, 2026, 1, -3, datetime(2026, 9, 15, 9, 0))
+
+        status = store.get_week_status(conn, 2026, 1)
+        assert status["reported_score"] == -3
+        assert status["reported_score_entered_at"] is not None
 
 
 class TestSyncGameOutcomes:

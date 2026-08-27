@@ -346,18 +346,28 @@ def _render_week_score(
 
     max_score = algo_score.games_total * (algo_score.games_total + 1) // 2
     reported = status.get("reported_score") if status else None
-    reported_input = st.number_input(
-        "Reported score from the pool (0 = not yet entered)",
-        min_value=0,
-        max_value=max_score,
-        value=int(reported) if reported is not None else 0,
-        step=1,
-        key=f"reported_score_{season}_{week}",
-    )
-    if st.button("Save reported score", key=f"save_reported_score_{season}_{week}"):
-        store.set_reported_score(
-            conn, season, week, reported_input if reported_input > 0 else None, datetime.now(pc.ET)
+    col_score, col_clear = st.columns([4, 1])
+    with col_score:
+        reported_input = st.number_input(
+            "Reported score from the pool",
+            max_value=max_score,
+            value=int(reported) if reported is not None else 0,
+            step=1,
+            key=f"reported_score_{season}_{week}",
         )
+    with col_clear:
+        st.write("")
+        clear_clicked = st.button(
+            "Clear", key=f"clear_reported_score_{season}_{week}", disabled=reported is None
+        )
+    save_clicked = st.button("Save reported score", key=f"save_reported_score_{season}_{week}")
+
+    if clear_clicked:
+        store.set_reported_score(conn, season, week, None, datetime.now(pc.ET))
+        st.success("Reported score cleared.")
+        st.rerun()
+    elif save_clicked:
+        store.set_reported_score(conn, season, week, reported_input, datetime.now(pc.ET))
         st.success("Reported score saved.")
         st.rerun()
     elif actual_score is not None and reported is not None:

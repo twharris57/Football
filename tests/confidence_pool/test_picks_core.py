@@ -577,6 +577,25 @@ class TestCheckReportedScore:
         assert "10" in message
         assert "7" in message
 
+    def test_a_reported_score_of_zero_matching_a_zero_total_is_not_flagged(self):
+        # A genuinely all-wrong week -- 0 is a real value here, not "unset"
+        # (see CP-31; store.set_reported_score/get_week_status already
+        # distinguish 0 from None, this checks the comparison itself).
+        score = self._week_score(0)
+
+        assert pc.check_reported_score(score, 0, late=False) is None
+
+    def test_a_negative_reported_score_is_compared_normally(self):
+        # Rule 2's late-card penalty can go negative; the comparison itself
+        # doesn't need special-casing for that, only the late=True branch
+        # (already covered) suppresses the flag.
+        score = self._week_score(5)
+
+        message = pc.check_reported_score(score, -3, late=False)
+
+        assert message is not None
+        assert "-3" in message
+
 
 class TestIsLocked:
     def test_before_deadline_is_not_locked(self):
