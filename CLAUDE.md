@@ -56,12 +56,8 @@ else stays flat, on purpose.
 - **Confidence pool web app**: `picks_core.py` is a fresh library (not a
   refactor of `football_enhanced.py`, which stays untouched as the proven
   reference implementation this reuses the math from) — current-week
-  detection, the Legion pool's own game-selection rules (bylaws rule 14:
-  Sunday-afternoon/Monday-night for most weeks, every game with no
-  weekday filter for the season's final few weeks (`store.KNOWN_LATE_SEASON_WEEKS`
-  -- 16-18 as of the 2026 rules, though *which* weeks changes year to
-  year), since their deadline sits before all of that week's kickoffs
-  rather than the earliest selected one), Vegas-odds ranking, and the
+  detection, the Legion pool's own game-selection rules (see "Legion pool
+  sheet rules" under Domain Concepts below), Vegas-odds ranking, and the
   pick-submission deadline.
   `store.py` persists each week's evaluated games and generated picks to
   SQLite (`confidence_pool_data/picks.db`, anchored via `data_dir.py`
@@ -124,8 +120,9 @@ else stays flat, on purpose.
   correction once the commissioner announces each year's actual cutoff —
   see `.claude/PROJECT_PLAN_CONFIDENCE_POOL.md`'s `CP-1`. *Which* weeks
   count as "late season" also needs a yearly check against that year's
-  real bylaws (`store.KNOWN_LATE_SEASON_WEEKS`) -- confirmed via the 2026
-  rules that this isn't always the same two weeks (2025: 17-18; 2026: 16-18).
+  real bylaws (`store.KNOWN_LATE_SEASON_WEEKS`, "Legion pool sheet rules"
+  under Domain Concepts below) -- confirmed to genuinely change year to
+  year, not just a hypothetical risk.
 - `team_metadata_batch.py` needs a real OpenWeatherMap API key to function and
   is currently non-functional / not integrated into the picking flow.
 - Dynasty tools depend on two external, unauthenticated public APIs (Sleeper,

@@ -4,12 +4,10 @@
 -- docs/confidence-pool-data-model.md.
 --
 -- points/predicted_winner are nullable and duplicate points across games
--- are allowed on purpose -- the real 2026 Legion Pool bylaws define exact
--- resolutions for a blank point box (rule 15), an unmarked winner (rule
--- 16), and two games sharing the same points value (rule 7), none of
--- which invalidate the submission. This table records what was actually
--- written, irregularities included, not a "corrected" version of it --
--- see picks_core.check_actual_picks().
+-- are allowed on purpose -- this table records what was actually written,
+-- irregularities included, not a "corrected" version of it. The bylaws'
+-- own resolution for each irregularity (which never invalidates the
+-- submission) is documented once, in full, at picks_core.check_actual_picks().
 
 CREATE TABLE actual_picks (
     season_year INTEGER NOT NULL,
@@ -24,7 +22,6 @@ CREATE TABLE actual_picks (
 -- `late` is a per-week fact (the whole card was submitted late, not one
 -- game) stored redundantly on every row for that week -- same pattern as
 -- `weekly_games.captured_at`, which is likewise identical across every
--- row of one generation event. Bylaws rule 2: a late card is not
--- excluded, it's docked 10 points below that week's lowest card -- needs
--- the field's scores (weekly_standings, Phase 3) to actually compute,
--- so this only records the fact for now; see picks_core.check_actual_picks().
+-- row of one generation event. Its bylaws penalty needs real per-game
+-- scores to compute (weekly_standings, a future phase) -- this only
+-- records the fact for now.

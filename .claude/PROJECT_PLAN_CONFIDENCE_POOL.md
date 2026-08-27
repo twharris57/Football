@@ -17,7 +17,7 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-28`.
+**ID tracker** (last number assigned): `CP-29`.
 
 ## Current branch — fix before merge
 
@@ -81,6 +81,13 @@ Empty right now — nothing blocking.
   migration comment, or this item's own text before now — worth carrying
   it forward explicitly so it isn't missed when the Phase 3 scoring math
   actually gets built, the same way rule 2 and rule 7 already are.
+- [ ] **CP-29: When a week's real score sheet is uploaded/entered, cross-check
+  the algorithm's calculated score against the reported actual score and
+  flag a mismatch for investigation** (user, 2026-08-27, future todo). No
+  "score sheet upload" concept exists yet at all — this depends on `CP-3`
+  (real outcomes joined per game) and presumably a per-week actual-total
+  field alongside `actual_picks`, neither of which is built. Filed here so
+  the idea isn't lost before `CP-3`/`weekly_standings` design work starts.
 - [ ] **CP-5: Expose weekly pick history via a small analytics API** once
   there's an actual second consumer for it (e.g. `CP-3`'s what-if
   analysis) — likely a small FastAPI service reading the same SQLite

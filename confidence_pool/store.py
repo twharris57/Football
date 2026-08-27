@@ -192,14 +192,11 @@ def set_late_season_deadline(
     counts; only the deadline is special (see
     `docs/confidence-pool-data-model.md` for the full rationale).
 
-    Deliberately accepts any week 1-18, not just a hardcoded pair --
-    *which* weeks carry this exception changes year to year (2025: weeks
-    17-18; the 2026 bylaws added week 16, confirmed against the real
-    rules document), so restricting this to specific week numbers would
-    silently block configuring a real exception the day the bylaws change
-    again. `KNOWN_LATE_SEASON_WEEKS` below is only ever a *default*
-    (`get_week_rule()`) for before a real row like this one exists --
-    never a restriction on what can actually be configured.
+    Deliberately accepts any week 1-18, not just a hardcoded pair -- see
+    `KNOWN_LATE_SEASON_WEEKS`'s own comment for why the exact set of weeks
+    isn't hardcoded here either. `KNOWN_LATE_SEASON_WEEKS` is only ever a
+    *default* (`get_week_rule()`) for before a real row like this one
+    exists -- never a restriction on what can actually be configured.
     """
     if not 1 <= week <= 18:
         raise ValueError(f"Week must be between 1 and 18, got {week}")

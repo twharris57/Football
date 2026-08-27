@@ -213,23 +213,18 @@ replaces cleanly rather than accumulating stale rows.
 **`points`/`predicted_winner` are nullable, and duplicate `points` values
 across games in the same week are allowed -- on purpose.** This table's
 job is recording what was *actually* written on the pool sheet, not a
-"corrected" version of it, and the real 2026 Legion Pool bylaws define
-exact, non-exclusionary resolutions for each of these: rule 15 (a blank
-points box -- that number's points are lost), rule 16 (an unmarked
-winner -- that game's points are lost), rule 7 (two games sharing a
-points value -- the lower one counts, whichever was correct). None of
-these invalidate the card (rule 8's "forwarded to the rules committee" is
-the actual invalidation path, for illegible paper cards -- not applicable
-to an app-entered submission). `late` marks the whole week's card as
-submitted after the deadline -- rule 2's penalty (10 points below that
-week's lowest card) needs the field's real scores to compute
-(`weekly_standings`, Phase 3) and isn't calculated yet, so this only
-records the fact. Stored redundantly on every row for the week, same
-pattern as `weekly_games.captured_at`.
+"corrected" version of it -- the real 2026 Legion Pool bylaws define an
+exact, non-exclusionary resolution for a blank points box, an unmarked
+winner, and two games sharing a points value, none of which invalidate
+the card. `late` marks the whole week's card as submitted after the
+deadline, stored redundantly on every row for the week, same pattern as
+`weekly_games.captured_at`. `picks_core.check_actual_picks()` is where
+each of these bylaws rules (and which one applies to which state) is
+documented in full -- not repeated here to avoid the two drifting apart.
 
-`picks_core.check_actual_picks()` is a pure function that inspects a set
-of entries (plus the `late` flag) and returns a human-readable message
-per irregularity found, citing the exact bylaws rule -- called both right
+`check_actual_picks()` is a pure function that inspects a set of entries
+(plus the `late` flag) and returns a human-readable message per
+irregularity found, citing the exact bylaws rule -- called both right
 after a save and whenever a previously-saved week's actual picks are
 loaded, so an irregularity stays visible on return visits, not just at
 the moment it was entered. It never blocks a save; it only explains.
