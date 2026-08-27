@@ -65,7 +65,15 @@ Empty right now — nothing blocking.
   season-long scoring. The data groundwork is done as of the Phase 1
   schema redesign — `games.home_score`/`away_score` backfill automatically
   via `store.sync_game_outcomes()` on every Picks-tab load — what's left
-  is the actual what-if/scoring logic and UI to consume it.
+  is the actual what-if/scoring logic and UI to consume it. Once real
+  per-game outcomes are joined (`weekly_standings`, Phase 3), this is also
+  where `actual_picks`' still-unresolved bylaws math gets computed for
+  real, not just flagged: rule 2's late-card penalty (10 points below that
+  week's lowest scoring card) and rule 7's duplicate-points resolution
+  (whichever of the two games was actually correct keeps the lower value)
+  both need the field's real scores, which `check_actual_picks()`
+  deliberately doesn't have yet (see `docs/confidence-pool-data-model.md`'s
+  `actual_picks` section).
 - [ ] **CP-5: Expose weekly pick history via a small analytics API** once
   there's an actual second consumer for it (e.g. `CP-3`'s what-if
   analysis) — likely a small FastAPI service reading the same SQLite
