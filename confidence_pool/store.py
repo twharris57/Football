@@ -136,19 +136,37 @@ def set_active_season(conn: sqlite3.Connection, season_year: int) -> None:
         )
 
 
+# Weeks known to carry the "every game counts, only the deadline is
+# special" bylaws exception -- used only as get_week_rule()'s *default*
+# before a real season_week_rules row exists, never as a restriction (see
+# set_late_season_deadline(), which accepts any week). Confirmed against
+# the real 2026 Legion Pool rules document: weeks 16-18, up from just
+# 17-18 in 2025 -- the bylaws' own text says "now Weeks 16-18", meaning
+# *which* weeks this covers changes year to year and this tuple needs a
+# human to re-check it against each season's actual rules document, not
+# an assumption that last year's set still holds. If it's ever wrong for
+# a given season, the fix is a Settings-tab visit (or a direct
+# set_late_season_deadline() call), not necessarily a code change --
+# but get_week_rule()'s *default* for an unconfigured week will be wrong
+# until either that happens or this tuple is corrected.
+KNOWN_LATE_SEASON_WEEKS = (16, 17, 18)
+
+
 def get_week_rule(conn: sqlite3.Connection, season_year: int, week: int) -> dict | None:
     """Return this week's selection/deadline override, or `None` if it
     follows the default `'standard'` rule (see `picks_core.select_games`).
 
-    Weeks 17-18 always return at least `{'selection_rule': 'all_games',
-    'deadline_override': None}`, even with no row yet -- unlike the
-    deadline's actual *value* (commissioner-announced, genuinely different
-    each year), the bylaws' "every game counts, only the deadline is
-    special" exception for these two weeks isn't itself something a
-    commissioner opts into; it's always true. Returning `None` here until
-    someone visits Settings would silently apply the wrong (narrower)
-    selection rule to real games in the meantime -- a missing row for any
-    other week correctly means the plain `'standard'` default applies.
+    Weeks in `KNOWN_LATE_SEASON_WEEKS` always return at least
+    `{'selection_rule': 'all_games', 'deadline_override': None}`, even
+    with no row yet -- unlike the deadline's actual *value*
+    (commissioner-announced, genuinely different each year), the bylaws'
+    "every game counts, only the deadline is special" exception for these
+    weeks isn't itself something a commissioner opts into; it's just true
+    once you know which weeks it applies to this season. Returning `None`
+    here until someone visits Settings would silently apply the wrong
+    (narrower) selection rule to real games in the meantime -- a missing
+    row for any other week correctly means the plain `'standard'` default
+    applies.
     """
     row = conn.execute(
         "SELECT * FROM season_week_rules WHERE season_year = ? AND week = ?",
@@ -156,7 +174,7 @@ def get_week_rule(conn: sqlite3.Connection, season_year: int, week: int) -> dict
     ).fetchone()
     if row:
         return dict(row)
-    if week in (17, 18):
+    if week in KNOWN_LATE_SEASON_WEEKS:
         return {
             "season_year": season_year,
             "week": week,
@@ -169,12 +187,19 @@ def get_week_rule(conn: sqlite3.Connection, season_year: int, week: int) -> dict
 def set_late_season_deadline(
     conn: sqlite3.Connection, season_year: int, week: int, deadline: datetime
 ) -> None:
-    """Set the commissioner-announced early cutoff for week 17 or 18,
+    """Set the commissioner-announced early cutoff for a late-season week,
     marking that week's selection rule as `'all_games'` -- every game
-    counts for these weeks; only the deadline is special (see
-    `docs/confidence-pool-data-model.md` for the full rationale)."""
-    if week not in (17, 18):
-        raise ValueError(f"Late-season deadline only applies to weeks 17/18, got {week}")
+    counts; only the deadline is special (see
+    `docs/confidence-pool-data-model.md` for the full rationale).
+
+    Deliberately accepts any week 1-18, not just a hardcoded pair -- see
+    `KNOWN_LATE_SEASON_WEEKS`'s own comment for why the exact set of weeks
+    isn't hardcoded here either. `KNOWN_LATE_SEASON_WEEKS` is only ever a
+    *default* (`get_week_rule()`) for before a real row like this one
+    exists -- never a restriction on what can actually be configured.
+    """
+    if not 1 <= week <= 18:
+        raise ValueError(f"Week must be between 1 and 18, got {week}")
     with conn:
         conn.execute("INSERT OR IGNORE INTO seasons (season_year) VALUES (?)", (season_year,))
         conn.execute(
@@ -397,3 +422,61 @@ def load_week(
     )
     status = get_week_status(conn, season_year, week)
     return games, picks, status
+
+
+def save_actual_picks(
+    conn: sqlite3.Connection,
+    season_year: int,
+    week: int,
+    picks: pd.DataFrame,
+    entered_at: datetime,
+    late: bool = False,
+) -> None:
+    """Persist what the user actually submitted to the pool for a week,
+    overwriting any prior entry for it -- a correction re-saves cleanly,
+    same as `save_week()`'s `'current'` snapshot. `picks` needs
+    `game_id`/`points`/`predicted_winner` columns; `points`/`predicted_winner`
+    may be `None`/`NaN` (a blank point box or unmarked winner is a real,
+    bylaws-anticipated outcome, not invalid data -- see
+    `picks_core.check_actual_picks`), and duplicate `points` values across
+    games are allowed for the same reason (bylaws rule 7).
+
+    `late` marks the whole week's card as submitted after the deadline
+    (bylaws rule 2) -- a single fact for the week, stored on every row
+    for it, same pattern as `weekly_games.captured_at`.
+    """
+    with conn:
+        conn.execute(
+            "DELETE FROM actual_picks WHERE season_year = ? AND week = ?",
+            (season_year, week),
+        )
+        conn.executemany(
+            """
+            INSERT INTO actual_picks (season_year, week, game_id, points, predicted_winner, late, entered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    season_year, week, row["game_id"],
+                    int(row["points"]) if pd.notna(row["points"]) else None,
+                    row["predicted_winner"] if pd.notna(row["predicted_winner"]) else None,
+                    int(late), entered_at.isoformat(),
+                )
+                for _, row in picks.iterrows()
+            ],
+        )
+
+
+def load_actual_picks(conn: sqlite3.Connection, season_year: int, week: int) -> pd.DataFrame:
+    """Load the user's actual submitted picks for a week. Empty DataFrame
+    if nothing has been entered yet."""
+    return pd.read_sql_query(
+        """
+        SELECT game_id, points, predicted_winner, late, entered_at
+        FROM actual_picks
+        WHERE season_year = ? AND week = ?
+        ORDER BY points DESC
+        """,
+        conn,
+        params=(season_year, week),
+    )

@@ -359,6 +359,62 @@ class TestIsFirstLookWindow:
         assert pc.is_first_look_window(games, monday) is True
 
 
+class TestCheckActualPicks:
+    """Flagging (never blocking) the real-world irregularities the Legion
+    pool bylaws define an explicit resolution for, not exclusion."""
+
+    def test_clean_submission_has_no_issues(self):
+        entries = {"g1": ("KC", 1), "g2": ("BUF", 2)}
+
+        assert pc.check_actual_picks(entries) == []
+
+    def test_unmarked_winner_is_flagged_as_rule_16(self):
+        entries = {"g1": (None, 1)}
+
+        issues = pc.check_actual_picks(entries)
+
+        assert len(issues) == 1
+        assert "rule 16" in issues[0]
+
+    def test_blank_points_is_flagged_as_rule_15(self):
+        entries = {"g1": ("KC", None)}
+
+        issues = pc.check_actual_picks(entries)
+
+        assert len(issues) == 1
+        assert "rule 15" in issues[0]
+
+    def test_duplicate_points_is_flagged_as_rule_7(self):
+        entries = {"g1": ("KC", 1), "g2": ("BUF", 1)}
+
+        issues = pc.check_actual_picks(entries)
+
+        assert len(issues) == 1
+        assert "rule 7" in issues[0]
+
+    def test_late_is_flagged_as_rule_2(self):
+        entries = {"g1": ("KC", 1)}
+
+        issues = pc.check_actual_picks(entries, late=True)
+
+        assert len(issues) == 1
+        assert "rule 2" in issues[0]
+
+    def test_multiple_issues_are_all_reported(self):
+        entries = {"g1": (None, 1), "g2": ("BUF", 1)}
+
+        issues = pc.check_actual_picks(entries, late=True)
+
+        assert len(issues) == 3  # late, unmarked winner, duplicate points
+
+    def test_messages_use_team_names_when_given(self):
+        entries = {"g1": (None, 1)}
+
+        issues = pc.check_actual_picks(entries, team_names={"g1": "Chiefs @ Bills"})
+
+        assert "Chiefs @ Bills" in issues[0]
+
+
 class TestIsLocked:
     def test_before_deadline_is_not_locked(self):
         deadline = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)

@@ -17,14 +17,14 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-26`.
+**ID tracker** (last number assigned): `CP-29`.
 
 ## Current branch — fix before merge
 
-`feature/confidence-pool-db-design` (PR #49) — Phase 1 schema redesign:
-normalizes `seasons`/`teams`/`games` reference data and moves the
-weeks-17/18 bylaws exception from `LATE_SEASON_WEEKS` into
-`season_week_rules`. Cleared out when the branch merges.
+`feature/confidence-pool-actual-picks` — Phase 2 of the schema redesign:
+adds `actual_picks` (what you really submitted, tracked separately from
+the algorithm's `weekly_picks` recommendation) and a locked-week entry
+form on the Picks tab. Resolves `CP-4`. Cleared out when the branch merges.
 
 Empty right now.
 
@@ -34,12 +34,25 @@ Empty right now — nothing blocking.
 
 ## Backlog
 
-- [ ] **CP-1: Confirm/correct 2026's weeks 17–18 cutoff in
-  `season_week_rules` once the commissioner announces it.** Seeded at
-  build time with a placeholder based on 2025's pattern (early-afternoon
-  ET cutoffs, ahead of that week's real kickoffs) — the exact date/time
-  is commissioner-announced each year and must be corrected via the
-  Settings tab before those two weeks matter, not hardcoded in code.
+- [ ] **CP-1: Enter the real 2026 late-season deadlines into the live
+  deployment's Settings tab.** Confirmed against the actual 2026 Legion
+  Football Pool Rules document (2026-08-27) — note this is now **three**
+  weeks, not two: the 2026 rules added week 16 alongside 17-18 (rule 2:
+  "EXCEPT WEEKS 16, 17 & 18"; rule 14 lists all three explicit dates).
+  Values to enter via Settings once deployed:
+  - Week 16: Saturday Dec 26, 2026, before 1:00 PM ET
+  - Week 17: Saturday Jan 2, 2027, before 4:30 PM ET
+  - Week 18: Saturday Jan 9, 2027, before 4:30 PM ET
+
+  (Rule 14's closing line says "these final two weeks", which conflicts
+  with the three weeks/three dates listed earlier in the same rule —
+  treating the three explicit dates as authoritative, not the summary
+  phrase, which reads as leftover wording from a prior year's version of
+  this document.) This can't be resolved directly from this repo — it
+  needs an actual visit to the deployed app's Settings tab, this isn't a
+  code change. `store.set_late_season_deadline()` and the Settings tab
+  now accept week 16 (previously hard-blocked -- see
+  `confidence_pool_principles.md`'s newest rule).
 - [ ] **CP-2: Verify the NAS offsite backup actually covers
   `confidence_pool_data` (the SQLite pick-history volume).** Docker named
   volumes are durable across container restarts but live under Docker's
@@ -52,13 +65,29 @@ Empty right now — nothing blocking.
   season-long scoring. The data groundwork is done as of the Phase 1
   schema redesign — `games.home_score`/`away_score` backfill automatically
   via `store.sync_game_outcomes()` on every Picks-tab load — what's left
-  is the actual what-if/scoring logic and UI to consume it.
-- [ ] **CP-4: Record the actual pick submitted for the current week when
-  it deviates from the algorithm's recommendation.** Not something the
-  user does today (deliberately trusting the algorithm, which performed
-  well last season), but wanted eventually so recommended-vs-actual can be
-  compared. Needs an `actual_pick` column/table added to the schema when
-  this is picked up.
+  is the actual what-if/scoring logic and UI to consume it. Once real
+  per-game outcomes are joined (`weekly_standings`, Phase 3), this is also
+  where `actual_picks`' still-unresolved bylaws math gets computed for
+  real, not just flagged: rule 2's late-card penalty (10 points below that
+  week's lowest scoring card) and rule 7's duplicate-points resolution
+  (whichever of the two games was actually correct keeps the lower value)
+  both need the field's real scores, which `check_actual_picks()`
+  deliberately doesn't have yet (see `docs/confidence-pool-data-model.md`'s
+  `actual_picks` section). **Extended 2026-08-27 (assistant confidence-pool
+  review):** rule 6 of the real 2026 bylaws document ("All points picked
+  in games ending in a tie will be lost") is a third outcome-dependent
+  scoring rule in the same family as rule 2/7 above, but it isn't
+  mentioned anywhere in `check_actual_picks()`'s docstring, `actual_picks`'
+  migration comment, or this item's own text before now — worth carrying
+  it forward explicitly so it isn't missed when the Phase 3 scoring math
+  actually gets built, the same way rule 2 and rule 7 already are.
+- [ ] **CP-29: When a week's real score sheet is uploaded/entered, cross-check
+  the algorithm's calculated score against the reported actual score and
+  flag a mismatch for investigation** (user, 2026-08-27, future todo). No
+  "score sheet upload" concept exists yet at all — this depends on `CP-3`
+  (real outcomes joined per game) and presumably a per-week actual-total
+  field alongside `actual_picks`, neither of which is built. Filed here so
+  the idea isn't lost before `CP-3`/`weekly_standings` design work starts.
 - [ ] **CP-5: Expose weekly pick history via a small analytics API** once
   there's an actual second consumer for it (e.g. `CP-3`'s what-if
   analysis) — likely a small FastAPI service reading the same SQLite
@@ -157,6 +186,14 @@ Empty right now — nothing blocking.
   whether that convention gets adopted for real, and whether it applies
   to just this app or the dynasty app too, before wiring a version string
   into the footer.
+- [ ] **CP-27: Make the pick-submission deadline more prominent on the
+  Picks tab** (user, 2026-08-27). Currently rendered as a plain
+  `st.caption` (`panels/picks_tab.py`) — easy to miss at a glance,
+  especially for a week using an early commissioner-announced cutoff
+  (`week_rule`) rather than kickoff time. Give it real visual weight —
+  e.g. a header-level element, a countdown, or a warning-style callout
+  once the deadline is close — rather than the same low-emphasis caption
+  style used for incidental notes elsewhere on the tab.
 - [ ] **CP-26: Let the Picks tab UI switch between viewing a week's
   `'first'` and `'current'` snapshot** (user, 2026-08-24, flagged for a
   future feature branch — not this one). Now that both are actually

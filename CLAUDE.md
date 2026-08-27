@@ -56,11 +56,9 @@ else stays flat, on purpose.
 - **Confidence pool web app**: `picks_core.py` is a fresh library (not a
   refactor of `football_enhanced.py`, which stays untouched as the proven
   reference implementation this reuses the math from) — current-week
-  detection, the Legion pool's own game-selection rules (bylaws rule 14:
-  Sunday-afternoon/Monday-night for weeks 1-16, every game with no
-  weekday filter for weeks 17-18, since their deadline sits before all of
-  that week's kickoffs rather than the earliest selected one), Vegas-odds
-  ranking, and the pick-submission deadline.
+  detection, the Legion pool's own game-selection rules (see "Legion pool
+  sheet rules" under Domain Concepts below), Vegas-odds ranking, and the
+  pick-submission deadline.
   `store.py` persists each week's evaluated games and generated picks to
   SQLite (`confidence_pool_data/picks.db`, anchored via `data_dir.py`
   mirroring `dynasty/cache_dir.py`'s pattern), locking a week once its
@@ -118,9 +116,13 @@ else stays flat, on purpose.
   odds, injuries); no offline fallback. The web app caches the schedule
   fetch briefly (`st.cache_data`, 15m TTL) but has no persistent cache of
   its own beyond the weekly picks/games snapshots in `store.py`.
-- Weeks 17-18's pick deadline (`season_week_rules`) needs manual correction
-  once the commissioner announces each year's actual cutoff — see
-  `.claude/PROJECT_PLAN_CONFIDENCE_POOL.md`'s `CP-1`.
+- The late-season weeks' pick deadline (`season_week_rules`) needs manual
+  correction once the commissioner announces each year's actual cutoff —
+  see `.claude/PROJECT_PLAN_CONFIDENCE_POOL.md`'s `CP-1`. *Which* weeks
+  count as "late season" also needs a yearly check against that year's
+  real bylaws (`store.KNOWN_LATE_SEASON_WEEKS`, "Legion pool sheet rules"
+  under Domain Concepts below) -- confirmed to genuinely change year to
+  year, not just a hypothetical risk.
 - `team_metadata_batch.py` needs a real OpenWeatherMap API key to function and
   is currently non-functional / not integrated into the picking flow.
 - Dynasty tools depend on two external, unauthenticated public APIs (Sleeper,
@@ -229,13 +231,16 @@ conventions.
   reports are checked as a tiebreaker (`football.py` only; the web app
   doesn't use injury data).
 - **Legion pool sheet rules**: not every game in a week counts — only
-  Sunday-afternoon/Monday-night games for weeks 1-16, per the pool's own
-  bylaws. Weeks 17-18 flip that: every game that week counts (no weekday
-  filter), because their deadline is a single early, commissioner-announced
-  cutoff before all of that week's kickoffs rather than "before the
-  earliest selected kickoff." See `docs/confidence-pool-web-app.md` for
-  the full derivation and `picks_core.select_games()`/`week_deadline()`
-  for the implementation.
+  Sunday-afternoon/Monday-night games for most of the season, per the
+  pool's own bylaws. The season's final few weeks flip that: every game
+  that week counts (no weekday filter), because their deadline is a
+  single early, commissioner-announced cutoff before all of that week's
+  kickoffs rather than "before the earliest selected kickoff" — which
+  specific weeks this covers is itself bylaws-defined and changes year to
+  year (`store.KNOWN_LATE_SEASON_WEEKS`; confirmed 16-18 for 2026, was
+  17-18 in 2025). See `docs/confidence-pool-web-app.md` for the full
+  derivation and `picks_core.select_games()`/`week_deadline()` for the
+  implementation.
 - **Dynasty league**: keeps every player on the roster year to year (no
   re-draft) — rookies are the only new players entering the league, and only
   via the annual rookie draft.

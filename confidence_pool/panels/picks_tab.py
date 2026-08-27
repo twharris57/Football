@@ -100,6 +100,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
     if locked:
         st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
         _render_picks_table(saved_games, saved_picks, team_names)
+        _render_actual_picks_form(conn, season, week, saved_games, saved_picks, team_names)
         return
 
     st.write("Games evaluated this week — uncheck any that shouldn't count:")
@@ -143,3 +144,115 @@ def _render_picks_table(games: pd.DataFrame, picks: pd.DataFrame, team_names: di
     display["confidence"] = (display["confidence"].abs() * 100).round(1).astype(str) + "%"
     display.columns = ["Points", "Pick", "Away", "Home", "Confidence"]
     st.dataframe(display, hide_index=True, width="stretch")
+
+
+def _render_actual_picks_form(
+    conn: sqlite3.Connection,
+    season: int,
+    week: int,
+    games: pd.DataFrame,
+    algorithm_picks: pd.DataFrame,
+    team_names: dict[str, str],
+) -> None:
+    """A locked week's actual-submission form -- what you really wrote on
+    the pool sheet, if it differed from the recommendation, recorded so a
+    future season can compare algorithm vs. actual. Defaults every field
+    to the algorithm's own recommendation, edited only where it deviated.
+    """
+    st.subheader("Your actual submission")
+    st.caption(
+        "Defaults to the recommendation above -- edit only what you "
+        "actually wrote on the pool sheet, then save. Purely a record for "
+        "future comparison; doesn't affect this week's locked picks. A "
+        "blank point box, an unmarked winner, or two games sharing the "
+        "same points value are all real, allowed outcomes here -- the "
+        "bylaws define exactly what happens (rules 15, 16, 7), so this "
+        "records what actually happened rather than blocking the save."
+    )
+
+    existing = store.load_actual_picks(conn, season, week)
+    existing_by_game = (
+        {row["game_id"]: row for _, row in existing.iterrows()} if not existing.empty else {}
+    )
+    merged = algorithm_picks.merge(
+        games[["game_id", "home_team", "away_team"]], on="game_id", how="left"
+    )
+    num_games = len(merged)
+    game_labels = {
+        row["game_id"]: f"{team_names.get(row['away_team'], row['away_team'])} @ "
+        f"{team_names.get(row['home_team'], row['home_team'])}"
+        for _, row in merged.iterrows()
+    }
+
+    existing_late = bool(existing["late"].iloc[0]) if not existing.empty else False
+    if existing_by_game:
+        existing_entries = {
+            gid: (
+                row["predicted_winner"],
+                int(row["points"]) if pd.notna(row["points"]) else None,
+            )
+            for gid, row in existing_by_game.items()
+        }
+        existing_issues = pc.check_actual_picks(existing_entries, game_labels, late=existing_late)
+        if existing_issues:
+            st.warning(
+                "This week's recorded submission has an irregularity the bylaws "
+                "define a specific resolution for (not excluded):\n\n"
+                + "\n".join(f"- {issue}" for issue in existing_issues)
+            )
+
+    late = st.checkbox(
+        "This card was submitted late",
+        value=existing_late,
+        help="Bylaws rule 2: a late card isn't excluded -- it's docked 10 "
+        "points below that week's lowest card.",
+        key=f"actual_late_{season}_{week}",
+    )
+
+    entries: dict[str, tuple[str | None, int | None]] = {}
+    for _, row in merged.iterrows():
+        game_id = row["game_id"]
+        home, away = row["home_team"], row["away_team"]
+        default = existing_by_game.get(game_id, row)
+        default_winner = default["predicted_winner"]
+        default_points = default["points"]
+        if pd.isna(default_points):
+            default_points = None
+        col_winner, col_points = st.columns(2)
+        with col_winner:
+            winner_options = [home, away, None]
+            winner = st.selectbox(
+                game_labels[game_id],
+                options=winner_options,
+                index=winner_options.index(default_winner) if default_winner in (home, away) else 2,
+                format_func=lambda t: team_names.get(t, t) if t is not None else "(not marked)",
+                key=f"actual_winner_{season}_{week}_{game_id}",
+            )
+        with col_points:
+            points_raw = st.number_input(
+                "Points (0 = leave blank)", min_value=0, max_value=num_games,
+                value=int(default_points) if default_points is not None else 0,
+                step=1, key=f"actual_points_{season}_{week}_{game_id}",
+            )
+        entries[game_id] = (winner, points_raw if points_raw > 0 else None)
+
+    if st.button("Save actual submission"):
+        actual_df = pd.DataFrame(
+            [
+                {"game_id": game_id, "predicted_winner": winner, "points": points}
+                for game_id, (winner, points) in entries.items()
+            ]
+        )
+        store.save_actual_picks(conn, season, week, actual_df, datetime.now(pc.ET), late=late)
+        issues = pc.check_actual_picks(entries, game_labels, late=late)
+        if issues:
+            st.warning(
+                "Saved -- but this submission has an irregularity the bylaws "
+                "define a specific resolution for (not excluded):\n\n"
+                + "\n".join(f"- {issue}" for issue in issues)
+            )
+        else:
+            st.success("Actual submission saved.")
+        st.rerun()
+    elif not existing.empty:
+        st.caption(f"Last recorded: {existing['entered_at'].iloc[0]}")
