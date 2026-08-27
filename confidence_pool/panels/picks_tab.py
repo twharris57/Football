@@ -187,7 +187,10 @@ def _render_actual_picks_form(
     existing_late = bool(existing["late"].iloc[0]) if not existing.empty else False
     if existing_by_game:
         existing_entries = {
-            gid: (row["predicted_winner"], row["points"] if pd.notna(row["points"]) else None)
+            gid: (
+                row["predicted_winner"],
+                int(row["points"]) if pd.notna(row["points"]) else None,
+            )
             for gid, row in existing_by_game.items()
         }
         existing_issues = pc.check_actual_picks(existing_entries, game_labels, late=existing_late)

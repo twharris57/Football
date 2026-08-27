@@ -187,27 +187,6 @@ Empty right now — nothing blocking.
   e.g. a header-level element, a countdown, or a warning-style callout
   once the deadline is close — rather than the same low-emphasis caption
   style used for incidental notes elsewhere on the tab.
-- [ ] **CP-28: Fix float-formatted point values in the actual-submission
-  "already recorded" warning banner** (assistant confidence-pool review,
-  2026-08-27). `panels/picks_tab.py`'s `_render_actual_picks_form()`
-  builds two different `entries` dicts that both feed
-  `pc.check_actual_picks()`: the save-time one (from widget output,
-  always clean `int`/`None`) and the reload-time "already recorded" one
-  (`existing_entries`, built from `row["points"] if pd.notna(row["points"])
-  else None` with no `int()` cast). `store.load_actual_picks()` reads
-  `points` via `pd.read_sql_query`, and SQLite `NULL`s force the whole
-  column to `float64` in pandas — so whenever a week has *any* blank
-  points box (a state this feature is explicitly built to allow and
-  expect, bylaws rule 15), every other real points value in that week's
-  `existing_entries` becomes a `numpy.float64` instead of `int`, and any
-  rule-7 duplicate-points message reads "3.0 points" instead of "3
-  points" in the banner. Reproduced directly: a week with one blank game
-  and two games sharing points value 3 prints `"g2 and g1 both used 3.0
-  points"`. Doesn't corrupt any data or affect scoring — cosmetic only —
-  but it's on the exact message meant to give a clean bylaws citation for
-  real-money bookkeeping. Fix: cast with `int(row["points"])` at that call
-  site, matching the pattern the per-game default loop two sections below
-  already uses (`int(default_points) if default_points is not None else 0`).
 - [ ] **CP-26: Let the Picks tab UI switch between viewing a week's
   `'first'` and `'current'` snapshot** (user, 2026-08-24, flagged for a
   future feature branch — not this one). Now that both are actually
