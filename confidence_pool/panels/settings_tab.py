@@ -1,7 +1,8 @@
-"""Settings tab: which season is active, and the weeks 17/18
-commissioner-announced pick deadlines (see picks_core.week_deadline) --
-edited here instead of hardcoded so a year-to-year rule change is a form
-edit, not a code change/redeploy.
+"""Settings tab: which season is active, and the late-season
+commissioner-announced pick deadlines (see picks_core.week_deadline;
+which weeks these apply to is store.KNOWN_LATE_SEASON_WEEKS, since that
+set itself changes year to year) -- edited here instead of hardcoded so a
+year-to-year rule change is a form edit, not a code change/redeploy.
 """
 
 from __future__ import annotations
@@ -27,15 +28,20 @@ def render_settings_tab(conn: sqlite3.Connection, active_season: int) -> None:
         st.success(f"Active season set to {season}.")
         st.rerun()
 
-    st.subheader(f"Weeks 17-18 deadline — {season}")
+    late_weeks = store.KNOWN_LATE_SEASON_WEEKS
+    st.subheader(f"Weeks {late_weeks[0]}-{late_weeks[-1]} deadline — {season}")
     st.caption(
-        "The bylaws set an explicit early cutoff for the season's final two weeks, "
-        "announced by the commissioner each year (2025: Sat Dec 27 before 1:00pm ET; "
-        "Sat Jan 3 before 4:30pm ET) — earlier than either week's actual kickoffs, so "
-        "it isn't derivable from the schedule. Update these once the current season's "
-        "cutoffs are announced."
+        "The bylaws set an explicit early cutoff for the season's final few weeks, "
+        "announced by the commissioner each year (2026: Sat Dec 26 before 1:00pm ET; "
+        "Sat Jan 2 before 4:30pm ET; Sat Jan 9 before 4:30pm ET) — earlier than any of "
+        "that week's actual kickoffs, so it isn't derivable from the schedule. Update "
+        "these once the current season's cutoffs are announced. *Which* weeks this "
+        "covers can also change year to year (2025 was just weeks 17-18; 2026 added "
+        "week 16) — if a week that needs this isn't listed below, see "
+        "`store.KNOWN_LATE_SEASON_WEEKS`."
     )
-    for week, label in ((17, "Week 17"), (18, "Week 18")):
+    for week in late_weeks:
+        label = f"Week {week}"
         week_rule = store.get_week_rule(conn, season, week)
         existing = week_rule.get("deadline_override") if week_rule else None
         existing_dt = datetime.fromisoformat(existing) if existing else None

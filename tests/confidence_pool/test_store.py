@@ -89,11 +89,11 @@ class TestWeekRules:
     def test_unconfigured_week_has_no_rule(self, conn):
         assert store.get_week_rule(conn, 2026, 5) is None
 
-    def test_unconfigured_weeks_17_and_18_default_to_all_games(self, conn):
-        # CP-24: the "every game counts" half of the weeks-17/18 exception
+    def test_unconfigured_known_late_season_weeks_default_to_all_games(self, conn):
+        # CP-24: the "every game counts" half of the late-season exception
         # must apply even before a human ever visits Settings -- only the
         # deadline *value* genuinely needs yearly configuration.
-        for week in (17, 18):
+        for week in store.KNOWN_LATE_SEASON_WEEKS:
             rule = store.get_week_rule(conn, 2026, week)
             assert rule["selection_rule"] == "all_games"
             assert rule["deadline_override"] is None
@@ -104,9 +104,19 @@ class TestWeekRules:
         rule = store.get_week_rule(conn, 2026, 17)
         assert rule["deadline_override"] == datetime(2026, 12, 26, 13, 0).isoformat()
 
-    def test_late_season_deadline_rejects_weeks_outside_17_18(self, conn):
+    def test_late_season_deadline_accepts_any_week_in_range(self, conn):
+        # Deliberately not restricted to a hardcoded pair -- which weeks
+        # carry this exception changes year to year (2025: 17-18; 2026
+        # added week 16), confirmed against the real 2026 bylaws.
+        store.set_late_season_deadline(conn, 2026, 16, datetime(2026, 12, 26, 13, 0))
+
+        assert store.get_week_rule(conn, 2026, 16)["selection_rule"] == "all_games"
+
+    def test_late_season_deadline_rejects_a_week_outside_1_18(self, conn):
         with pytest.raises(ValueError):
-            store.set_late_season_deadline(conn, 2026, 16, datetime(2026, 12, 20))
+            store.set_late_season_deadline(conn, 2026, 19, datetime(2026, 12, 20))
+        with pytest.raises(ValueError):
+            store.set_late_season_deadline(conn, 2026, 0, datetime(2026, 12, 20))
 
     def test_late_season_deadline_round_trips_per_week(self, conn):
         w17 = datetime(2026, 12, 26, 13, 0)
@@ -318,7 +328,9 @@ class TestActualPicks:
         assert len(loaded) == 1  # not two rows
         assert loaded.loc[0, "predicted_winner"] == "BUF"
 
-    def test_duplicate_points_within_a_week_are_rejected(self, conn):
+    def test_duplicate_points_within_a_week_are_allowed(self, conn):
+        # Bylaws rule 7 defines what happens (lower value counts) -- it
+        # doesn't invalidate the submission, so this must be storable.
         _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
         _save(conn, 2026, 1, _games_df(game_id="g2"), _picks_df(game_id="g2"), datetime(2026, 9, 10, 9, 0))
         dupes = pd.DataFrame(
@@ -328,8 +340,41 @@ class TestActualPicks:
             ]
         )
 
-        with pytest.raises(sqlite3.IntegrityError):
-            store.save_actual_picks(conn, 2026, 1, dupes, datetime(2026, 9, 13, 12, 0))
+        store.save_actual_picks(conn, 2026, 1, dupes, datetime(2026, 9, 13, 12, 0))
+
+        loaded = store.load_actual_picks(conn, 2026, 1)
+        assert len(loaded) == 2
+        assert list(loaded["points"]) == [1, 1]
+
+    def test_blank_points_and_unmarked_winner_are_allowed(self, conn):
+        # Bylaws rules 15/16 define what happens (that number's/game's
+        # points are lost) -- neither invalidates the submission.
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        blank = pd.DataFrame([{"game_id": "g1", "points": None, "predicted_winner": None}])
+
+        store.save_actual_picks(conn, 2026, 1, blank, datetime(2026, 9, 13, 12, 0))
+
+        loaded = store.load_actual_picks(conn, 2026, 1)
+        assert pd.isna(loaded.loc[0, "points"])
+        assert pd.isna(loaded.loc[0, "predicted_winner"])
+
+    def test_late_flag_round_trips(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        actual = pd.DataFrame([{"game_id": "g1", "points": 1, "predicted_winner": "BUF"}])
+
+        store.save_actual_picks(conn, 2026, 1, actual, datetime(2026, 9, 13, 12, 0), late=True)
+
+        loaded = store.load_actual_picks(conn, 2026, 1)
+        assert bool(loaded.loc[0, "late"]) is True
+
+    def test_late_flag_defaults_to_false(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))
+        actual = pd.DataFrame([{"game_id": "g1", "points": 1, "predicted_winner": "BUF"}])
+
+        store.save_actual_picks(conn, 2026, 1, actual, datetime(2026, 9, 13, 12, 0))
+
+        loaded = store.load_actual_picks(conn, 2026, 1)
+        assert bool(loaded.loc[0, "late"]) is False
 
 
 class TestSyncGameOutcomes:

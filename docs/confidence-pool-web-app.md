@@ -19,35 +19,45 @@ reference design, not a refactor of it.
 
 The pool's own sheet doesn't include every game in a week — only Sunday-
 afternoon and Monday-night games "almost always" go on the sheet, for
-weeks 1-16. `picks_core.select_games()` encodes this as:
+most of the season. `picks_core.select_games()` encodes this as:
 
 - `game_type == 'REG'` (excludes preseason and any playoff rows this pool
   never uses).
-- Weeks 1-16: `weekday in ('Sunday', 'Monday')`, and for Sunday,
-  `gametime >= '13:00'` — this excludes Thursday Night Football and any
-  early/international Sunday game. The reason this filter exists at all:
-  the deadline (below) is "before kickoff" of the *earliest selected*
-  game, so an excluded early game's result can't leak information before
-  picks are due.
-- **Weeks 17-18: every game that week, no weekday filter.** Their
-  deadline is a single early cutoff *before all* of that week's kickoffs
-  (see "Pick-submission deadline" below), so the leak the weekday filter
-  guards against for weeks 1-16 can't happen regardless of which weekday
-  a game falls on.
+- `'standard'` rule (the default): `weekday in ('Sunday', 'Monday')`, and
+  for Sunday, `gametime >= '13:00'` — this excludes Thursday Night
+  Football and any early/international Sunday game. The reason this
+  filter exists at all: the deadline (below) is "before kickoff" of the
+  *earliest selected* game, so an excluded early game's result can't leak
+  information before picks are due.
+- **`'all_games'` rule: every game that week, no weekday filter.** Applies
+  to the season's final few weeks — `store.KNOWN_LATE_SEASON_WEEKS`, 16-18
+  as of the 2026 rules (see below). Their deadline is a single early
+  cutoff *before all* of that week's kickoffs (see "Pick-submission
+  deadline" below), so the leak the weekday filter guards against for
+  `'standard'` weeks can't happen regardless of which weekday a game
+  falls on.
 
-**Corrected 2026-08-24** — an earlier version of this doc, and
-`picks_core.select_games()` itself, restricted weeks 17-18 to `weekday ==
-'Saturday'` only, reading the bylaws' "Weeks 17 & 18 will all feature
-Saturday games" as a game-selection filter. Real 2025-season results (a
-full-season scoring sheet the user provided) contradicted that directly:
-week 18 scores as high as 114 are only mathematically possible with
-roughly 15 games on the sheet that week (points are `1..N` for `N` games,
-so max score is `N(N+1)/2`) — nowhere close to what a 1-3-game
-Saturday-only slate would produce. The actual 2025 week-18 sheet listed
-games on both Jan 3 (Saturday) and Jan 4 (Sunday), confirming the bylaws
-sentence was describing *when the deadline falls* (a Saturday, ahead of
-kickoff), not which games are eligible — and that the full slate that
-week, not a narrower one, is what actually counts.
+**Which weeks get the `'all_games'` rule changes year to year — confirmed
+against real bylaws documents twice, not assumed to carry forward.** An
+earlier version of this doc, and `picks_core.select_games()` itself,
+restricted weeks 17-18 to `weekday == 'Saturday'` only, reading the
+bylaws' "Weeks 17 & 18 will all feature Saturday games" as a
+game-selection filter (**corrected 2026-08-24**): real 2025-season
+results (a full-season scoring sheet the user provided) proved that
+wrong directly — week 18 scores as high as 114 are only mathematically
+possible with roughly 15 games on the sheet that week (points are `1..N`
+for `N` games, so max score is `N(N+1)/2`), nowhere close to what a
+1-3-game Saturday-only slate would produce. The actual 2025 week-18
+sheet listed games on both Jan 3 (Saturday) and Jan 4 (Sunday),
+confirming the bylaws sentence was describing *when the deadline falls*,
+not which games are eligible. Then, reading the **real 2026 rules
+document** (**2026-08-27**) revealed the exception itself had grown: rule
+14 there reads "Weeks 16, 17 & 18 will all feature Saturday games" and
+rule 2 explicitly lists week 16 alongside 17-18 as deadline exceptions —
+up from just 17-18 the year before. `store.KNOWN_LATE_SEASON_WEEKS` is
+the one place this needs checking against each season's actual bylaws;
+`set_late_season_deadline()` itself accepts any week 1-18, so a wrong
+assumption there is a Settings-tab fix, not a code change.
 
 Because the bylaws themselves say "almost always" (commissioner discretion,
 exceptions happen), the Picks tab shows the auto-selected list with a
@@ -57,17 +67,18 @@ week.
 
 ### Pick-submission deadline
 
-`picks_core.week_deadline()`: weeks 1-16 use the earliest kickoff among
-that week's selected games (rule 2: "before kick-off"). Weeks 17-18 use an
-explicit early cutoff from `season_week_rules` instead — the bylaws' own
-example (2025: Sat Dec 27 before 1:00pm ET; Sat Jan 3 before 4:30pm ET) is
-*earlier* than either week's actual kickoffs, so it's commissioner-
-announced each year, not computable from the schedule. Falls back to the
-earliest kickoff among that week's selected games if the season's cutoff
-hasn't been configured yet (Settings tab). `week_deadline()` itself just
-trusts whichever `configured_deadline` the caller passes -- it doesn't know
-which weeks are special; `panels/picks_tab.py` decides that by looking up
-`store.get_week_rule()`.
+`picks_core.week_deadline()`: a `'standard'`-rule week uses the earliest
+kickoff among that week's selected games (rule 2: "before kick-off"). An
+`'all_games'`-rule week uses an explicit early cutoff from
+`season_week_rules` instead — the 2026 bylaws' own example (Sat Dec 26
+before 1:00pm ET for week 16; Sat Jan 2 and Sat Jan 9 before 4:30pm ET for
+weeks 17-18) is *earlier* than any of those weeks' actual kickoffs, so
+it's commissioner-announced each year, not computable from the schedule.
+Falls back to the earliest kickoff among that week's selected games if
+the season's cutoff hasn't been configured yet (Settings tab).
+`week_deadline()` itself just trusts whichever `configured_deadline` the
+caller passes -- it doesn't know which weeks are special;
+`panels/picks_tab.py` decides that by looking up `store.get_week_rule()`.
 
 ## Persistence (`store.py`)
 
@@ -108,13 +119,23 @@ record what you actually wrote on the pool sheet if it ever deviated —
 without re-entering every game by hand when it didn't. Purely a record
 for future comparison; it has no effect on the locked picks themselves.
 
+The form also lets you leave a game's winner unmarked, leave its points
+box blank, assign the same points value to two games, or flag the whole
+card as submitted late — real outcomes the bylaws themselves define exact
+(non-exclusionary) resolutions for, so the form records them rather than
+blocking the save (`picks_core.check_actual_picks()` explains which
+bylaws rule applies whenever one of these is present, both right after
+saving and on any later visit to an already-recorded week).
+
 ## Season configuration (Settings tab)
 
 `season_week_rules` holds the one thing this pool's rules can't derive from
-`nfl_data_py`: the commissioner-announced weeks-17/18 deadline, which
-changes every year. Editing it is a form, not a code change/redeploy —
-`CP-1` in the project plan tracks confirming/correcting 2026's value once
-it's announced. The active-season switch is `seasons.active`, letting the
+`nfl_data_py`: the commissioner-announced late-season deadline(s), which
+change every year — and, as of the 2026 rules, *which weeks* count as
+"late season" can change too (`store.KNOWN_LATE_SEASON_WEEKS`). Editing
+the deadlines is a form, not a code change/redeploy — `CP-1` in the
+project plan tracks confirming/correcting each season's real values once
+announced. The active-season switch is `seasons.active`, letting the
 Picks tab default to the right season without a code change each year
 either. See `docs/confidence-pool-data-model.md` for the full schema.
 
@@ -131,7 +152,7 @@ real 2025 late-season pick sheet — a starting basis, not a fixed constant,
 since the whole point of storing this in the database (rather than a
 Python constant) is that it's a UI label the user can correct or update
 themselves via Settings without a code change or redeploy, the same
-reasoning as the weeks-17/18 deadline above.
+reasoning as the late-season deadlines above.
 
 ## Docker (`confidence_pool/Dockerfile`)
 
@@ -159,6 +180,6 @@ actually covers it.
 |---|---|---|---|
 | `default_season_year()`'s March cutoff between "still last season" and "next season" | `picks_core.default_season_year` | Never expected to matter in practice — no one uses this app in February/early March | Not worth hardening further unless it does |
 
-Schema-level assumptions (the weeks-17/18 selection rule, `game_id`
-stability, the Sunday-afternoon cutoff default) live in
+Schema-level assumptions (which weeks get the `'all_games'` selection
+rule, `game_id` stability, the Sunday-afternoon cutoff default) live in
 `docs/confidence-pool-data-model.md`'s own "Static assumptions" table.

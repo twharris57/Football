@@ -34,12 +34,25 @@ Empty right now — nothing blocking.
 
 ## Backlog
 
-- [ ] **CP-1: Confirm/correct 2026's weeks 17–18 cutoff in
-  `season_week_rules` once the commissioner announces it.** Seeded at
-  build time with a placeholder based on 2025's pattern (early-afternoon
-  ET cutoffs, ahead of that week's real kickoffs) — the exact date/time
-  is commissioner-announced each year and must be corrected via the
-  Settings tab before those two weeks matter, not hardcoded in code.
+- [ ] **CP-1: Enter the real 2026 late-season deadlines into the live
+  deployment's Settings tab.** Confirmed against the actual 2026 Legion
+  Football Pool Rules document (2026-08-27) — note this is now **three**
+  weeks, not two: the 2026 rules added week 16 alongside 17-18 (rule 2:
+  "EXCEPT WEEKS 16, 17 & 18"; rule 14 lists all three explicit dates).
+  Values to enter via Settings once deployed:
+  - Week 16: Saturday Dec 26, 2026, before 1:00 PM ET
+  - Week 17: Saturday Jan 2, 2027, before 4:30 PM ET
+  - Week 18: Saturday Jan 9, 2027, before 4:30 PM ET
+
+  (Rule 14's closing line says "these final two weeks", which conflicts
+  with the three weeks/three dates listed earlier in the same rule —
+  treating the three explicit dates as authoritative, not the summary
+  phrase, which reads as leftover wording from a prior year's version of
+  this document.) This can't be resolved directly from this repo — it
+  needs an actual visit to the deployed app's Settings tab, this isn't a
+  code change. `store.set_late_season_deadline()` and the Settings tab
+  now accept week 16 (previously hard-blocked -- see
+  `confidence_pool_principles.md`'s newest rule).
 - [ ] **CP-2: Verify the NAS offsite backup actually covers
   `confidence_pool_data` (the SQLite pick-history volume).** Docker named
   volumes are durable across container restarts but live under Docker's

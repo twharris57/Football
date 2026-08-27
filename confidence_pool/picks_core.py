@@ -325,3 +325,61 @@ def resolve_week_lock(
             generated_at=None,
         )
     return LockOutcome(locked=True, games=games_all, picks=ranked, warning=None, generated_at=now)
+
+
+def check_actual_picks(
+    entries: dict[str, tuple[str | None, int | None]],
+    team_names: dict[str, str] | None = None,
+    late: bool = False,
+) -> list[str]:
+    """Check an actual-submission entry (`game_id -> (predicted_winner,
+    points)`, `None` meaning left blank) for the real-world irregularities
+    the Legion pool bylaws themselves define a resolution for -- none of
+    which invalidate the submission, so this never blocks a save, only
+    explains what the bylaws say happens:
+
+    - Rule 2: the card was submitted late -- docked 10 points below that
+      week's lowest card (needs the field's actual scores to compute; see
+      `CP-3`/the eventual `weekly_standings` -- this only flags the fact).
+    - Rule 16: an unmarked winning team -- that game's points are lost.
+    - Rule 15: a blank points box -- that number's points are lost.
+    - Rule 7: two games sharing the same points value -- the *lower*
+      value is the one that counts, whichever of the two (or both) was
+      correct.
+
+    (Rule 8's "forwarded to the rules committee" is the actual
+    invalidation path, for illegible paper cards -- not applicable to an
+    app-entered submission, which is always legible.)
+
+    Returns a human-readable issue per irregularity found, empty if the
+    submission is a clean `1..N` permutation with every game marked and
+    was not late. `team_names` is used only to make a message read
+    naturally; falls back to the raw abbreviation/game_id if omitted.
+    """
+    names = team_names or {}
+    points_seen: dict[int, str] = {}
+    issues: list[str] = []
+    if late:
+        issues.append(
+            "Card submitted late -- bylaws rule 2, docked 10 points below this "
+            "week's lowest card (not excluded)."
+        )
+    for game_id, (winner, points) in entries.items():
+        label = names.get(game_id, game_id)
+        if winner is None:
+            issues.append(
+                f"{label}: no winner marked -- bylaws rule 16, that game's points are lost."
+            )
+        if points is None:
+            issues.append(
+                f"{label}: no points assigned -- bylaws rule 15, that point value is lost."
+            )
+        elif points in points_seen:
+            other = names.get(points_seen[points], points_seen[points])
+            issues.append(
+                f"{label} and {other} both used {points} points -- bylaws rule 7, only the "
+                "lower value counts (for whichever game was correct, or either if both were)."
+            )
+        else:
+            points_seen[points] = game_id
+    return issues

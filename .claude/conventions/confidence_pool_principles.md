@@ -126,6 +126,28 @@ row (the selection rule, which never used to depend on configuration at
 all) is easy to miss precisely because the config-driven function's own
 unit tests still pass.
 
+**Confirmed real, not just theoretical, four days later (2026-08-27):**
+the real 2026 Legion Pool bylaws document arrived, and the late-season
+exception had grown from weeks 17-18 to weeks 16-18 — exactly the "a
+future season narrows/widens this set" risk this rule's own "Static
+assumptions" table entry had flagged as *possible*, now observed as
+*actual* on only the second season this schema has existed for.
+`store.set_late_season_deadline()` had also inherited the old hardcoded
+pair as a hard `ValueError` guard (`week not in (17, 18)`), which would
+have completely blocked configuring week 16 even by hand — a stricter
+failure than CP-24's silent-wrong-default, but still a real gap the
+Settings tab had no way around. Fixed by widening the guard to a plain
+`1 <= week <= 18` bounds check (any week can be configured; the tuple is
+only ever a default) and renaming the hardcoded pair to
+`store.KNOWN_LATE_SEASON_WEEKS` specifically so it reads as "the current
+best guess, check every season" rather than "the permanent set."
+**Extend this rule**: a hardcoded default that's itself a *set of
+which cases the exception applies to* (not just the exception's
+resolved value) needs the same yearly re-verification as the deadline
+value it defaults alongside — don't assume last year's set of exception
+cases still holds just because the *mechanism* for handling them is
+correct.
+
 ## Reusing a prior snapshot to lock a week must also reuse its own timestamps, not the lock moment's
 
 `resolve_week_lock()`'s snapshot-reuse path (`CP-9`) is right that an
@@ -199,3 +221,40 @@ outsourcing it to a backlog pointer. A backlog ID belongs in a *commit
 message* (permanent, historical) or in the plan file's own attribution
 line (`user, PR #46 review, 2026-08-23`) — never as the sole explanation
 inside a docstring or inline comment that will outlive the ID it points to.
+
+## "Invalid-looking" input the domain's own rules already resolve should be recorded, not rejected
+
+The first `actual_picks` design (Phase 2, 2026-08-24) required a clean
+`1..N` points permutation before saving, blocking the form with an error
+otherwise — a reasonable-looking guard, written from general data-hygiene
+instinct ("this doesn't look like a valid confidence-pool card") rather
+than from the pool's own bylaws. Reading the real 2026 rules document
+(2026-08-27) for the late-season deadline question (`CP-1`) surfaced,
+unprompted, that the bylaws devote three separate numbered rules to
+exactly the states that guard was rejecting: rule 7 (two games sharing a
+points value — the lower one counts), rule 15 (a blank points box — that
+number's points are lost), rule 16 (an unmarked winner — that game's
+points are lost). None of them exclude the card. `actual_picks` exists to
+record what was *actually* submitted, mistakes included — a validation
+guard modeled on "what a correct card looks like" was silently unable to
+represent the exact real-world states the bylaws exist to handle, on the
+one table whose entire job is capturing reality rather than a corrected
+version of it.
+
+**The rule**: before writing a validation guard that rejects or blocks on
+a domain input shaped "wrong" (a duplicate, a gap, a missing value),
+check whether the domain's own rules (here, bylaws rule 8 is the actual
+invalidation path — illegible cards, forwarded to a committee — and nothing
+else is) already define a resolution for that specific shape, rather than
+assuming it's an error state to prevent. This is easiest to miss exactly
+when the "invalid" shape is also a plausible data-entry *mistake* (a
+duplicate points value could be a typo, or could be a real card the user
+is faithfully transcribing) — the fix isn't picking one interpretation,
+it's not forcing the choice: store what was entered, and surface the
+condition as an explicit flag alongside the row you're recording. Watch for
+this whenever a table's job is "record what really happened" (as opposed
+to "record a value that's always internally consistent") — those tables
+should default toward accepting and flagging the domain's own known edge
+cases, not rejecting them, since narrowing what's storable to "the app's
+idea of a valid state" is itself a source of silent data loss the moment
+reality doesn't match that idea.

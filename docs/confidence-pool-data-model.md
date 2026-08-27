@@ -23,7 +23,7 @@ current."
 | Table | Holds |
 |---|---|
 | `seasons` | Which season is active; the per-season Sunday-afternoon cutoff time |
-| `season_week_rules` | Only for weeks whose selection/deadline rule differs from the default (today: 17-18) |
+| `season_week_rules` | Only for weeks whose selection/deadline rule differs from the default (today: 16-18, `store.KNOWN_LATE_SEASON_WEEKS`) |
 | `teams` | Abbreviation -> pool-sheet display name, all 32 teams |
 | `games` | The stable schedule + outcome fact for one game -- teams, kickoff, and (once known) the final score |
 | `algorithm_versions` | Every `picks_core.ALGORITHM_VERSION` string that's ever generated a pick, with a description |
@@ -50,17 +50,21 @@ CREATE TABLE season_week_rules (
 );
 ```
 
-Real rows only ever get written for weeks 17-18 (via
+Real rows only ever get written for `store.KNOWN_LATE_SEASON_WEEKS` (via
 `store.set_late_season_deadline`, Settings tab, once the commissioner
-announces that year's cutoff). `store.get_week_rule()` is where the actual
+announces that year's cutoff — though `set_late_season_deadline()` itself
+accepts any week 1-18, not just that tuple, since which weeks actually
+need this is bylaws-defined and confirmed to change year to year: 17-18
+in 2025, 16-18 in 2026). `store.get_week_rule()` is where the actual
 default lives: any other week with no row returns `None`, meaning
 `'standard'` applies (Sunday-afternoon + Monday, deadline = earliest
-kickoff); weeks 17-18 specifically return a synthesized `{'selection_rule':
-'all_games', 'deadline_override': None}` even with no row yet, since the
-bylaws' "every game counts, only the deadline is special" exception for
-those two weeks isn't itself something a commissioner opts into — only the
-deadline's actual *value* needs yearly configuration (`CP-1`). A real row,
-once one exists, overrides this synthesized default. `picks_core.select_games()`/
+kickoff); a week in `KNOWN_LATE_SEASON_WEEKS` returns a synthesized
+`{'selection_rule': 'all_games', 'deadline_override': None}` even with no
+row yet, since the bylaws' "every game counts, only the deadline is
+special" exception for those weeks isn't itself something a commissioner
+opts into — only the deadline's actual *value* needs yearly configuration
+(`CP-1`). A real row, once one exists, overrides this synthesized
+default. `picks_core.select_games()`/
 `week_deadline()` themselves take `selection_rule`/`configured_deadline` as
 plain parameters and don't know which weeks are special at all; the
 caller (`panels/picks_tab.py`) reads `get_week_rule()`'s result and decides.
@@ -190,11 +194,11 @@ CREATE TABLE actual_picks (
     season_year INTEGER NOT NULL,
     week INTEGER NOT NULL,
     game_id TEXT NOT NULL REFERENCES games(game_id),
-    points INTEGER NOT NULL,
-    predicted_winner TEXT NOT NULL REFERENCES teams(abbreviation),
+    points INTEGER,
+    predicted_winner TEXT REFERENCES teams(abbreviation),
+    late INTEGER NOT NULL DEFAULT 0,
     entered_at TEXT NOT NULL,
-    PRIMARY KEY (season_year, week, game_id),
-    UNIQUE (season_year, week, points)
+    PRIMARY KEY (season_year, week, game_id)
 );
 ```
 
@@ -206,12 +210,29 @@ deletes and re-inserts the whole week on every save (same overwrite
 semantics as `weekly_games`'s `'current'` snapshot), so a correction
 replaces cleanly rather than accumulating stale rows.
 
-`UNIQUE(season_year, week, points)` enforces the confidence-pool
-constraint (each point value `1..N` used exactly once) at the database
-level, not just in the form's own validation -- the panel checks it too
-(`sorted(points) == range(1, N+1)`) so a mistake is caught with a clear
-message before it ever reaches the database, but the constraint is the
-backstop against any other write path getting it wrong.
+**`points`/`predicted_winner` are nullable, and duplicate `points` values
+across games in the same week are allowed -- on purpose.** This table's
+job is recording what was *actually* written on the pool sheet, not a
+"corrected" version of it, and the real 2026 Legion Pool bylaws define
+exact, non-exclusionary resolutions for each of these: rule 15 (a blank
+points box -- that number's points are lost), rule 16 (an unmarked
+winner -- that game's points are lost), rule 7 (two games sharing a
+points value -- the lower one counts, whichever was correct). None of
+these invalidate the card (rule 8's "forwarded to the rules committee" is
+the actual invalidation path, for illegible paper cards -- not applicable
+to an app-entered submission). `late` marks the whole week's card as
+submitted after the deadline -- rule 2's penalty (10 points below that
+week's lowest card) needs the field's real scores to compute
+(`weekly_standings`, Phase 3) and isn't calculated yet, so this only
+records the fact. Stored redundantly on every row for the week, same
+pattern as `weekly_games.captured_at`.
+
+`picks_core.check_actual_picks()` is a pure function that inspects a set
+of entries (plus the `late` flag) and returns a human-readable message
+per irregularity found, citing the exact bylaws rule -- called both right
+after a save and whenever a previously-saved week's actual picks are
+loaded, so an irregularity stays visible on return visits, not just at
+the moment it was entered. It never blocks a save; it only explains.
 
 Deliberately no 2025-season backfill here -- comparing "actual vs.
 algorithm" requires a `weekly_picks` row to compare against, and
@@ -249,6 +270,6 @@ dependency elsewhere in this repo.
 
 | Assumption | Where | Breaks if | How to revisit |
 |---|---|---|---|
-| Weeks 17-18 use the `'all_games'` rule (every game that week, no weekday filter) | `store.get_week_rule()` | A future season's bylaws genuinely narrow weeks 17-18 back to a subset | `get_week_rule()` returns the `'all_games'` default for weeks 17-18 even with no `season_week_rules` row yet (only the deadline's actual *value* needs yearly Settings configuration, not the selection rule itself — a real row still overrides the default). If the rule ever needs to change for a specific season, insert a `season_week_rules` row with a different `selection_rule` for that `season_year`/week — no code change needed |
+| `store.KNOWN_LATE_SEASON_WEEKS` (currently `(16, 17, 18)`) is the real, current set of weeks using the `'all_games'` rule | `store.get_week_rule()`'s default | **Already confirmed to change year to year, not hypothetical**: 2025's rules only covered weeks 17-18; the 2026 rules document added week 16. A future season could narrow it back down, add a different week, or drop it to zero exception weeks | Re-check this tuple against each season's actual rules document before the season's final weeks matter (the same review that caught the 2026 change). `get_week_rule()`'s default is only a convenience for before a real row exists -- `set_late_season_deadline()` accepts any week 1-18 regardless of this tuple, so a wrong/stale tuple is a Settings-tab workaround away from being harmless, but the *default* will be wrong for an unconfigured week until this constant is corrected |
 | `game_id` stability across a season | `store.save_week`/`sync_game_outcomes`, both keyed on it | `nfl_data_py` ever changes a game's `game_id` mid-season between fetches | Not verified over a full season yet (this app re-derives `select_games()`'s output fresh every fetch and has never depended on `game_id` stability before now) -- watch for it |
 | `sunday_afternoon_cutoff` is `13:00` ET for every season so far | `seasons.sunday_afternoon_cutoff` default | The pool ever includes an earlier Sunday game, or a normal 1pm slate game gets flexed earlier | Already a per-season Settings value, not a code constant -- just needs editing if it happens |
