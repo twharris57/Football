@@ -17,11 +17,63 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-30`.
+**ID tracker** (last number assigned): `CP-32`.
 
 ## Current branch — fix before merge
 
-Empty right now.
+`feature/confidence-pool-weekly-scoring` (PR #51) — Phase 3a per-week
+scoring plus the usability pass. Resolves the rest of `CP-3`'s per-week
+scope. Cleared out when the branch merges.
+
+- [ ] **CP-31: The "Reported score" input can't record a genuine 0, and
+  silently discards it with a false success message** (assistant
+  confidence-pool review, 2026-08-27). `panels/picks_tab.py`'s
+  `_render_week_score()` uses `st.number_input(..., min_value=0, ...)` for
+  the reported-score field, labeled "0 = not yet entered," and on save does
+  `reported_input if reported_input > 0 else None`. Two real, not
+  theoretical, scoring outcomes collide with that sentinel:
+  - A perfectly ordinary bad week (every pick wrong) legitimately scores
+    **0** — nothing outcome-dependent about it, just possible in any
+    season. A user entering the commissioner's reported `0` gets it
+    silently converted to `None` (`store.set_reported_score(..., None,
+    ...)` — "not yet entered"), while the UI shows `st.success("Reported
+    score saved.")` regardless. The user walks away believing a real value
+    is on record when nothing was written at all.
+  - Bylaws rule 2's late-card penalty ("10 points less than the lowest
+    card of the week") can go **negative** whenever that week's lowest
+    card is under 10 — a real, if less common, possibility, and precisely
+    the case `reported_score` exists to record verbatim (see
+    `confidence_pool_principles.md`'s "'Invalid-looking' input the
+    domain's own rules already resolve should be recorded, not rejected").
+    `min_value=0` makes a negative value impossible to type at all, with
+    no warning that the field can't represent it.
+
+  This is also a violation of `web_guidelines.md`'s existing "optional
+  inputs need explicit clear buttons" rule — the fix belongs there: give
+  "clear the reported score" its own explicit control (a small `×`/"clear"
+  button, or a "no score reported yet" checkbox) instead of overloading
+  `0` as both a valid domain value and the unset sentinel, and drop
+  `min_value=0` so rule 2's real negative case can be entered. No test
+  in this branch's `TestCheckReportedScore`/`TestGameOutcomesAndReportedScore`
+  constructs a `reported_score` of `0` or negative, so the gap wasn't
+  caught by the new suite.
+- [ ] **CP-32: `score_picks()`'s rule 7 docstring still hedges on an
+  interpretation the real bylaws text has since confirmed** (assistant
+  confidence-pool review, 2026-08-27, minor/doc-only). The docstring
+  reads "the most literal reading available of `check_actual_picks`'
+  existing wording without the raw bylaws text in hand; revisit if that
+  phrasing is ever clarified." The actual 2026 rules document (now in the
+  repo, used to confirm `CP-1`'s late-season dates the same day) states
+  rule 7 in full: "If a card has two numbers of the same value: if one
+  choice is correct, the player receives the lower of the two numbers; if
+  both are correct, the player receives the lower of the two numbers" —
+  since the two numbers are equal by the rule's own premise, "the lower"
+  is trivially that shared value, confirming `score_picks()`'s
+  credit-once-per-group behavior is correct as implemented. Update the
+  docstring (here and in `docs/confidence-pool-web-app.md`/
+  `docs/confidence-pool-data-model.md`'s "Weekly scoring" sections) to
+  state this as confirmed rather than a best-effort guess still awaiting
+  clarification.
 
 ## Now — blocking
 
