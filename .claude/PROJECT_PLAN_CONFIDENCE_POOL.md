@@ -17,7 +17,7 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-27`.
+**ID tracker** (last number assigned): `CP-28`.
 
 ## Current branch — fix before merge
 
@@ -73,7 +73,14 @@ Empty right now — nothing blocking.
   (whichever of the two games was actually correct keeps the lower value)
   both need the field's real scores, which `check_actual_picks()`
   deliberately doesn't have yet (see `docs/confidence-pool-data-model.md`'s
-  `actual_picks` section).
+  `actual_picks` section). **Extended 2026-08-27 (assistant confidence-pool
+  review):** rule 6 of the real 2026 bylaws document ("All points picked
+  in games ending in a tie will be lost") is a third outcome-dependent
+  scoring rule in the same family as rule 2/7 above, but it isn't
+  mentioned anywhere in `check_actual_picks()`'s docstring, `actual_picks`'
+  migration comment, or this item's own text before now — worth carrying
+  it forward explicitly so it isn't missed when the Phase 3 scoring math
+  actually gets built, the same way rule 2 and rule 7 already are.
 - [ ] **CP-5: Expose weekly pick history via a small analytics API** once
   there's an actual second consumer for it (e.g. `CP-3`'s what-if
   analysis) — likely a small FastAPI service reading the same SQLite
@@ -180,6 +187,27 @@ Empty right now — nothing blocking.
   e.g. a header-level element, a countdown, or a warning-style callout
   once the deadline is close — rather than the same low-emphasis caption
   style used for incidental notes elsewhere on the tab.
+- [ ] **CP-28: Fix float-formatted point values in the actual-submission
+  "already recorded" warning banner** (assistant confidence-pool review,
+  2026-08-27). `panels/picks_tab.py`'s `_render_actual_picks_form()`
+  builds two different `entries` dicts that both feed
+  `pc.check_actual_picks()`: the save-time one (from widget output,
+  always clean `int`/`None`) and the reload-time "already recorded" one
+  (`existing_entries`, built from `row["points"] if pd.notna(row["points"])
+  else None` with no `int()` cast). `store.load_actual_picks()` reads
+  `points` via `pd.read_sql_query`, and SQLite `NULL`s force the whole
+  column to `float64` in pandas — so whenever a week has *any* blank
+  points box (a state this feature is explicitly built to allow and
+  expect, bylaws rule 15), every other real points value in that week's
+  `existing_entries` becomes a `numpy.float64` instead of `int`, and any
+  rule-7 duplicate-points message reads "3.0 points" instead of "3
+  points" in the banner. Reproduced directly: a week with one blank game
+  and two games sharing points value 3 prints `"g2 and g1 both used 3.0
+  points"`. Doesn't corrupt any data or affect scoring — cosmetic only —
+  but it's on the exact message meant to give a clean bylaws citation for
+  real-money bookkeeping. Fix: cast with `int(row["points"])` at that call
+  site, matching the pattern the per-game default loop two sections below
+  already uses (`int(default_points) if default_points is not None else 0`).
 - [ ] **CP-26: Let the Picks tab UI switch between viewing a week's
   `'first'` and `'current'` snapshot** (user, 2026-08-24, flagged for a
   future feature branch — not this one). Now that both are actually

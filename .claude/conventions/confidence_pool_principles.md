@@ -258,3 +258,38 @@ should default toward accepting and flagging the domain's own known edge
 cases, not rejecting them, since narrowing what's storable to "the app's
 idea of a valid state" is itself a source of silent data loss the moment
 reality doesn't match that idea.
+
+## A nullable column loaded via pandas silently upgrades its whole column's type, not just the null cells
+
+`_render_actual_picks_form()`'s two paths into `check_actual_picks()`
+(`CP-28`, 2026-08-27 review) read the same `actual_picks.points` data but
+disagree on type: the per-game widget-default loop casts explicitly
+(`int(default_points) if default_points is not None else 0`), while the
+reload-time "already recorded" warning passes `row["points"]` straight
+through with only an `is-null` check, no cast. `store.load_actual_picks()`
+loads `points` via `pd.read_sql_query` — a SQLite `INTEGER` column that
+has *any* `NULL` in the result set forces pandas to represent the *entire*
+column as `float64`, not just the null cells, since there's no way to
+mix a real `NaN` into an `int64` Series. Because a blank points box
+(bylaws rule 15) is a normal, expected state this feature exists to
+handle, `existing_entries`' otherwise-clean point values silently arrive
+as `numpy.float64` (`3.0`) rather than `int` (`3`) the moment any other
+game that week is blank — and the uncast path's rule-7 duplicate message
+prints "3.0 points" in the exact banner meant to give a clean, citable
+bylaws reference for real-money bookkeeping.
+
+**The rule**: a nullable numeric column read through `pd.read_sql_query`
+(or any pandas DB loader) is not "float only where the value is missing"
+— a single `NULL` anywhere in the *result set* changes the dtype of every
+row in that column, including the ones with real values. Before passing
+such a column's values into a message, a dict key, or any place its exact
+type is user-visible, cast explicitly (`int(x)` after an `isna` check) at
+*every* call site that consumes it — not just the one that happened to be
+written first. This is the same shape of mistake this file's "displayed
+number and filter must round on the same basis" rule already describes
+one layer up (two consumers of one value silently disagreeing on
+precision), and the same shape `valuation_principles.md` names for the
+dynasty subsystem's `NaN`-vs-`None` handling — worth recognizing here too:
+watch for it anywhere `weekly_games`/`weekly_picks`/`actual_picks` data
+(all of which have genuinely nullable columns by design) gets read back
+and formatted in more than one place.
