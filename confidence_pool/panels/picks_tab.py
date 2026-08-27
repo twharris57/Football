@@ -345,11 +345,16 @@ def _render_week_score(
         st.caption("No actual submission recorded for this week yet.")
 
     max_score = algo_score.games_total * (algo_score.games_total + 1) // 2
+    # Bylaws rule 2: a late card scores 10 points below the field's lowest
+    # card, and no on-time card can score below 0 -- so -10 is the real
+    # floor a reported score can ever legitimately hit.
+    min_score = -10
     reported = status.get("reported_score") if status else None
     col_score, col_clear = st.columns([4, 1])
     with col_score:
         reported_input = st.number_input(
             "Reported score from the pool",
+            min_value=min_score,
             max_value=max_score,
             value=int(reported) if reported is not None else 0,
             step=1,
