@@ -101,18 +101,19 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
         _render_picks_table(saved_games, saved_picks, team_names)
         _render_actual_picks_form(conn, season, week, saved_games, saved_picks, team_names)
+        _render_week_score(conn, season, week, saved_picks, team_names, status)
         return
 
-    st.write("Games evaluated this week — uncheck any that shouldn't count:")
     included: dict[str, bool] = {}
-    for _, row in auto_games.iterrows():
-        default = included_map.get(row["game_id"], True)
-        away = team_names.get(row["away_team"], row["away_team"])
-        home = team_names.get(row["home_team"], row["home_team"])
-        label = f"{away} @ {home} — {row['weekday']} {row['gametime']}"
-        included[row["game_id"]] = st.checkbox(
-            label, value=default, key=f"include_{season}_{week}_{row['game_id']}"
-        )
+    with st.expander("Games evaluated this week — uncheck any that shouldn't count", expanded=False):
+        for _, row in auto_games.iterrows():
+            default = included_map.get(row["game_id"], True)
+            away = team_names.get(row["away_team"], row["away_team"])
+            home = team_names.get(row["home_team"], row["home_team"])
+            label = f"{away} @ {home} — {row['weekday']} {row['gametime']}"
+            included[row["game_id"]] = st.checkbox(
+                label, value=default, key=f"include_{season}_{week}_{row['game_id']}"
+            )
 
     if st.button("Regenerate picks"):
         games_all = pc.games_with_included_flags(auto_games, included)
@@ -136,6 +137,14 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         st.info("No picks generated yet for this week — click Regenerate picks.")
 
 
+def _full_table_height(num_rows: int) -> int:
+    """A `st.dataframe` height (px) tall enough to show every row without an
+    internal scrollbar -- a confidence-pool week never has more than ~16
+    games, so a tiny embedded scrollbar is a poor fit for a table this
+    short. ~35px/row + header, matching Streamlit's own row height."""
+    return 35 * (num_rows + 1) + 3
+
+
 def _render_picks_table(games: pd.DataFrame, picks: pd.DataFrame, team_names: dict[str, str]) -> None:
     merged = picks.merge(games[["game_id", "home_team", "away_team"]], on="game_id", how="left")
     display = merged[["points", "predicted_winner", "away_team", "home_team", "confidence"]].copy()
@@ -143,7 +152,9 @@ def _render_picks_table(games: pd.DataFrame, picks: pd.DataFrame, team_names: di
         display[col] = display[col].map(lambda t: team_names.get(t, t))
     display["confidence"] = (display["confidence"].abs() * 100).round(1).astype(str) + "%"
     display.columns = ["Points", "Pick", "Away", "Home", "Confidence"]
-    st.dataframe(display, hide_index=True, width="stretch")
+    st.dataframe(
+        display, hide_index=True, width="stretch", height=_full_table_height(len(display))
+    )
 
 
 def _render_actual_picks_form(
@@ -256,3 +267,115 @@ def _render_actual_picks_form(
         st.rerun()
     elif not existing.empty:
         st.caption(f"Last recorded: {existing['entered_at'].iloc[0]}")
+
+
+def _entries_from_picks(picks: pd.DataFrame) -> dict[str, tuple[str | None, int | None]]:
+    return {
+        row["game_id"]: (
+            row["predicted_winner"] if pd.notna(row["predicted_winner"]) else None,
+            int(row["points"]) if pd.notna(row["points"]) else None,
+        )
+        for _, row in picks.iterrows()
+    }
+
+
+def _render_week_score(
+    conn: sqlite3.Connection,
+    season: int,
+    week: int,
+    saved_picks: pd.DataFrame,
+    team_names: dict[str, str],
+    status: dict | None,
+) -> None:
+    """A locked week's real score, once outcomes are known -- the
+    algorithm's hypothetical total next to what you actually submitted, per
+    `picks_core.score_picks`. Also where the pool's officially reported
+    score gets recorded, since bylaws rule 2's late-card penalty needs
+    every other entrant's score, which this app doesn't track -- see
+    `picks_core.check_reported_score`.
+    """
+    outcomes = store.get_game_outcomes(conn, season, week)
+    algo_score = pc.score_picks(_entries_from_picks(saved_picks), outcomes)
+    if algo_score.games_decided == 0:
+        st.caption("This week's games haven't finished yet -- scores will appear here once results are in.")
+        return
+
+    st.subheader("This week's result")
+    partial = algo_score.games_decided < algo_score.games_total
+    suffix = (
+        f" ({algo_score.games_decided}/{algo_score.games_total} games decided so far)"
+        if partial
+        else ""
+    )
+    st.write(f"Algorithm score: **{algo_score.total_points}**{suffix}")
+
+    actual = store.load_actual_picks(conn, season, week)
+    late = bool(actual["late"].iloc[0]) if not actual.empty else False
+    actual_score = pc.score_picks(_entries_from_picks(actual), outcomes) if not actual.empty else None
+    if actual_score is not None:
+        st.write(f"Your actual score: **{actual_score.total_points}**{suffix}")
+        if late:
+            st.caption(
+                "Bylaws rule 2's late-card penalty (10 points below the field's "
+                "lowest card) isn't reflected above -- this app has no visibility "
+                "into other entrants' scores. Enter the commissioner's reported "
+                "score below once it's posted."
+            )
+        with st.expander("Game-by-game breakdown"):
+            rows = []
+            for r in actual_score.results:
+                rows.append(
+                    {
+                        "Your pick": team_names.get(r.predicted_winner, r.predicted_winner)
+                        if r.predicted_winner
+                        else "(not marked)",
+                        "Points assigned": r.points if r.points is not None else "(blank)",
+                        "Actual winner": team_names.get(r.actual_winner, r.actual_winner)
+                        if r.actual_winner
+                        else ("tied" if r.decided else "TBD"),
+                        "Points awarded": r.points_awarded,
+                    }
+                )
+            breakdown = pd.DataFrame(rows)
+            st.dataframe(
+                breakdown, hide_index=True, width="stretch",
+                height=_full_table_height(len(breakdown)),
+            )
+    else:
+        st.caption("No actual submission recorded for this week yet.")
+
+    max_score = algo_score.games_total * (algo_score.games_total + 1) // 2
+    # Bylaws rule 2: a late card scores 10 points below the field's lowest
+    # card, and no on-time card can score below 0 -- so -10 is the real
+    # floor a reported score can ever legitimately hit.
+    min_score = -10
+    reported = status.get("reported_score") if status else None
+    col_score, col_clear = st.columns([4, 1])
+    with col_score:
+        reported_input = st.number_input(
+            "Reported score from the pool",
+            min_value=min_score,
+            max_value=max_score,
+            value=int(reported) if reported is not None else 0,
+            step=1,
+            key=f"reported_score_{season}_{week}",
+        )
+    with col_clear:
+        st.write("")
+        clear_clicked = st.button(
+            "Clear", key=f"clear_reported_score_{season}_{week}", disabled=reported is None
+        )
+    save_clicked = st.button("Save reported score", key=f"save_reported_score_{season}_{week}")
+
+    if clear_clicked:
+        store.set_reported_score(conn, season, week, None, datetime.now(pc.ET))
+        st.success("Reported score cleared.")
+        st.rerun()
+    elif save_clicked:
+        store.set_reported_score(conn, season, week, reported_input, datetime.now(pc.ET))
+        st.success("Reported score saved.")
+        st.rerun()
+    elif actual_score is not None and reported is not None:
+        mismatch = pc.check_reported_score(actual_score, int(reported), late)
+        if mismatch:
+            st.warning(mismatch)

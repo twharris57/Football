@@ -278,6 +278,39 @@ game that week is blank — and the uncast path's rule-7 duplicate message
 prints "3.0 points" in the exact banner meant to give a clean, citable
 bylaws reference for real-money bookkeeping.
 
+## A "0 = unset" sentinel is unsafe for any field where 0 is a real domain value
+
+`_render_week_score()`'s reported-score input (`CP-31`, 2026-08-27 review)
+uses `0` as the UI's "not yet entered" sentinel for `week_status.reported_score`
+— reasonable-looking, since `store.set_reported_score()` already treats
+`None` as "no score recorded" and a plain number input has no built-in
+empty state. But a confidence-pool week's real score is not bounded away
+from `0` the way, say, a submitted count or a price would be: a week where
+every pick was wrong genuinely scores `0`, and bylaws rule 2's late-card
+penalty (10 points below the field's lowest card) can go *negative*
+whenever that week's lowest card is itself under 10 — both real, reachable
+values, not edge cases invented for the sake of argument. The `min_value=0`
+bound on the widget makes the negative case impossible to even type, and
+the save handler's `reported_input if reported_input > 0 else None`
+silently converts a genuine `0` into "unset" while still showing
+`st.success("Reported score saved.")` — the worst combination, a value
+that's both unrecoverable and reported back to the user as successfully
+recorded.
+
+**The rule**: before picking a sentinel value to mean "nothing entered"
+for a numeric field, check whether that sentinel sits inside the field's
+real domain range — not just its typical/expected range. If `0` (or any
+other candidate sentinel) is a value the field could legitimately hold in
+reality, it cannot double as the "unset" signal; per `web_guidelines.md`'s
+"optional inputs need explicit clear buttons" rule, give clearing its own
+explicit control instead. This is a numeric-input-specific instance of
+that same UI rule, worth recognizing by shape wherever a future field
+records a real-world reported number (a score, a balance, a delta) that
+could plausibly be zero or negative — the confidence-pool domain in
+particular has several rules (6, 2, 7) that push scores toward or below
+zero on purpose, so this shape is more likely to recur here than in a
+typical CRUD form.
+
 **The rule**: a nullable numeric column read through `pd.read_sql_query`
 (or any pandas DB loader) is not "float only where the value is missing"
 — a single `NULL` anywhere in the *result set* changes the dtype of every

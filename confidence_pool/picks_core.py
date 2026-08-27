@@ -339,13 +339,16 @@ def check_actual_picks(
     explains what the bylaws say happens:
 
     - Rule 2: the card was submitted late -- docked 10 points below that
-      week's lowest card (needs the field's actual scores to compute; see
-      `CP-3`/the eventual `weekly_standings` -- this only flags the fact).
+      week's lowest card. Not computable here (needs every other pool
+      entrant's score, which this app never tracks) -- this only flags the
+      fact; `store.set_reported_score()`/`check_reported_score()` are
+      where the pool's own officially reported score gets recorded and
+      cross-checked instead, once posted.
     - Rule 16: an unmarked winning team -- that game's points are lost.
     - Rule 15: a blank points box -- that number's points are lost.
     - Rule 7: two games sharing the same points value -- the *lower*
       value is the one that counts, whichever of the two (or both) was
-      correct.
+      correct. Resolved for real (not just flagged) by `score_picks()`.
 
     (Rule 8's "forwarded to the rules committee" is the actual
     invalidation path, for illegible paper cards -- not applicable to an
@@ -383,3 +386,150 @@ def check_actual_picks(
         else:
             points_seen[points] = game_id
     return issues
+
+
+@dataclass(frozen=True)
+class PickResult:
+    """One game's contribution to a `WeekScore` -- `correct` is the bare
+    fact of whether the pick matched the outcome; `points_awarded` is what
+    that pick actually nets after the bylaws rules below, which can differ
+    from `correct * points` (a duplicate-points game, rule 7)."""
+
+    game_id: str
+    predicted_winner: str | None
+    points: int | None
+    actual_winner: str | None
+    decided: bool
+    correct: bool
+    points_awarded: int
+
+
+@dataclass(frozen=True)
+class WeekScore:
+    """A week's total score from a set of picks against real outcomes.
+    `games_decided < games_total` means the week isn't over yet -- treat
+    `total_points` as provisional, not final."""
+
+    total_points: int
+    games_decided: int
+    games_total: int
+    results: list[PickResult]
+
+
+def score_picks(
+    entries: dict[str, tuple[str | None, int | None]], outcomes: pd.DataFrame
+) -> WeekScore:
+    """Score a set of picks (`game_id -> (predicted_winner, points)` -- the
+    same shape `check_actual_picks` takes, so this serves both the
+    algorithm's `weekly_picks` and the user's `actual_picks` without a
+    second parallel scoring path) against real per-game outcomes
+    (`outcomes`: `game_id`/`home_team`/`away_team`/`home_score`/`away_score`,
+    as returned by `store.get_game_outcomes`).
+
+    Applies the bylaws rules `check_actual_picks` only flags:
+
+    - Rule 6 (tie): a tied game awards no points to anyone, regardless of
+      pick.
+    - Rule 16 (blank winner) / Rule 15 (blank points): score as incorrect /
+      unawardable, same as any other wrong pick.
+    - Rule 7 (duplicate points): when more than one game shares the same
+      points value, that value is credited at most once for the whole
+      group -- only if at least one game in the group was correct (and
+      only once even if more than one was). Confirmed against the actual
+      2026 rules document: "If a card has two numbers of the same value,
+      the player receives the lower of the two numbers" whether one or
+      both choices were correct -- since the two numbers are equal by the
+      rule's own premise, "the lower" is trivially that shared value,
+      credited once.
+
+    A game with no known outcome yet (`home_score`/`away_score` still
+    `NULL`) is excluded from scoring but still counted in `games_total`, so
+    `games_decided` can flag a provisional mid-week total instead of
+    silently treating an undecided game as wrong.
+    """
+    outcomes_by_id = {row["game_id"]: row for _, row in outcomes.iterrows()}
+
+    rows = []
+    for game_id, (winner, points) in entries.items():
+        outcome = outcomes_by_id.get(game_id)
+        decided = (
+            outcome is not None
+            and pd.notna(outcome["home_score"])
+            and pd.notna(outcome["away_score"])
+        )
+        actual_winner = None
+        if decided and outcome["home_score"] != outcome["away_score"]:
+            actual_winner = (
+                outcome["home_team"]
+                if outcome["home_score"] > outcome["away_score"]
+                else outcome["away_team"]
+            )
+        correct = decided and actual_winner is not None and winner == actual_winner
+        rows.append(
+            {
+                "game_id": game_id,
+                "predicted_winner": winner,
+                "points": points,
+                "actual_winner": actual_winner,
+                "decided": decided,
+                "correct": correct,
+            }
+        )
+
+    by_points: dict[int, list[int]] = {}
+    for i, row in enumerate(rows):
+        if row["points"] is not None:
+            by_points.setdefault(row["points"], []).append(i)
+
+    points_awarded = [0] * len(rows)
+    for points, idxs in by_points.items():
+        correct_idxs = [i for i in idxs if rows[i]["correct"]]
+        if correct_idxs:
+            points_awarded[correct_idxs[0]] = points
+
+    results = [
+        PickResult(
+            game_id=row["game_id"],
+            predicted_winner=row["predicted_winner"],
+            points=row["points"],
+            actual_winner=row["actual_winner"],
+            decided=row["decided"],
+            correct=row["correct"],
+            points_awarded=points_awarded[i],
+        )
+        for i, row in enumerate(rows)
+    ]
+    return WeekScore(
+        total_points=sum(points_awarded),
+        games_decided=sum(1 for row in rows if row["decided"]),
+        games_total=len(rows),
+        results=results,
+    )
+
+
+def check_reported_score(
+    week_score: WeekScore, reported_score: int | None, late: bool
+) -> str | None:
+    """Flag a mismatch between the pool's officially reported score and this
+    app's own `score_picks` total -- `None` if there's nothing to flag.
+
+    Silent (no flag) when: no reported score has been entered yet; the week
+    isn't fully decided (`games_decided < games_total`, so the computed
+    total is still provisional); or the card was late (bylaws rule 2's
+    penalty -- 10 points below the field's lowest card -- isn't verifiable
+    without every other entrant's score, which this app doesn't track, so a
+    mismatch there is expected, not a red flag).
+    """
+    if reported_score is None:
+        return None
+    if week_score.games_decided < week_score.games_total:
+        return None
+    if late:
+        return None
+    if reported_score != week_score.total_points:
+        return (
+            f"Reported score ({reported_score}) doesn't match this app's computed "
+            f"score ({week_score.total_points}) -- worth double-checking against the "
+            "pool sheet."
+        )
+    return None

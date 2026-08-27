@@ -17,14 +17,9 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-29`.
+**ID tracker** (last number assigned): `CP-32`.
 
 ## Current branch — fix before merge
-
-`feature/confidence-pool-actual-picks` — Phase 2 of the schema redesign:
-adds `actual_picks` (what you really submitted, tracked separately from
-the algorithm's `weekly_picks` recommendation) and a locked-week entry
-form on the Picks tab. Resolves `CP-4`. Cleared out when the branch merges.
 
 Empty right now.
 
@@ -48,11 +43,15 @@ Empty right now — nothing blocking.
   with the three weeks/three dates listed earlier in the same rule —
   treating the three explicit dates as authoritative, not the summary
   phrase, which reads as leftover wording from a prior year's version of
-  this document.) This can't be resolved directly from this repo — it
-  needs an actual visit to the deployed app's Settings tab, this isn't a
-  code change. `store.set_late_season_deadline()` and the Settings tab
+  this document.) `store.set_late_season_deadline()` and the Settings tab
   now accept week 16 (previously hard-blocked -- see
-  `confidence_pool_principles.md`'s newest rule).
+  `confidence_pool_principles.md`'s newest rule). **Narrowed 2026-08-27
+  (usability pass):** these three values are now the Settings tab's
+  default for an unconfigured week 16-18 in the 2026 season
+  (`settings_tab.KNOWN_2026_LATE_SEASON_DEADLINES`) — a real visit still
+  needs to happen once deployed (each week's "Save" button still has to
+  be clicked to actually persist a `season_week_rules` row), but it's a
+  review-and-confirm, not data entry from scratch.
 - [ ] **CP-2: Verify the NAS offsite backup actually covers
   `confidence_pool_data` (the SQLite pick-history volume).** Docker named
   volumes are durable across container restarts but live under Docker's
@@ -60,34 +59,27 @@ Empty right now — nothing blocking.
   covers the NAS's shared folders. If it isn't, switch to a bind-mounted
   path under a folder the backup already covers. This is a NAS/`../nas-configs`
   configuration question, not resolvable from this repo alone.
-- [ ] **CP-3: Join persisted weekly snapshots against real game outcomes**
-  to enable what-if analysis ("what if I'd picked differently") and
-  season-long scoring. The data groundwork is done as of the Phase 1
-  schema redesign — `games.home_score`/`away_score` backfill automatically
-  via `store.sync_game_outcomes()` on every Picks-tab load — what's left
-  is the actual what-if/scoring logic and UI to consume it. Once real
-  per-game outcomes are joined (`weekly_standings`, Phase 3), this is also
-  where `actual_picks`' still-unresolved bylaws math gets computed for
-  real, not just flagged: rule 2's late-card penalty (10 points below that
-  week's lowest scoring card) and rule 7's duplicate-points resolution
-  (whichever of the two games was actually correct keeps the lower value)
-  both need the field's real scores, which `check_actual_picks()`
-  deliberately doesn't have yet (see `docs/confidence-pool-data-model.md`'s
-  `actual_picks` section). **Extended 2026-08-27 (assistant confidence-pool
-  review):** rule 6 of the real 2026 bylaws document ("All points picked
-  in games ending in a tie will be lost") is a third outcome-dependent
-  scoring rule in the same family as rule 2/7 above, but it isn't
-  mentioned anywhere in `check_actual_picks()`'s docstring, `actual_picks`'
-  migration comment, or this item's own text before now — worth carrying
-  it forward explicitly so it isn't missed when the Phase 3 scoring math
-  actually gets built, the same way rule 2 and rule 7 already are.
-- [ ] **CP-29: When a week's real score sheet is uploaded/entered, cross-check
-  the algorithm's calculated score against the reported actual score and
-  flag a mismatch for investigation** (user, 2026-08-27, future todo). No
-  "score sheet upload" concept exists yet at all — this depends on `CP-3`
-  (real outcomes joined per game) and presumably a per-week actual-total
-  field alongside `actual_picks`, neither of which is built. Filed here so
-  the idea isn't lost before `CP-3`/`weekly_standings` design work starts.
+- [ ] **CP-3: Season-long cumulative standings across all of a season's
+  scored weeks.** **Narrowed 2026-08-27 (Phase 3a):** this item originally
+  covered both per-week scoring and season-long totals; per-week scoring
+  is done — `picks_core.score_picks()` (algorithm vs. actual, bylaws
+  rules 6/7/15/16 applied) and the reported-score cross-check
+  (`picks_core.check_reported_score()`, `CP-29`'s mismatch-flagging idea)
+  now run on the Picks tab once a locked week's outcomes are known — see
+  `docs/confidence-pool-web-app.md`'s "Weekly scoring" section and
+  `docs/confidence-pool-data-model.md`'s `week_status` section. What's
+  left is summing those per-week figures into a running season total
+  (algorithm vs. actual) somewhere a human can see it — a new
+  panel/section, reusing `score_picks`/`WeekScore` across every scored
+  week in a season rather than a second computation path. Deliberately
+  deferred until there's real multi-week data to make it worth building
+  against — work on it "when it makes sense," per the user.
+- [ ] **CP-30: Import the pool's actual score sheet (PDF or similar) to
+  auto-populate `week_status.reported_score`**, cross-checking it against
+  the app's computed score the same way manual entry already does
+  (`picks_core.check_reported_score()`, wired up in Phase 3a). No parsing
+  exists yet — manual entry via the Picks tab's "Reported score" field is
+  the interim step this depends on, already built.
 - [ ] **CP-5: Expose weekly pick history via a small analytics API** once
   there's an actual second consumer for it (e.g. `CP-3`'s what-if
   analysis) — likely a small FastAPI service reading the same SQLite
