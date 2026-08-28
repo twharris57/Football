@@ -130,17 +130,6 @@ Empty right now — nothing blocking.
   aggressively. This is a narrower case than `CP-9`/`CP-10` already fixed
   (those apply whenever *anything* was manually generated first; this is
   specifically the "the week was never touched by a human at all" path).
-- [ ] **CP-18: Show a semantic version number alongside the git-SHA
-  build indicator** (user, PR #46 review, 2026-08-23). The footer
-  currently shows only `GIT_SHA` (see `confidence_pool/Dockerfile`) —
-  useful for confirming a deploy picked up the latest image, but not a
-  quick human-readable "is this the latest version" signal the way a
-  semantic version tag would be. This repo doesn't currently use semantic
-  versioning at all (per `git_workflow_simple.md`'s "Versioning" section,
-  tags are opt-in, bumped only on a real release) — worth deciding
-  whether that convention gets adopted for real, and whether it applies
-  to just this app or the dynasty app too, before wiring a version string
-  into the footer.
 - [ ] **CP-26: Let the Picks tab UI switch between viewing a week's
   `'first'` and `'current'` snapshot** (user, 2026-08-24, flagged for a
   future feature branch — not this one). Now that both are actually
