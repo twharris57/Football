@@ -41,7 +41,7 @@ tab_picks, tab_settings = st.tabs(["Picks", "Settings"])
 with tab_picks:
     render_picks_tab(conn, active_season, today)
 with tab_settings:
-    render_settings_tab(conn, active_season)
+    render_settings_tab(conn, active_season, today)
 
 st.divider()
 st.caption(f"Legion Confidence Pool · build {APP_VERSION}")

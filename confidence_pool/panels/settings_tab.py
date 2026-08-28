@@ -28,20 +28,20 @@ KNOWN_2026_LATE_SEASON_DEADLINES: dict[int, datetime] = {
 }
 
 
-def render_settings_tab(conn: sqlite3.Connection, active_season: int) -> None:
+def render_settings_tab(conn: sqlite3.Connection, active_season: int, today: date) -> None:
     with st.expander("Active season", expanded=False):
-        season = int(
-            st.number_input(
-                "Season year", min_value=2020, max_value=2100, value=active_season, step=1, key="settings_season"
-            )
-        )
-        if st.button("Set as active season"):
-            store.set_active_season(conn, season)
-            st.success(f"Active season set to {season}.")
+        st.write(f"Current season: **{active_season}**")
+        next_season = active_season + 1
+        season_open = pc.default_season_year(today) >= next_season
+        if st.button(f"Open {next_season} season", disabled=not season_open):
+            store.set_active_season(conn, next_season)
+            st.success(f"Active season set to {next_season}.")
             st.rerun()
+        if not season_open:
+            st.caption(f"Available once the {active_season} season has ended.")
 
     late_weeks = store.KNOWN_LATE_SEASON_WEEKS
-    with st.expander(f"Weeks {late_weeks[0]}-{late_weeks[-1]} deadline — {season}", expanded=False):
+    with st.expander(f"Weeks {late_weeks[0]}-{late_weeks[-1]} deadline — {active_season}", expanded=False):
         st.caption(
             "The bylaws set an explicit early cutoff for the season's final few weeks, "
             "announced by the commissioner each year — earlier than any of that week's "
@@ -54,10 +54,10 @@ def render_settings_tab(conn: sqlite3.Connection, active_season: int) -> None:
         )
         for week in late_weeks:
             label = f"Week {week}"
-            week_rule = store.get_week_rule(conn, season, week)
+            week_rule = store.get_week_rule(conn, active_season, week)
             existing = week_rule.get("deadline_override") if week_rule else None
             existing_dt = datetime.fromisoformat(existing) if existing else None
-            known_default = KNOWN_2026_LATE_SEASON_DEADLINES.get(week) if season == 2026 else None
+            known_default = KNOWN_2026_LATE_SEASON_DEADLINES.get(week) if active_season == 2026 else None
             default_dt = existing_dt or known_default
             col_date, col_time = st.columns(2)
             with col_date:
@@ -74,7 +74,7 @@ def render_settings_tab(conn: sqlite3.Connection, active_season: int) -> None:
                 )
             if st.button(f"Save {label} deadline", key=f"save_week{week}"):
                 deadline = datetime.combine(deadline_date, deadline_time, tzinfo=pc.ET)
-                store.set_late_season_deadline(conn, season, week, deadline)
+                store.set_late_season_deadline(conn, active_season, week, deadline)
                 st.success(f"{label} deadline set to {deadline.strftime('%a %b %d, %I:%M %p ET')}.")
                 st.rerun()
 

@@ -89,6 +89,26 @@ def current_week(schedule: pd.DataFrame, today: date) -> int:
     return int(last_day_by_week.index[-1])
 
 
+def week_date_labels(schedule: pd.DataFrame) -> dict[int, str]:
+    """Map each of `schedule`'s regular-season weeks to a human date span
+    (e.g. `"Sep 13-14"`), for labeling a week selector -- so a bare week
+    number isn't the only way to tell what part of the calendar it covers.
+    """
+    reg = schedule[schedule["game_type"] == "REG"].copy()
+    reg["gameday"] = pd.to_datetime(reg["gameday"]).dt.date
+    spans = reg.groupby("week")["gameday"].agg(["min", "max"])
+    labels: dict[int, str] = {}
+    for week, row in spans.iterrows():
+        start, end = row["min"], row["max"]
+        if start == end:
+            labels[int(week)] = f"{start.strftime('%b')} {start.day}"
+        elif start.month == end.month:
+            labels[int(week)] = f"{start.strftime('%b')} {start.day}-{end.day}"
+        else:
+            labels[int(week)] = f"{start.strftime('%b')} {start.day}-{end.strftime('%b')} {end.day}"
+    return labels
+
+
 def select_games(
     schedule: pd.DataFrame,
     year: int,
