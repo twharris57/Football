@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 from data_dir import DATA_DIR, DB_PATH
@@ -23,6 +24,7 @@ from picks_core import ALGORITHM_VERSION, ET, default_season_year
 import store
 
 APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
+APP_SEMVER = (Path(__file__).parent / "VERSION").read_text().strip()
 
 st.set_page_config(page_title="Confidence Pool", layout="centered")
 
@@ -58,4 +60,4 @@ with tab_settings:
     render_settings_tab(conn, active_season, today)
 
 st.divider()
-st.caption(f"Legion Confidence Pool · build {APP_VERSION}")
+st.caption(f"Legion Confidence Pool · v{APP_SEMVER} · build {APP_VERSION}")

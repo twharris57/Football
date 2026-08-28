@@ -155,6 +155,51 @@ def select_games(
     return selected[GAME_COLUMNS].reset_index(drop=True)
 
 
+@dataclass(frozen=True)
+class PickExplanation:
+    """The intermediate math behind one game's confidence score -- the raw
+    (pre-de-vig) implied probability from each side's moneyline, the
+    de-vigged probabilities actually used for ranking, and the resulting
+    confidence. Exposed so the UI can show a pick's real inputs and
+    working, not just the final points/confidence columns."""
+
+    home_moneyline: float
+    away_moneyline: float
+    home_prob_raw: float
+    away_prob_raw: float
+    home_prob: float
+    away_prob: float
+    confidence: float
+
+
+def explain_odds(home_moneyline: float, away_moneyline: float) -> PickExplanation:
+    """Convert one game's moneylines into a `PickExplanation`.
+
+    `rank_games` calls this for its own confidence score rather than
+    reimplementing the math inline, so the ranking and the UI's
+    per-pick detail view can never drift apart (see
+    `valuation_principles.md`'s "one valuation strategy" rule, mirrored
+    here for the confidence-pool side).
+    """
+    home_prob_raw = compute_probability(home_moneyline)
+    away_prob_raw = compute_probability(away_moneyline)
+    total = home_prob_raw + away_prob_raw
+    if total > 0:
+        home_prob = home_prob_raw / total
+        away_prob = away_prob_raw / total
+    else:
+        home_prob, away_prob = home_prob_raw, away_prob_raw
+    return PickExplanation(
+        home_moneyline=home_moneyline,
+        away_moneyline=away_moneyline,
+        home_prob_raw=home_prob_raw,
+        away_prob_raw=away_prob_raw,
+        home_prob=home_prob,
+        away_prob=away_prob,
+        confidence=home_prob - away_prob,
+    )
+
+
 def rank_games(games: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Rank games by Vegas-odds confidence and assign N..1 points, descending.
 
@@ -173,13 +218,8 @@ def rank_games(games: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     rows = []
     for _, row in games[has_odds].iterrows():
-        home_prob = compute_probability(row["home_moneyline"])
-        away_prob = compute_probability(row["away_moneyline"])
-        total = home_prob + away_prob
-        if total > 0:
-            home_prob /= total
-            away_prob /= total
-        confidence = home_prob - away_prob
+        explanation = explain_odds(row["home_moneyline"], row["away_moneyline"])
+        confidence = explanation.confidence
         predicted_winner = row["home_team"] if confidence > 0 else row["away_team"]
         rows.append(
             {

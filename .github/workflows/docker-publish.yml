@@ -18,8 +18,10 @@ jobs:
         include:
           - image: twharris57/football-dynasty-draft
             dockerfile: Dockerfile
+            version_file: dynasty/VERSION
           - image: twharris57/football-confidence-pool
             dockerfile: confidence_pool/Dockerfile
+            version_file: confidence_pool/VERSION
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +30,8 @@ jobs:
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
           IMAGE="${{ matrix.image }}"
-          echo "tags=${REGISTRY}/${IMAGE}:latest,${REGISTRY}/${IMAGE}:${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          VERSION="$(cat ${{ matrix.version_file }})"
+          echo "tags=${REGISTRY}/${IMAGE}:latest,${REGISTRY}/${IMAGE}:${SHORT_SHA},${REGISTRY}/${IMAGE}:v${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 from collections.abc import Callable
+from pathlib import Path
 
 import dynasty_core
 import requests
@@ -28,6 +29,7 @@ from tabs.summary_tab import render_summary_tab
 from tabs.trade_tab import render_trade_tab
 
 APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
+APP_SEMVER = (Path(__file__).parent / "VERSION").read_text().strip()
 
 st.set_page_config(page_title="Dynasty Rookie Draft", layout="centered")
 
@@ -262,4 +264,4 @@ for tab, (_, render_fn) in zip(tabs, tab_specs):
         render_fn()
 
 st.divider()
-st.caption(f"Dynasty Rookie Draft · build {APP_VERSION}")
+st.caption(f"Dynasty Rookie Draft · v{APP_SEMVER} · build {APP_VERSION}")

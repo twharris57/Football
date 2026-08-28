@@ -130,30 +130,6 @@ Empty right now — nothing blocking.
   aggressively. This is a narrower case than `CP-9`/`CP-10` already fixed
   (those apply whenever *anything* was manually generated first; this is
   specifically the "the week was never touched by a human at all" path).
-- [ ] **CP-16: Give the Picks tab an in-app explanation of the
-  confidence/odds methodology, plus an expandable per-pick detail
-  view** (user, PR #46 review, 2026-08-23). Two related asks: (1)
-  somewhere in the app (its own section, or the bottom of the Picks tab)
-  a plain-language writeup of how `compute_probability`/`rank_games`
-  turns moneylines into points, so the methodology isn't only documented
-  in `docs/confidence-pool-web-app.md`; (2) an expandable row/detail view
-  per pick showing the actual inputs (raw moneylines) and intermediate
-  math, not just the final points/predicted-winner/confidence columns —
-  the raw moneylines needed for this are already stored per-snapshot in
-  `weekly_games`, including for historical weeks, not just the
-  currently-generated one (resolved by the Phase 1 schema redesign — see
-  `docs/confidence-pool-data-model.md`).
-- [ ] **CP-18: Show a semantic version number alongside the git-SHA
-  build indicator** (user, PR #46 review, 2026-08-23). The footer
-  currently shows only `GIT_SHA` (see `confidence_pool/Dockerfile`) —
-  useful for confirming a deploy picked up the latest image, but not a
-  quick human-readable "is this the latest version" signal the way a
-  semantic version tag would be. This repo doesn't currently use semantic
-  versioning at all (per `git_workflow_simple.md`'s "Versioning" section,
-  tags are opt-in, bumped only on a real release) — worth deciding
-  whether that convention gets adopted for real, and whether it applies
-  to just this app or the dynasty app too, before wiring a version string
-  into the footer.
 - [ ] **CP-26: Let the Picks tab UI switch between viewing a week's
   `'first'` and `'current'` snapshot** (user, 2026-08-24, flagged for a
   future feature branch — not this one). Now that both are actually
