@@ -94,6 +94,18 @@ use `- [ ]` checkboxes, not plain bullets.
 If the project uses version numbers, tag each release on `main` as `v{version}`
 (e.g., `v1.0.0`). Bump only when something ships — don't increment mid-branch.
 
+**Multi-app repos**: if a repo holds more than one independently-deployed app (as
+this one does — see `CLAUDE.md`'s "Architecture"), each app keeps its own version,
+bumped only when *that* app ships something — one app's release doesn't bump the
+other's number. Concretely:
+- Each app's current version lives in a `VERSION` file at that app's own root
+  (e.g. `confidence_pool/VERSION`, `dynasty/VERSION`), read at runtime so the UI
+  can display it (see each app's `streamlit_app.py` footer).
+- Tag releases with a per-app prefix so tags from different apps never collide:
+  `confidence-pool-v{version}`, `dynasty-v{version}`.
+- Bumping an app's version is: edit its `VERSION` file, commit, and (once merged
+  to `main`) tag that commit `«app»-v{version}`.
+
 ## Session Close-Out
 
 When a branch is complete and ready for review, open a PR without waiting to be asked —

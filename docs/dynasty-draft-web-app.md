@@ -193,16 +193,25 @@ label, and it settles to the real name from the next rerun onward. No extra
 network call, no attempt to force a same-render update that Streamlit's
 execution model doesn't support.
 
-A footer (`Dynasty Rookie Draft · build {APP_VERSION}`) shows the short git
-SHA the running image was built from, read from a `GIT_SHA` environment
-variable — this exists specifically to verify a NAS deployment actually
-picked up a new image rather than silently continuing to run a stale one.
-The `Dockerfile` declares `ARG GIT_SHA=dev` / `ENV GIT_SHA=$GIT_SHA`;
-`docker-publish.yml` passes `--build-arg GIT_SHA=${{ github.sha }}` so the
-footer matches the same commit the image is tagged with in GHCR. Local
-`docker compose build` (no build-arg passed) and plain `streamlit run` both
-fall back to `dev` — if a NAS deployment ever showed `dev`, that would mean
-the image wasn't actually built by CI.
+A footer (`Dynasty Rookie Draft · v{APP_SEMVER} · build {APP_VERSION}`) shows
+both a semantic version and the short git SHA the running image was built
+from. `APP_VERSION` is read from a `GIT_SHA` environment variable — this
+exists specifically to verify a NAS deployment actually picked up a new
+image rather than silently continuing to run a stale one. The `Dockerfile`
+declares `ARG GIT_SHA=dev` / `ENV GIT_SHA=$GIT_SHA`; `docker-publish.yml`
+passes `--build-arg GIT_SHA=${{ github.sha }}` so the footer matches the
+same commit the image is tagged with in GHCR. Local `docker compose build`
+(no build-arg passed) and plain `streamlit run` both fall back to `dev` —
+if a NAS deployment ever showed `dev`, that would mean the image wasn't
+actually built by CI.
+
+`APP_SEMVER` is read at startup from a committed `VERSION` file
+(`dynasty/VERSION`) — a human-readable release number a NAS deployment can
+be eyeballed against ("did this move forward or roll back"), separate from
+the SHA's precise-commit role. See the "Multi-app repos" note in
+`git_workflow_simple.md`'s Versioning section: this repo holds two
+independently-deployed apps, so each keeps its own `VERSION` file and
+release-tag prefix rather than sharing one number.
 
 ### Refresh model
 
@@ -390,11 +399,10 @@ new one:
   slim.
 - **GitHub Actions builds and publishes to GHCR on push to `main`**
   (`.github/workflows/docker-publish.yml`), using the automatic
-  `GITHUB_TOKEN` — no registry secrets to manage. Tagged `:latest` and
-  `:<short-sha>`; no `VERSION`-file semver, a deliberate simplification
-  since this is a single-image personal tool, not a versioned release
-  product (`Finance-Dashboards` does use a `VERSION` file — an intentional
-  divergence, not an oversight).
+  `GITHUB_TOKEN` — no registry secrets to manage. Tagged `:latest`,
+  `:<short-sha>`, and `:v<version>` — the last read from each app's own
+  `VERSION` file at build time (`matrix.version_file`), matching the
+  sibling `Finance-Dashboards` project's pattern.
 - **Two compose files**: `docker-compose.yml` builds from source for local
   dev; `docker-compose.deploy.yml` only ever *pulls* the prebuilt GHCR image
   — the NAS never builds on-device. Host port is remappable via `.env`'s
