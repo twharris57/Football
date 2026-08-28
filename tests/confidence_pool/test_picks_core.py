@@ -49,6 +49,33 @@ class TestComputeProbability:
         assert pc.compute_probability(130) == pytest.approx(100 / 230)
 
 
+class TestExplainOdds:
+    """Intermediate de-vig math behind a pick's confidence score -- the
+    same values rank_games uses internally, exposed for the UI's detail view."""
+
+    def test_probabilities_are_normalized_to_sum_to_one(self):
+        explanation = pc.explain_odds(home_moneyline=-150, away_moneyline=130)
+
+        assert explanation.home_prob + explanation.away_prob == pytest.approx(1.0)
+
+    def test_raw_probabilities_precede_normalization(self):
+        explanation = pc.explain_odds(home_moneyline=-150, away_moneyline=130)
+
+        assert explanation.home_prob_raw == pytest.approx(pc.compute_probability(-150))
+        assert explanation.away_prob_raw == pytest.approx(pc.compute_probability(130))
+        assert explanation.home_prob_raw + explanation.away_prob_raw > 1.0
+
+    def test_confidence_matches_rank_games_for_the_same_game(self):
+        games = pd.DataFrame(
+            [_game("g1", 1, "Sunday", "13:00", home_moneyline=-150, away_moneyline=130)]
+        )
+        ranked, _ = pc.rank_games(games)
+
+        explanation = pc.explain_odds(home_moneyline=-150, away_moneyline=130)
+
+        assert explanation.confidence == pytest.approx(ranked.loc[0, "confidence"])
+
+
 class TestSelectGames:
     """The Legion pool's game-selection rules (bylaws rule 14)."""
 

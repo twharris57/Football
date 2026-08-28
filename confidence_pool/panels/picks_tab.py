@@ -22,6 +22,29 @@ def _cached_schedule(year: int) -> pd.DataFrame:
 def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) -> None:
     team_names = store.get_team_display_names(conn)
 
+    with st.expander("How picks are ranked", expanded=False):
+        st.markdown(
+            "1. **Moneyline → implied probability.** Each side's Vegas "
+            "moneyline is converted to a raw win probability: a negative "
+            "line (favorite) of `-150` implies `150 / (150 + 100) = 60%`; "
+            "a positive line (underdog) of `+130` implies "
+            "`100 / (130 + 100) = 43.5%`.\n"
+            "2. **Remove the vig.** Both sides' raw probabilities add up "
+            "to a bit more than 100% — that extra is the sportsbook's "
+            "built-in margin (the \"vig\"). Both probabilities are scaled "
+            "down proportionally so they sum to exactly 100%.\n"
+            "3. **Confidence = home probability − away probability**, "
+            "after that adjustment. Its sign picks the predicted winner "
+            "(positive favors the home team); its magnitude is how lopsided "
+            "the game looks.\n"
+            "4. **Points.** That week's games are sorted by confidence "
+            "magnitude, most lopsided first, and assigned points N, N-1, "
+            "..., 1 in that order — the standard confidence-pool scoring "
+            "rule.\n\n"
+            "Expand any pick below (\"Show the math\") for the exact "
+            "moneylines and intermediate numbers behind that game."
+        )
+
     try:
         schedule = _cached_schedule(active_season)
     except OSError as exc:
@@ -106,6 +129,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
     if locked:
         st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
         _render_picks_table(saved_games, saved_picks, team_names)
+        _render_pick_details(saved_games, saved_picks, team_names)
         _render_actual_picks_form(conn, season, week, saved_games, saved_picks, team_names)
         _render_week_score(conn, season, week, saved_picks, team_names, status)
         return
@@ -139,6 +163,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
     elif not saved_picks.empty:
         st.caption(f"Last generated: {status['generated_at']}")
         _render_picks_table(saved_games, saved_picks, team_names)
+        _render_pick_details(saved_games, saved_picks, team_names)
     else:
         st.info("No picks generated yet for this week — click Regenerate picks.")
 
@@ -193,6 +218,48 @@ def _render_picks_table(games: pd.DataFrame, picks: pd.DataFrame, team_names: di
     st.dataframe(
         display, hide_index=True, width="stretch", height=_full_table_height(len(display))
     )
+
+
+def _render_pick_details(games: pd.DataFrame, picks: pd.DataFrame, team_names: dict[str, str]) -> None:
+    """One expander per pick with the raw moneylines and intermediate math
+    behind its confidence score (`pc.explain_odds`) -- not just the final
+    points/predicted-winner/confidence columns `_render_picks_table` shows.
+    """
+    merged = picks.merge(
+        games[["game_id", "home_team", "away_team", "home_moneyline", "away_moneyline"]],
+        on="game_id",
+        how="left",
+    ).sort_values("points", ascending=False)
+    with st.expander("Show the math for each pick"):
+        for _, row in merged.iterrows():
+            away = team_names.get(row["away_team"], row["away_team"])
+            home = team_names.get(row["home_team"], row["home_team"])
+            pick = team_names.get(row["predicted_winner"], row["predicted_winner"])
+            st.markdown(f"**{row['points']} pts — {away} @ {home}** (picked: {pick})")
+            explanation = pc.explain_odds(row["home_moneyline"], row["away_moneyline"])
+            detail = pd.DataFrame(
+                [
+                    {
+                        "": "Moneyline",
+                        home: f"{explanation.home_moneyline:+.0f}",
+                        away: f"{explanation.away_moneyline:+.0f}",
+                    },
+                    {
+                        "": "Raw implied probability",
+                        home: f"{explanation.home_prob_raw:.1%}",
+                        away: f"{explanation.away_prob_raw:.1%}",
+                    },
+                    {
+                        "": "After vig removal",
+                        home: f"{explanation.home_prob:.1%}",
+                        away: f"{explanation.away_prob:.1%}",
+                    },
+                ]
+            )
+            st.dataframe(
+                detail, hide_index=True, width="stretch", height=_full_table_height(len(detail))
+            )
+            st.caption(f"Confidence = {explanation.home_prob:.1%} − {explanation.away_prob:.1%} = {explanation.confidence:+.1%}")
 
 
 def _render_actual_picks_form(
