@@ -11,6 +11,7 @@ season). See docs/confidence-pool-web-app.md for the full design.
 from __future__ import annotations
 
 import os
+import sqlite3
 from datetime import datetime
 
 import streamlit as st
@@ -25,11 +26,24 @@ APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
 
 st.set_page_config(page_title="Confidence Pool", layout="centered")
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-conn = store.connect(str(DB_PATH))
-store.register_algorithm_version(
-    conn, ALGORITHM_VERSION, "Proportional vig-removal; confidence = |home_prob - away_prob|"
-)
+
+@st.cache_resource(show_spinner=False)
+def _get_connection() -> sqlite3.Connection:
+    """Open the store once per running server process and reuse it for
+    every session/rerun. `streamlit_app.py`'s top level re-executes on
+    every widget interaction -- connecting (and re-running migrations)
+    fresh each time let concurrent reruns race each other for the SQLite
+    write lock, surfacing as `database is locked` at startup and on
+    later saves."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    conn = store.connect(str(DB_PATH))
+    store.register_algorithm_version(
+        conn, ALGORITHM_VERSION, "Proportional vig-removal; confidence = |home_prob - away_prob|"
+    )
+    return conn
+
+
+conn = _get_connection()
 
 today = datetime.now(ET).date()
 active_season = store.get_active_season(conn) or default_season_year(today)
