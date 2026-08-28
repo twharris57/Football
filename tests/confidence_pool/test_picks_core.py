@@ -200,6 +200,46 @@ class TestCurrentWeek:
         assert pc.current_week(schedule, date(2027, 1, 1)) == 2
 
 
+class TestWeekDateLabels:
+    """Human date spans per week, for labeling a week selector."""
+
+    def test_single_day_week(self):
+        schedule = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+
+        assert pc.week_date_labels(schedule) == {1: "Sep 13"}
+
+    def test_multi_day_week_same_month(self):
+        schedule = pd.DataFrame(
+            [
+                _game("g1", 1, "Thursday", "20:20", gameday="2026-09-10"),
+                _game("g2", 1, "Monday", "20:15", gameday="2026-09-14"),
+            ]
+        )
+
+        assert pc.week_date_labels(schedule) == {1: "Sep 10-14"}
+
+    def test_multi_day_week_spanning_months(self):
+        schedule = pd.DataFrame(
+            [
+                _game("g1", 18, "Saturday", "16:30", gameday="2027-01-02"),
+                _game("g2", 18, "Sunday", "13:00", gameday="2027-01-03"),
+                _game("g3", 18, "Wednesday", "20:00", gameday="2026-12-30"),
+            ]
+        )
+
+        assert pc.week_date_labels(schedule) == {18: "Dec 30-Jan 3"}
+
+    def test_excludes_non_regular_season_weeks(self):
+        schedule = pd.DataFrame(
+            [
+                _game("reg", 1, "Sunday", "13:00", gameday="2026-09-13", game_type="REG"),
+                _game("playoff", 1, "Sunday", "13:00", gameday="2027-01-10", game_type="WC"),
+            ]
+        )
+
+        assert pc.week_date_labels(schedule) == {1: "Sep 13"}
+
+
 class TestWeekDeadline:
     """The pick-submission cutoff -- earliest kickoff by default, or an
     explicit override supplied by the caller (from `store.season_week_rules`,

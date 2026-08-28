@@ -85,6 +85,27 @@ class TestSeasons:
         assert season["sunday_afternoon_cutoff"] == "13:00"
 
 
+class TestKnownSeasons:
+    def test_no_data_yet_returns_empty(self, conn):
+        assert store.known_seasons(conn) == []
+
+    def test_includes_an_activated_season_even_with_no_games(self, conn):
+        store.set_active_season(conn, 2026)
+
+        assert store.known_seasons(conn) == [2026]
+
+    def test_includes_a_season_with_synced_games_even_if_never_activated(self, conn):
+        _save(conn, 2025, 1, _games_df(), _picks_df(), datetime(2025, 9, 10))
+
+        assert store.known_seasons(conn) == [2025]
+
+    def test_deduplicates_and_sorts_across_both_sources(self, conn):
+        store.set_active_season(conn, 2026)
+        _save(conn, 2025, 1, _games_df(game_id="g2"), _picks_df(game_id="g2"), datetime(2025, 9, 10))
+
+        assert store.known_seasons(conn) == [2025, 2026]
+
+
 class TestWeekRules:
     def test_unconfigured_week_has_no_rule(self, conn):
         assert store.get_week_rule(conn, 2026, 5) is None

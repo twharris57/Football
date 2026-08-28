@@ -5,7 +5,7 @@ pool's lock-in deadline. See docs/confidence-pool-web-app.md for the rules.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -27,17 +27,12 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
     except OSError as exc:
         st.error(f"Couldn't fetch the schedule from nfl_data_py: {exc}. Try reloading the page.")
         st.stop()
-    default_week = pc.current_week(schedule, today)
-
+    season_options = sorted(set(store.known_seasons(conn)) | {active_season})
     col_season, col_week = st.columns(2)
     with col_season:
-        season = int(
-            st.number_input(
-                "Season", min_value=2020, max_value=2100, value=active_season, step=1
-            )
+        season = st.selectbox(
+            "Season", options=season_options, index=season_options.index(active_season)
         )
-    with col_week:
-        week = int(st.number_input("Week", min_value=1, max_value=18, value=default_week, step=1))
 
     if season != active_season:
         try:
@@ -45,6 +40,17 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         except OSError as exc:
             st.error(f"Couldn't fetch the schedule from nfl_data_py: {exc}. Try reloading the page.")
             st.stop()
+
+    default_week = pc.current_week(schedule, today)
+    week_labels = pc.week_date_labels(schedule)
+    week_options = sorted(week_labels) or [default_week]
+    with col_week:
+        week = st.selectbox(
+            "Week",
+            options=week_options,
+            index=week_options.index(default_week) if default_week in week_options else 0,
+            format_func=lambda w: f"Week {w} ({week_labels[w]})" if w in week_labels else f"Week {w}",
+        )
 
     store.sync_game_outcomes(conn, schedule, datetime.now(pc.ET))
 
@@ -89,7 +95,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
             saved_games, saved_picks, status = store.load_week(conn, season, week)
             locked = True
 
-    st.caption(f"Pick deadline: {deadline.strftime('%a %b %d, %I:%M %p ET')}")
+    _render_deadline(deadline, now)
     if week_rule:
         st.info(
             f"Week {week} uses an early, commissioner-announced cutoff instead of "
@@ -135,6 +141,30 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         _render_picks_table(saved_games, saved_picks, team_names)
     else:
         st.info("No picks generated yet for this week — click Regenerate picks.")
+
+
+def _render_deadline(deadline: datetime, now: datetime) -> None:
+    """The pick-submission cutoff, given real visual weight instead of a
+    low-emphasis caption -- easy to miss at a glance otherwise, especially
+    for a week using an early commissioner-announced cutoff rather than
+    kickoff time. Escalates to a warning inside the last 24 hours.
+    """
+    deadline_str = deadline.strftime("%a %b %d, %I:%M %p ET")
+    remaining = deadline - now
+    if remaining <= timedelta(0):
+        st.error(f"**Pick deadline has passed:** {deadline_str}")
+    elif remaining <= timedelta(hours=24):
+        st.warning(f"**Pick deadline: {deadline_str}** — {_format_remaining(remaining)} left.")
+    else:
+        st.info(f"**Pick deadline: {deadline_str}**")
+
+
+def _format_remaining(remaining: timedelta) -> str:
+    total_minutes = max(int(remaining.total_seconds() // 60), 0)
+    hours, minutes = divmod(total_minutes, 60)
+    if hours >= 1:
+        return f"about {hours}h {minutes}m"
+    return f"about {minutes}m"
 
 
 def _full_table_height(num_rows: int) -> int:

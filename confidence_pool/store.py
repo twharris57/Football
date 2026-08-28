@@ -116,6 +116,18 @@ def get_active_season(conn: sqlite3.Connection) -> int | None:
     return int(row["season_year"]) if row else None
 
 
+def known_seasons(conn: sqlite3.Connection) -> list[int]:
+    """Every season year this app has real data for -- a row in `seasons`
+    (ever activated) or `games` (ever viewed/synced) -- for scoping the
+    Picks tab's season selector to real options instead of an arbitrary
+    year range.
+    """
+    rows = conn.execute(
+        "SELECT season_year FROM seasons UNION SELECT season_year FROM games ORDER BY season_year"
+    ).fetchall()
+    return [int(row["season_year"]) for row in rows]
+
+
 def set_active_season(conn: sqlite3.Connection, season_year: int) -> None:
     """Mark `season_year` active, clearing whichever season was active before.
 
