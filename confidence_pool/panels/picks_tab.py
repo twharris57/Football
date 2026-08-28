@@ -95,7 +95,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
             saved_games, saved_picks, status = store.load_week(conn, season, week)
             locked = True
 
-    _render_deadline(deadline, now)
+    _render_deadline(deadline, now, is_override=configured_deadline is not None)
     if week_rule:
         st.info(
             f"Week {week} uses an early, commissioner-announced cutoff instead of "
@@ -143,18 +143,26 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         st.info("No picks generated yet for this week — click Regenerate picks.")
 
 
-def _render_deadline(deadline: datetime, now: datetime) -> None:
+def _render_deadline(deadline: datetime, now: datetime, is_override: bool) -> None:
     """The pick-submission cutoff, given real visual weight instead of a
-    low-emphasis caption -- easy to miss at a glance otherwise, especially
-    for a week using an early commissioner-announced cutoff rather than
-    kickoff time. Escalates to a warning inside the last 24 hours.
+    low-emphasis caption -- easy to miss at a glance otherwise. Escalates
+    to a warning inside the last 24 hours, and to an error once passed.
+
+    `is_override` marks a week using the commissioner-announced early
+    cutoff (`season_week_rules.deadline_override`) instead of the usual
+    kickoff-derived deadline -- the case most likely to catch someone off
+    guard expecting the normal timing, so it gets its own badge and a
+    warning-level background regardless of how far off it still is.
     """
     deadline_str = deadline.strftime("%a %b %d, %I:%M %p ET")
     remaining = deadline - now
+    if is_override:
+        st.badge("Early cutoff — not the usual kickoff-based deadline", color="orange")
     if remaining <= timedelta(0):
         st.error(f"**Pick deadline has passed:** {deadline_str}")
-    elif remaining <= timedelta(hours=24):
-        st.warning(f"**Pick deadline: {deadline_str}** — {_format_remaining(remaining)} left.")
+    elif remaining <= timedelta(hours=24) or is_override:
+        suffix = f" — {_format_remaining(remaining)} left" if remaining <= timedelta(hours=24) else ""
+        st.warning(f"**Pick deadline: {deadline_str}**{suffix}")
     else:
         st.info(f"**Pick deadline: {deadline_str}**")
 
