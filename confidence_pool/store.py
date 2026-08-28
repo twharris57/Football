@@ -63,10 +63,22 @@ DEFAULT_TEAMS: dict[str, str] = {
 
 
 def connect(db_path: str) -> sqlite3.Connection:
-    """Open (creating/migrating as needed) the confidence-pool SQLite store."""
-    conn = sqlite3.connect(db_path)
+    """Open (creating/migrating as needed) the confidence-pool SQLite store.
+
+    `check_same_thread=False` -- callers (streamlit_app.py) are expected to
+    open this once via `st.cache_resource` and reuse the same connection
+    across every session's own ScriptRunner thread, not just the thread
+    that happened to create it. `busy_timeout` and WAL journaling exist so
+    a second concurrent writer waits briefly for the lock instead of
+    immediately raising `sqlite3.OperationalError: database is locked` --
+    the failure mode seen when multiple uncached connections all tried to
+    run migrations against the same file at once.
+    """
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 10000")
+    conn.execute("PRAGMA journal_mode = WAL")
     db_schema.apply_migrations(conn)
     _seed_default_teams(conn)
     return conn

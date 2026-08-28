@@ -16,9 +16,15 @@ COPY . .
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
 
+# --create-home/--home-dir: without a real home directory, Streamlit's
+# usage-stats machine-id write (~/.streamlit/...) fails at container
+# startup with PermissionError, since python:3.12-slim's /home is
+# root-owned and the "app" user otherwise has nowhere writable to resolve
+# $HOME to.
 RUN groupadd --system --gid 1000 app \
- && useradd --system --uid 1000 --gid app app \
+ && useradd --system --uid 1000 --gid app --create-home --home-dir /home/app app \
  && mkdir -p /app/.cache && chown -R app:app /app
+ENV HOME=/home/app
 USER app
 
 EXPOSE 8501
