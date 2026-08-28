@@ -115,17 +115,6 @@ Empty right now — nothing blocking.
   against — needs `CP-3` (join snapshots against outcomes) as the
   remaining prerequisite; raw-input/algorithm-version storage is done
   (`algorithm_versions`, Phase 1 schema redesign).
-- [ ] **CP-14: Replace the Picks tab's season/week `+`/`-` number inputs
-  with dropdowns, scoped to real available values, with better
-  defaults** (user, PR #46 review, 2026-08-23). Season should offer only
-  seasons that actually exist in `seasons`/have data, not an
-  arbitrary 2020-2100 range; week should offer only that season's real
-  weeks. Default to the current season/week during the season; in the
-  off-season, default to the last week of the previous season if the new
-  season hasn't been opened yet (see `CP-17`), or the first week of the
-  new season once it has. Also label weeks with their date span (e.g.
-  "Week 1 (Sept 13-14)") instead of a bare number, so it's clear what
-  span of the calendar a week actually covers.
 - [ ] **CP-15: Flag when the deadline auto-lock's "one final computed"
   fallback snapshot was generated well after the deadline — potentially
   after some of that week's games have already kicked off or
@@ -154,19 +143,6 @@ Empty right now — nothing blocking.
   `weekly_games`, including for historical weeks, not just the
   currently-generated one (resolved by the Phase 1 schema redesign — see
   `docs/confidence-pool-data-model.md`).
-- [ ] **CP-17: Replace the Settings tab's season number-input + "Set as
-  active season" button with a readonly display of the current season
-  plus an "Open {year} season" button** (user, PR #46 review,
-  2026-08-23). The season *year* itself is informational, not something
-  that needs free-form editing — a readonly display is enough. The real
-  action is opening the next season once the current one ends; a button
-  that only enables once that's true (rather than a bare number input
-  accepting anything 2020-2100) matches the actual workflow and prevents
-  accidentally activating the wrong year. Once this exists reliably,
-  revisit whether `picks_core.default_season_year()`'s date-based
-  guessing fallback is still needed as anything more than a rare
-  last-resort — `streamlit_app.py` already prefers `seasons.active`
-  over it, this would just make that flag more consistently populated.
 - [ ] **CP-18: Show a semantic version number alongside the git-SHA
   build indicator** (user, PR #46 review, 2026-08-23). The footer
   currently shows only `GIT_SHA` (see `confidence_pool/Dockerfile`) —
@@ -178,14 +154,6 @@ Empty right now — nothing blocking.
   whether that convention gets adopted for real, and whether it applies
   to just this app or the dynasty app too, before wiring a version string
   into the footer.
-- [ ] **CP-27: Make the pick-submission deadline more prominent on the
-  Picks tab** (user, 2026-08-27). Currently rendered as a plain
-  `st.caption` (`panels/picks_tab.py`) — easy to miss at a glance,
-  especially for a week using an early commissioner-announced cutoff
-  (`week_rule`) rather than kickoff time. Give it real visual weight —
-  e.g. a header-level element, a countdown, or a warning-style callout
-  once the deadline is close — rather than the same low-emphasis caption
-  style used for incidental notes elsewhere on the tab.
 - [ ] **CP-26: Let the Picks tab UI switch between viewing a week's
   `'first'` and `'current'` snapshot** (user, 2026-08-24, flagged for a
   future feature branch — not this one). Now that both are actually
