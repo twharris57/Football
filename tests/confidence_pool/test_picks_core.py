@@ -550,6 +550,40 @@ class TestResolveWeekLock:
         assert "g1" not in outcome.warning  # matches on team names, not game_id
         assert "BBB @ AAA" in outcome.warning
 
+    def test_pending_odds_warning_also_names_a_different_game_that_already_started(self):
+        # The pending-odds game blocking the lock isn't necessarily
+        # the only problem -- if a *different* included game has already
+        # kicked off, that's the more consequential fact (its own odds may
+        # never post either), and the old warning never mentioned it.
+        auto_games = pd.DataFrame(
+            [
+                _game(
+                    "no_odds", 1, "Monday", "20:15", home_team="CCC", away_team="DDD",
+                    home_moneyline=None, away_moneyline=None,
+                ),
+                _game("started", 1, "Sunday", "13:00", home_team="AAA", away_team="BBB"),
+            ]
+        )
+        empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 16, 0, tzinfo=pc.ET)  # after the 13:00 kickoff, before 20:15
+
+        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty, now)
+
+        assert outcome.locked is False
+        assert "DDD @ CCC" in outcome.warning  # the pending-odds game
+        assert "BBB @ AAA" in outcome.warning  # the already-started game
+
+    def test_pending_odds_warning_omits_the_started_note_when_nothing_has_started(self):
+        auto_games = pd.DataFrame(
+            [_game("g1", 1, "Sunday", "13:00", home_moneyline=None, away_moneyline=None)]
+        )
+        empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 12, 0, tzinfo=pc.ET)  # before the 13:00 kickoff
+
+        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty, now)
+
+        assert "Kickoff has already passed" not in outcome.warning
+
     def test_tolerates_an_included_game_with_an_unset_gametime(self):
         # An unfinalized kickoff (possible via 'all_games' letting a
         # not-yet-timed game through) must not crash the already-started
