@@ -45,14 +45,16 @@ else about its content changed, so a file never sits indefinitely at an
 old/missing stamp once the current code has read it.
 
 `draft_snapshots.py` files specifically are also swept for orphans as a
-side effect of every `reconcile_snapshot()` call: any
-`draft_snapshots_*.json` file older than `ORPHAN_AGE_DAYS` and not the
-draft currently being reconciled gets renamed with an `.orphaned` suffix (a
-draft's own file stops being written to once the draft ends, so its mtime
-is a reasonable proxy for "this draft is over"). This is a soft,
-reversible marker, not deletion — actual removal of `.orphaned` files is
-still open, tracked in `.claude/PROJECT_PLAN_DYNASTY.md`'s Deferred/low
-priority section.
+side effect of every `reconcile_snapshot()` call, in two phases. First,
+any file already carrying an `.orphaned` suffix from an earlier call is
+deleted outright. Then, any remaining `draft_snapshots_*.json` file older
+than `ORPHAN_AGE_DAYS` and not the draft currently being reconciled gets
+renamed with an `.orphaned` suffix (a draft's own file stops being written
+to once the draft ends, so its mtime is a reasonable proxy for "this draft
+is over"). Running the delete pass before the mark pass means a file
+marked orphaned on one call is never also deleted on that same call — it
+always survives at least one full refresh cycle as a soft, reversible,
+visibly-inspectable marker before permanent removal on a later one.
 
 ## The conceptual split: import vs. cached-derived vs. cheap-derived vs. on-demand
 

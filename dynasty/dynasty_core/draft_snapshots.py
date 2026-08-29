@@ -16,7 +16,8 @@ deliberately independent of force_full_refresh/force_scoring_refresh, since
 those are about market-data freshness and shouldn't silently wipe this
 mid-draft. Once a season's draft is over, its file is simply never read
 again (next season gets a new draft_id from Sleeper) - see
-_mark_orphaned_snapshots for how those old files are handled.
+_mark_orphaned_snapshots/_delete_orphaned_snapshots for how those old
+files are marked and eventually removed.
 """
 
 from __future__ import annotations
@@ -56,16 +57,19 @@ def _snapshot_path(draft_id: str) -> Any:
 
 
 def _mark_orphaned_snapshots(current_draft_id: str) -> None:
-    """Rename (never delete) old draft_snapshots_*.json files that look
-    orphaned - older than ORPHAN_AGE_DAYS and not the draft currently being
-    reconciled - by appending an `.orphaned` suffix.
+    """Rename old draft_snapshots_*.json files that look orphaned - older
+    than ORPHAN_AGE_DAYS and not the draft currently being reconciled - by
+    appending an `.orphaned` suffix.
 
-    Deliberately a soft, reversible marking step rather than deletion
-    (DL-8, .claude/PROJECT_PLAN_DYNASTY.md): actually removing these files is a
-    deferred follow-up, to be added once this marking step has been
-    confirmed correct against real data, not assumed correct from launch.
-    A `.orphaned` file no longer matches the glob below, so a later sweep
-    leaves it alone rather than re-processing it every refresh.
+    A soft, reversible marking step, not deletion itself - actual removal
+    is `_delete_orphaned_snapshots()`'s job, called before this one on
+    every `reconcile_snapshot()` call so a file marked orphaned in this
+    call is never also deleted in the same call; it survives to be picked
+    up by a later refresh's delete pass instead, preserving at least one
+    full refresh cycle of visibility between marking and permanent
+    removal. A `.orphaned` file no longer matches the glob below, so a
+    later mark sweep leaves it alone rather than re-processing it every
+    refresh.
     """
     if not CACHE_DIR.exists():
         return
@@ -79,6 +83,25 @@ def _mark_orphaned_snapshots(current_draft_id: str) -> None:
         marked_path = path.with_name(path.name + ".orphaned")
         path.rename(marked_path)
         logger.info("Marked orphaned draft snapshot for future cleanup: %s -> %s", path.name, marked_path.name)
+
+
+def _delete_orphaned_snapshots() -> None:
+    """Permanently delete every `.orphaned`-marked snapshot file already on disk.
+
+    Phase 2 of the two-phase orphan cleanup (see `_mark_orphaned_snapshots`)
+    - added once Phase 1's marking step was confirmed correct against real
+    production data, rather than assumed correct from launch. Called
+    before `_mark_orphaned_snapshots` in `reconcile_snapshot()`, not after,
+    so this only ever deletes a file that was already `.orphaned` coming
+    into the current refresh - never one this same call is about to mark -
+    which is what gives a human at least one full refresh cycle to notice
+    and rename a wrongly-marked file back before it's gone for good.
+    """
+    if not CACHE_DIR.exists():
+        return
+    for path in CACHE_DIR.glob("draft_snapshots_*.json.orphaned"):
+        path.unlink()
+        logger.info("Deleted orphaned draft snapshot: %s", path.name)
 
 
 def _reconcile(
@@ -137,6 +160,7 @@ def reconcile_snapshot(
     real_picks_by_overall: dict[int, str],
 ) -> dict[str, Any]:
     """Load, reconcile, persist-if-changed, return the updated snapshot."""
+    _delete_orphaned_snapshots()
     _mark_orphaned_snapshots(draft_id)
     path = _snapshot_path(draft_id)
     loaded = load_or_seed(

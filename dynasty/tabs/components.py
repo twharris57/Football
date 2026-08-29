@@ -41,9 +41,10 @@ GLOSSARY: dict[str, tuple[str, str]] = {
         "FantasyCalc's market value, corrected for this league's real "
         "scoring rules (6pt passing TDs, TE reception premium, this "
         "league's real interception/yardage rates, and more) - see the "
-        "Draft Plan tab's methodology for the full correction. Shown "
-        "alongside the raw, uncorrected Value for comparison, not in place "
-        "of it.",
+        "Draft Plan tab's methodology for the full correction. Where both "
+        "are shown (e.g. the Roster tab), the raw, uncorrected Value sits "
+        "right alongside it for comparison; the rookie big board shows "
+        "only Adj. Value, since it's what determines Rank there.",
     ),
 }
 

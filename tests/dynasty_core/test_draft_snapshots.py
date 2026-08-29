@@ -7,7 +7,14 @@ import os
 import time
 
 from dynasty_core import draft_snapshots as ds
-from dynasty_core.draft_snapshots import AMBIGUOUS, _mark_orphaned_snapshots, _reconcile, _snapshot_path, reconcile_snapshot
+from dynasty_core.draft_snapshots import (
+    AMBIGUOUS,
+    _delete_orphaned_snapshots,
+    _mark_orphaned_snapshots,
+    _reconcile,
+    _snapshot_path,
+    reconcile_snapshot,
+)
 from dynasty_core.picks import DraftPickSlot
 
 EMPTY_SNAPSHOT = {"confirmed_through_pick": 0, "confirmed_roster": None, "confirmed_drops": {}}
@@ -204,3 +211,49 @@ class TestMarkOrphanedSnapshots:
 
         assert not old_path.exists()
         assert (tmp_path / "draft_snapshots_old_draft.json.orphaned").exists()
+
+
+class TestDeleteOrphanedSnapshots:
+    def test_deletes_an_already_orphaned_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        orphaned_path = tmp_path / "draft_snapshots_old_draft.json.orphaned"
+        orphaned_path.write_text("{}", encoding="utf-8")
+
+        _delete_orphaned_snapshots()
+
+        assert not orphaned_path.exists()
+
+    def test_leaves_a_not_yet_orphaned_file_alone(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        active_path = _snapshot_path("current_draft")
+        active_path.write_text("{}", encoding="utf-8")
+
+        _delete_orphaned_snapshots()
+
+        assert active_path.exists()
+
+    def test_does_nothing_when_cache_dir_does_not_exist(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path / "does_not_exist")
+
+        _delete_orphaned_snapshots()  # must not raise
+
+    def test_a_file_marked_orphaned_this_call_is_not_deleted_until_a_later_one(self, tmp_path, monkeypatch):
+        # Phase 1 (mark) and Phase 2 (delete) must stay at least one full
+        # refresh cycle apart - a file that just became orphaned this call
+        # should still exist when the call returns, so a human has a real
+        # window to notice and rename it back before it's gone for good.
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        old_path = _snapshot_path("old_draft")
+        old_path.write_text("{}", encoding="utf-8")
+        _age_file(old_path, ds.ORPHAN_AGE_DAYS + 1)
+        orphaned_path = tmp_path / "draft_snapshots_old_draft.json.orphaned"
+
+        reconcile_snapshot(
+            "current_draft", own_picks(1), current_pick_no=2, current_roster_ids=["a"], real_picks_by_overall={}
+        )
+        assert orphaned_path.exists()  # marked, not deleted, on this call
+
+        reconcile_snapshot(
+            "current_draft", own_picks(1), current_pick_no=2, current_roster_ids=["a"], real_picks_by_overall={}
+        )
+        assert not orphaned_path.exists()  # deleted on the following call
