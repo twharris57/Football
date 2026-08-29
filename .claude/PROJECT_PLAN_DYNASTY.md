@@ -70,18 +70,7 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-`feature/faab-qb-broadening-fix` (PR #62), reviewed 2026-08-29.
-
-Empty right now — `RT-29` is fixed: `nearest_comparable_bids()`'s
-broadened ("every position") pool now excludes QB rows whenever the
-candidate itself isn't QB (`sample[sample["position"] != "QB"]`), closing
-the reverse direction of the contamination the branch's own docstring had
-already named but only partly guarded against. Two new tests
-(`test_qb_row_is_excluded_from_a_non_qb_candidates_broadened_pool`,
-`test_non_qb_candidate_never_gets_a_qb_bid_folded_into_its_guidance`)
-cover a non-QB candidate against a sample containing a nearest-by-value QB
-row. See `valuation_principles.md`'s extended note under the RT-28 entry
-for the durable lesson.
+Empty right now — cleared after PR #62 merged.
 
 ## Now — blocking
 
