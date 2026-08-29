@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-29`, `VA-7`, `CQ-10`, `DL-9`.
+below): `NB-2`, `RT-29`, `VA-8`, `CQ-11`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -383,8 +383,72 @@ cutoff.
   ties are rare enough in a points-based scoring format that this hasn't
   mattered in practice — low priority, but a real accuracy gap if it
   ever comes up. Fix: give `wins + 0.5 * ties` credit in the numerator.
+- [ ] **VA-8: `free_agent_board()` doesn't filter to a positive marginal
+  value, contradicting two other comments that assume it does** (assistant
+  valuation review, 2026-08-29) — `marginal_value.py`'s `free_agent_board()`
+  returns `rank_by_marginal_value()`'s top `top_n` (default 25) candidates
+  sorted by marginal value with no floor at zero, so when a roster has no
+  free agent worth adding at all (a deep/strong position, or simply a thin
+  free-agent pool), the board still shows 25 rows — the top ones being
+  whichever candidates lose the *least* value, not gain any — each still
+  paired with a "Suggested Drop" the same way a genuinely good add is. This
+  is the one place in the pipeline that doesn't apply the "worth surfacing
+  at all" floor this project established everywhere else the exact same
+  `rank_by_marginal_value()` output is consumed:
+  `build_pickup_alerts()` (`state.py`) filters to a positive rounded value,
+  `leaguewide_trade_candidates()`/`suggested_trades()` (`trade.py`) both
+  filter to positive, and `summary.py`'s `_free_agent_lines()` re-filters
+  `free_agent_board`'s own output to positive before it enters the
+  Attention Digest — meaning even this project's own digest doesn't trust
+  the raw board's ranking to mean "worth it." Worse, two of those call
+  sites' docstrings *assert* `free_agent_board()` already filters/rounds
+  this way (`state.py`'s `build_pickup_alerts()`: "matching
+  `free_agent_board()`'s own round-then-filter order"; `trade.py`'s
+  `leaguewide_trade_candidates()`: "matches `free_agent_board`/
+  `pickup_alerts`' existing 'worth surfacing at all' convention") — neither
+  claim is true of the function as it exists today (confirmed via `git log
+  -S` — no such filter has ever been in `free_agent_board()`'s history).
+  The board is rendered directly and unfiltered on the Roster tab
+  (`roster_tab.py`'s `_render_free_agents()`), the one place a user would
+  actually pick a candidate to check FAAB bid guidance against, so a
+  negative-marginal-value row can appear at the top of the table with a
+  same-format "Suggested Drop" as a real recommendation, distinguishable
+  only by reading the numeric `Marginal Value` column carefully. Fix:
+  either add the same `marginal_value > 0` floor to `free_agent_board()`
+  itself (matching every other consumer of this ranking), or — if showing
+  the full ranked board unfiltered is actually the intended design (the
+  rookie big board does this deliberately) — correct the two false
+  docstring claims and make the Roster tab UI visually distinguish a
+  negative-value row rather than relying on the reader to notice the sign.
 
 ## Code quality, tests & UX polish
+
+- [ ] **CQ-11: Closed backlog-tag citations linger in code comments/docstrings,
+  the same pattern already fixed in `docs/*.md` but not extended to `.py`
+  files** (assistant valuation review, 2026-08-29) — the most recent review
+  (`RT-5`/`CQ-10`, 2026-08-29) found and removed dangling `RT-<n>` citations
+  from `docs/dynasty-draft-web-app.md`/`docs/rookie-draft-big-board.md` and
+  wrote the fix up as a durable rule in `valuation_principles.md` ("Docs and
+  comments cite durable explanations, not ephemeral backlog IDs") — but that
+  rule's own fix pass never swept the code itself. A grep of `dynasty/` for
+  `RT-<n>`/`NB-<n>` today turns up eleven already-closed tags still cited as
+  feature labels inside docstrings/comments: `RT-9`/`RT-20` (`snapshot_io.py`),
+  `RT-10` (`marginal_value.py`, `state.py` x2), `RT-12` (`trade.py`), `RT-14`
+  (`trade.py`, `trade_tab.py`), `RT-15` (`trade.py` x3, `state.py` x2),
+  `RT-17` (`marginal_value.py`), `RT-18` (`trade.py` x3), `RT-24`
+  (`trade_tab.py` x2), `RT-27` (`trade.py` x2, `state.py` x2,
+  `team_analysis.py`), `NB-2` (`streamlit_app.py`). None of these are the
+  *sole* justification for a design choice (each comment's real reasoning is
+  written out in prose alongside the tag, so `code_conventions.md`'s literal
+  bar is met) — but per this project's own now-established rule, a reader
+  who follows one of these into `PROJECT_PLAN_DYNASTY.md` looking for
+  context finds nothing, since every one of these items has already been
+  completed and deleted per that file's own convention. Low priority
+  (cosmetic, no behavioral risk) — worth a pass next time any of these
+  files is touched for another reason, replacing each tag with the durable
+  feature name it stands in for (e.g. "RT-15" → "Suggested Trades", already
+  how most of these docstrings refer to the feature on first mention
+  anyway) rather than a sweep of its own.
 
 - [ ] **CQ-1: Broader test coverage.** `tests/dynasty_core/` and
   `tests/test_player_scoring.py` cover the core ranking/lineup/valuation
