@@ -2,8 +2,7 @@
 
 Pulls league/draft/roster state from Sleeper plus dynasty values from
 FantasyCalc, and computes the rookie draft big board and roster-needs
-summary. Used by both the CLI (`rookie_draft.py`) and the Streamlit
-dashboard (`streamlit_app.py`) so the two stay in sync on one code path.
+summary. Used by the Streamlit dashboard (`streamlit_app.py`).
 
 Split into submodules by concern (pick ownership, player pools, roster
 needs, power/timeline, capacity, roster value, byes/handcuffs, lineup,

@@ -397,20 +397,6 @@ cutoff.
 
 ## Code quality, tests & UX polish
 
-- [ ] **CQ-1: Broader test coverage.** `tests/dynasty_core/` and
-  `tests/test_player_scoring.py` cover the core ranking/lineup/valuation
-  logic, but `sleeper_api.py`/`fantasycalc_api.py` (the retry/session logic
-  and cache-TTL behavior itself) and the CLI's error-handling loop still
-  have none. Worth building out now that draft-week time pressure is off.
-- [ ] **CQ-2: Better logging solution than `print()`** (user-flagged 2026-07-26) —
-  `rookie_draft.py`'s CLI output is all `print()` today; `python_guidelines.md`
-  calls for the standard `logging` module instead (levels, no `print()` for
-  diagnostics). Worth a dedicated look at how much of the CLI's *report*
-  output (as opposed to actual diagnostics/warnings, which already use
-  `logger` in `dynasty_core.py`/`player_scoring.py`) should even move to
-  `logging` versus staying as direct terminal output, since the report is
-  the CLI's actual product, not a diagnostic — evaluate in its own feature
-  branch rather than folding into unrelated work.
 - [ ] **CQ-5: Represent draft-pick identity as structured fields at ingestion, not a
   display string re-parsed downstream** (user-suggested, 2026-08-07, filed while
   reviewing the RT-18 pick-callout season bug above) — `pick_trade_values()` already

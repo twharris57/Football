@@ -9,9 +9,8 @@ a Sleeper dynasty fantasy football team.
   `confidence_pool/football_enhanced.py`.
 - **Dynasty league tools** (`dynasty/`) — pulls league data from Sleeper and
   FantasyCalc to help with rookie drafts, roster/trade decisions, and a
-  league-wide power/timeline read during a multi-year rebuild. Available as
-  a CLI (`dynasty/rookie_draft.py`) and a Streamlit web dashboard
-  (`dynasty/streamlit_app.py`), deployable via Docker.
+  league-wide power/timeline read during a multi-year rebuild. A Streamlit
+  web dashboard (`dynasty/streamlit_app.py`), deployable via Docker.
 
 ## Setup
 

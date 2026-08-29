@@ -46,7 +46,7 @@ class TestPlayerStatusDetails:
 
 
 class TestPlayerStatusFlags:
-    """Compact icon-only summary of player_status_details, for plain-text display (the CLI)."""
+    """Compact icon-only summary of player_status_details, as a single string."""
 
     def test_icons_only_no_descriptions(self):
         info = {"years_exp": 0, "injury_status": "Questionable"}

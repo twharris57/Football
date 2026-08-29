@@ -92,8 +92,7 @@ in the other doc). Computed for the whole league at once in `gather_state`
 above. Shown as `rank`/`league_size` (e.g. "3 of 12") rather than the raw
 z-score — reads better cold, with the raw score one hover away via
 `help=`. Pre-season, the win % caption reads "no games played yet" instead
-of a misleading flat 50%. The CLI mirrors this with a `--- Team timeline
----` line for the user's own team.
+of a misleading flat 50%.
 
 A "❓ Glossary" button next to the page title opens an `st.dialog` (`GLOSSARY`
 in `tabs/components.py`) defining VOR, power score, and adj. value.
@@ -215,8 +214,8 @@ is the user's own edit to the selection rather than a background refresh.
 Each round's "Backup options" table defaults to the top
 `MAX_DISPLAYED_ALTERNATES` (2), but `rank_by_marginal_value` already scores
 every candidate, so the full ranked list is exposed via a `st.selectbox`
-per round at no extra cost (`Name (POS) — marginal value`, web-only — the
-CLI is unchanged). The top alternates' displayed value comes from the
+per round at no extra cost (`Name (POS) — marginal value`). The top
+alternates' displayed value comes from the
 cheap `recommend_drop()` heuristic used during ranking; selecting a
 candidate from the full list instead triggers a real
 `dynasty_core.best_position_relevant_drop()` search on-demand, restricted
@@ -262,8 +261,8 @@ release-tag prefix rather than sharing one number.
 Streamlit reruns the whole script top-to-bottom on any widget interaction,
 so a naive port would refetch on every unrelated click. `st.cache_data` is
 keyed on an explicit `refresh_token` in `st.session_state`, set only by
-the Refresh button or the Advanced-refresh "Apply" button — mirroring the
-CLI's Enter-vs-`f` prompt. A button/checkbox's own value can't be the cache
+the Refresh button or the Advanced-refresh "Apply" button. A
+button/checkbox's own value can't be the cache
 key directly — it's only current on the exact run it was clicked, so a
 later rerun (e.g. opening an expander) would see a stale/default value and
 get a different key, silently missing cache and re-fetching for no reason.
@@ -332,7 +331,7 @@ also sets `ttl="1h"` as a backstop, so a long-lived NAS process can't
 accumulate an unbounded number of cache entries with no ttl to evict them.
 
 Refresh is always manual — there is no polling or background auto-refresh
-anywhere in this app or the CLI. A sidebar caption ("Last refreshed:
+anywhere in this app. A sidebar caption ("Last refreshed:
 HH:MM:SS") makes that visible: `load_state()` stamps `state["loaded_at"]`
 with `dt.datetime.now()` *inside* the `@st.cache_data`-wrapped function, so
 it's frozen at the moment `gather_state()` actually ran and reused verbatim
@@ -361,13 +360,10 @@ concerns instead of bundling them behind one "force full refresh" button:
 Whenever byes, handcuffs, or the scoring multipliers silently fall back to
 an empty/default result (a fetch failure, non-fatal by design — see
 `docs/rookie-draft-big-board.md`), `gather_state` returns a
-`data_warnings` list, surfaced as `st.warning`/CLI `WARNING:` lines.
+`data_warnings` list, surfaced as `st.warning` lines.
 
 Network/parsing errors surface as `st.error` with a retry hint instead of a
-raw traceback — this needs to stay usable on a phone mid-draft. The CLI's
-own refresh loop mirrors this: it catches `ValueError`/`TypeError` (a bad
-`--league-id`/typo'd `--username`) with a clean message and exit, rather
-than a traceback or an infinite retry loop that can't fix a bad input.
+raw traceback — this needs to stay usable on a phone mid-draft.
 
 A connectivity failure names which of the two upstream services actually
 failed, instead of one generic message that's true either way — real on
@@ -375,8 +371,8 @@ draft day, when everyone hits both unauthenticated public APIs at once.
 `gather_state()` wraps its Sleeper calls and its one FantasyCalc call in
 their own `try`/`except requests.RequestException`, re-raising with a
 `"Couldn't reach Sleeper: ..."` / `"Couldn't reach FantasyCalc: ..."`
-prefix — same exception type, so the CLI/Streamlit `except
-requests.RequestException` handlers didn't need to change. Covered by
+prefix — same exception type, so the Streamlit `except
+requests.RequestException` handler didn't need to change. Covered by
 `tests/dynasty_core/test_state.py`'s `TestGatherStateConnectivityErrors`, which
 monkeypatches `sleeper_api`/`fantasycalc_api` directly — the one place in
 that test suite `testing.md`'s "mock only external services you do not
@@ -401,8 +397,7 @@ Conventions applied consistently across every tab:
   Needs' `pos` → "Pos").
 - **Decimal precision capped at 2 digits, display-only** — `cols()` checks
   each column's dtype and applies `NumberColumn(format="%.2f")` to floats
-  uniformly (raw `adj_value` routinely carries 6+ digits). The CLI mirrors
-  this via `to_string(float_format=...)`.
+  uniformly (raw `adj_value` routinely carries 6+ digits).
 - **Per-cell hover tooltips need custom HTML** — `column_config`'s `help`
   only tooltips column headers, not cells. Roster Value Analysis's
   `status` icons need per-cell detail (the actual `injury_status` word),
@@ -411,22 +406,6 @@ Conventions applied consistently across every tab:
   applying the same 2-decimal cap manually since it bypasses `cols()`.
 - **Methodology text lives in a closed "How this works" expander**, not a
   bare caption — keeps data above the fold on mobile.
-
-## CLI (`dynasty/rookie_draft.py`)
-
-Thin wrapper: `print_report()` renders the same `gather_state()` output as
-plain text, `main()` adds the interactive Enter/`f`/`q` refresh loop. Kept
-in full parity with the web app deliberately — it's the tested fallback if
-Docker or the NAS has a problem on draft day.
-
-Every `DataFrame.to_string()` call passes `float_format=DISPLAY_FLOAT_FORMAT`
-(`"{:.2f}".format`) — pandas' own default (`display.precision`, 6 digits)
-otherwise prints raw values straight from the underlying computation.
-Display-only: `float_format` is a formatting callback for `to_string()`'s
-own output, not something that touches the DataFrame it's called on, so
-nothing downstream (tests, further computation) is affected. Same cap and
-reasoning as the web app's `cols()` (see above), applied uniformly rather
-than per-column.
 
 ## Docker + CI/CD
 
@@ -465,13 +444,14 @@ new one:
 a mounted `Retry` adapter (3 retries, exponential backoff, retrying only
 GET and only on connection errors/429/5xx) instead of a bare `requests.get`
 — draft day means everyone hits these APIs at once, so a transient hiccup
-shouldn't be a hard failure. The CLI's interactive loop wraps
-`gather_state()` in a try/except: a failure prints an error and offers
-retry/quit instead of crashing the whole session.
+shouldn't be a hard failure. `tests/test_sleeper_api.py`/
+`tests/test_fantasycalc_api.py` cover this retry/backoff configuration and
+each client's disk-cache TTL behavior directly (`_session.get`
+monkeypatched, no real network calls).
 
-`.github/workflows/ci.yml` runs `tests/dynasty_core/` and
-`tests/test_player_scoring.py` on every PR to `main`. See
-`docs/rookie-draft-big-board.md` for what's actually covered.
+`.github/workflows/ci.yml` runs the whole `tests/` suite on every PR to
+`main`. See `docs/rookie-draft-big-board.md` for what `tests/dynasty_core/`
+specifically covers.
 
 ### Verified before merge
 

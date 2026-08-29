@@ -77,8 +77,8 @@ def team_power_timeline_scores(
     `_shrunk_win_pct`, so a 1-0/0-1 start doesn't swing the score as hard as
     a settled record does) — each z-scored across the league (population
     std, `ddof=0`) and averaged into `power_score`. The raw, unshrunk
-    `win_pct` is exposed separately for display (`rookie_draft.py`/
-    `streamlit_app.py` print it verbatim next to a literal "Win %" label,
+    `win_pct` is exposed separately for display (`streamlit_app.py` prints
+    it verbatim next to a literal "Win %" label,
     which must show the real record, not the statistical prior fed to the
     score — see `valuation_principles.md`'s "a field used as both an
     internal score input and a user-facing label needs two names" rule).
