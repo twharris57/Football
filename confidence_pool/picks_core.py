@@ -170,7 +170,7 @@ def select_games(
       have excluded.
 
     A game whose `gametime` isn't finalized yet in the schedule data is
-    never a crash (CP-35), but the two rules resolve "unknown" oppositely,
+    never a crash, but the two rules resolve "unknown" oppositely,
     matching what each one's own no-leak guarantee actually needs:
     `'standard'` excludes it (an unverifiable window match defaults to
     "don't leak, don't include"), while `'all_games'` includes it (its
@@ -188,7 +188,7 @@ def select_games(
         # game's gametime is finalized yet -- most likely for a
         # late-season, flex-scheduling-eligible game) must not crash the
         # whole week's comparison -- _try_kickoff_datetime returns None
-        # for that game instead of raising (CP-35).
+        # for that game instead of raising.
         return pd.Series(
             [_try_kickoff_datetime(row["gameday"], row["gametime"]) for _, row in week_games.iterrows()],
             index=week_games.index,
@@ -343,7 +343,7 @@ def kickoff_datetime(gameday: str, gametime: str) -> datetime:
 def _try_kickoff_datetime(gameday: str, gametime: str | None) -> datetime | None:
     """`kickoff_datetime`, tolerant of a not-yet-finalized `gametime` --
     `None` instead of raising, so one game's unknown kickoff doesn't crash
-    a comparison across its whole week (CP-35). A `None` result means
+    a comparison across its whole week. A `None` result means
     "kickoff unknown," never "kicks off at the start of time": it compares
     as `False` against any window/deadline check (a `None`/`NaT` value is
     never `>=` or `<=` anything), so it naturally excludes itself from a
@@ -370,7 +370,7 @@ def week_deadline(
     (by looking up `season_week_rules` for this week), not this function.
 
     Never parses a kickoff when `configured_deadline` already answers the
-    question (CP-35) -- `games` can still include a game whose kickoff
+    question -- `games` can still include a game whose kickoff
     isn't finalized yet (`select_games`'s `'all_games'` rule lets one
     through deliberately, see its docstring), and that game's unknown
     gametime has no bearing on an already-known configured deadline. When
@@ -411,7 +411,7 @@ def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
     Comparing whole calendar days, not exact hours, since "Thursday" vs.
     "the following Wednesday" is the distinction that actually matters here.
 
-    A game with an unfinalized kickoff (CP-35) is excluded from the
+    A game with an unfinalized kickoff is excluded from the
     earliest-kickoff computation rather than crashing it; `False` if that
     leaves no known kickoff to compare against, same as the "no games at
     all" case -- there's nothing yet to call a first look at.
@@ -468,7 +468,7 @@ def resolve_week_lock(
     data to fall back to, and leaving the week unresolved forever would be
     worse than locking with a caveat. This can't happen on the preferred,
     prior-snapshot path above, since that path never recomputes odds. An
-    included game with an unfinalized kickoff (CP-35) is treated as "not
+    included game with an unfinalized kickoff is treated as "not
     yet started" for this warning rather than crashing on it -- there's no
     way to confirm it started without a known kickoff time.
 
