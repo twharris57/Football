@@ -714,16 +714,23 @@ candidates.
   a partial exception — Sleeper's own weekly projections presumably
   reflect official injury designations to whatever degree Sleeper itself
   accounts for them, but this app doesn't verify or model that directly.
-- The "This week's projection" mode's scoring dot product only covers
-  ordinary counting stats shared between Sleeper's projections and this
-  league's `scoring_settings` directly by key name; `bonus_rec_te` (TE
-  premium) is handled as an explicit position-conditional exception (see
-  `valuation_principles.md`'s "generic stat-vocabulary dot product" rule)
-  since it's a scoring weight, not a raw stat category Sleeper's global
-  (non-league-scoped) projections endpoint could ever emit directly.
-  Whether other threshold/long-play bonus categories this league scores
-  (`rush_fd`, `rec_fd`, `*_40p`/`*_50p`) are actually present in Sleeper's
-  projections is unverified (`.claude/PROJECT_PLAN_DYNASTY.md`'s `VA-7`).
+- The "This week's projection" mode's scoring dot product covers ordinary
+  counting stats shared between Sleeper's projections and this league's
+  `scoring_settings` directly by key name, including the threshold/long-play
+  categories this league scores (`rush_fd`, `rec_fd`, `rush_40p`, `rec_40p`,
+  `pass_cmp_40p`) - confirmed present in a live payload check, 2026-08-28.
+  `bonus_rec_te` (TE premium) is also emitted directly by Sleeper, scoped
+  correctly to TEs - the earlier assumption that a global, non-league-scoped
+  endpoint could never emit a position-conditional weight as its own key
+  turned out to be wrong; a small explicit fallback still derives it from
+  `rec` for the rare TE projection that doesn't carry a usable value (see
+  `valuation_principles.md`'s "generic stat-vocabulary dot product" rule for
+  the full history). **Confirmed absent**, with no fallback able to recover
+  it: `pass_td_40p`, `pass_td_50p`, `rush_td_40p`, `rush_td_50p`,
+  `rec_td_40p`, `rec_td_50p` - Sleeper's weekly projections carry no
+  per-play-length data, so any player projected to score a long touchdown
+  has those points systematically missing from "This week's projection"
+  mode, permanently, for as long as this endpoint's payload shape holds.
 - Handcuffs are RB-only — the standard fantasy usage of the term.
 - `free_agent_board` treats every candidate as active-roster-only
   (`taxi_eligible=False`) and shows FAAB budget for context without any
@@ -768,4 +775,4 @@ is a deliberate decision, not a silent bug:
 | `SUGGESTED_TRADE_SCAN_TOP_K = 15` | `leaguewide_trade_candidates`/`suggested_trades` (`dynasty_core/trade.py`) | How many of Stage 1's cheap, affordability-filtered leaguewide candidates get Stage 2's expensive real search — bounds Suggested Trades' scan cost to a constant regardless of league size, sized to the same order of magnitude as the original single-partner whole-roster scan concept | Raise if 15 candidates routinely produce fewer than 3 viable offers in practice; lower if a scan feels slow |
 | A historical winning bid's comparable value is the player's *current* `adj_value`, not their value at the time of the bid | `won_bid_sample` (`dynasty_core/waiver_bids.py`) | Not reconstructable without historical roster/value snapshots this project doesn't keep. Reasonable for the short in-season windows FAAB guidance covers today; gets progressively less accurate the further back a comparable bid is from, which is exactly why extending this to prior seasons (`RT-25`) needs a recency-aware sample, not a flat pool | Revisit if bid guidance ever extends beyond the current season, or starts looking systematically off for older in-season comparables |
 | `COMPARABLE_NEAREST_K = 5` / `MIN_SAME_POSITION = 3` / `MIN_COMPARABLE_SAMPLE = 3` / `COMPARABLE_MAX_DISTANCE_PCT = 0.5` / `COMPARABLE_MIN_ABSOLUTE_DISTANCE = 50.0` | `dynasty_core/waiver_bids.py` | Judgment calls sizing the FAAB bid-guidance comparable sample and its value-distance tolerance, not derived from any league rule | Adjust by feel once a full season of real bid history exists to judge against |
-| `GET /projections/nfl/regular/{season}/{week}`'s path shape and its stat-key vocabulary lining up 1:1 with `league["scoring_settings"]` for ordinary counting stats | `sleeper_api.get_weekly_projections`, `dynasty_core/lineup.py`'s `_weekly_projected_points` | An undocumented, unofficial Sleeper endpoint — no contract to rely on. Confirmed live (2026-08-21) to return real per-stat projections in the same stat-key vocabulary this league's `scoring_settings` already uses for raw counting stats. `bonus_rec_te` (a position-conditional scoring weight, not a raw stat the endpoint could ever emit) is handled as an explicit exception rather than assumed covered by the shared vocabulary (see `valuation_principles.md`'s "generic stat-vocabulary dot product" rule). Wrapped in its own try/except (`gather_state`) so a fetch failure degrades to a `data_warnings` entry and an "unavailable" Lineup-tab mode; a non-numeric value within a successful fetch is skipped rather than crashing | Re-verify the live response shape if the weekly-projection lineup mode ever starts looking systematically wrong; extend the position-conditional handling if `scoring_settings` ever gains another non-raw-stat weight beyond `bonus_rec_te`; verify threshold/long-play categories are actually present (`VA-7`) |
+| `GET /projections/nfl/regular/{season}/{week}`'s path shape and its stat-key vocabulary lining up 1:1 with `league["scoring_settings"]` for ordinary counting stats | `sleeper_api.get_weekly_projections`, `dynasty_core/lineup.py`'s `_weekly_projected_points` | An undocumented, unofficial Sleeper endpoint — no contract to rely on. Confirmed live (2026-08-21, re-confirmed 2026-08-28) to return real per-stat projections in the same stat-key vocabulary this league's `scoring_settings` already uses, including the threshold/long-play categories it scores (`rush_fd`, `rec_fd`, `rush_40p`, `rec_40p`, `pass_cmp_40p`) and, contrary to an earlier assumption, `bonus_rec_te` directly (scoped correctly to TEs) — a small fallback still covers the rare TE projection missing a usable value (see `valuation_principles.md`'s "generic stat-vocabulary dot product" and "presence check on a key" rules). `pass_td_40p`/`50p`, `rush_td_40p`/`50p`, `rec_td_40p`/`50p` are confirmed permanently absent (no per-play-length data behind a weekly projection). Wrapped in its own try/except (`gather_state`) so a fetch failure degrades to a `data_warnings` entry and an "unavailable" Lineup-tab mode; a non-numeric value within a successful fetch is skipped rather than crashing | Re-verify the live response shape if the weekly-projection lineup mode ever starts looking systematically wrong; extend the position-conditional handling if `scoring_settings` ever gains another non-raw-stat weight beyond `bonus_rec_te` |

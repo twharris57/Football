@@ -48,9 +48,15 @@ it's stopped being a "short" list — thin it back out to what's actually
 active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
+**Next up, in order** (user-set 2026-08-28, during in-season play — picked
+over `RT-4`'s phase-aware need rework, which stays a longer-term
+foundational item rather than the immediate next feature):
+1. `RT-5` / `CQ-10` — League tab all-teams summary view and the tab
+   navigation restructure, taken together as the UX-focused pair.
+2. `RT-28` — FAAB position-broadening review; deliberately last since it
+   benefits from more season data existing to check against.
+
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `CQ-10` — restructure top-level tab navigation (subtabs/collapsing to
-  cut vertical scroll), starting with Roster and Trade Evaluator.
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
@@ -61,7 +67,7 @@ too, per the convention above), don't let this become a history log.
 
 ## Current branch — fix before merge
 
-`feature/rt27-weekly-lineup-mode` (PR #44), reviewed 2026-08-21.
+`feature/dynasty-plan-reprioritize` (PR #60), reviewed 2026-08-28.
 
 Findings from reviewing the *active* branch's own not-yet-merged work —
 kept separate from the thematic backlog below so "fix this before the PR
@@ -71,9 +77,11 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty right now — the TE-premium gap found in this review (`_weekly_projected_points()`
-missing `bonus_rec_te`) is fixed; see `valuation_principles.md`'s "generic
-stat-vocabulary dot product" rule for the durable lesson.
+Empty right now — the `bonus_rec_te` fallback's presence-vs-usability gap
+found in this review is fixed (`isinstance(..., (int, float))` instead of
+`in`/`not in`), with a covering test added; see `valuation_principles.md`'s
+"A presence check on a key is not a validity check on its value" rule for
+the durable lesson.
 
 ## Now — blocking
 
@@ -411,24 +419,6 @@ cutoff.
   `_derive_rookie_buckets`/multiplier machinery as additional features
   rather than requiring a new pipeline.
 
-- [ ] **VA-7: Unverified whether Sleeper's weekly projections include the
-  threshold/long-play bonus categories this league also scores** (assistant
-  valuation review, 2026-08-21, RT-27) — `_weekly_projected_points()`'s
-  dot product (`dynasty_core/lineup.py`) now correctly handles
-  `bonus_rec_te` as a position-conditional weight rather than a raw stat
-  (fixed same review), but whether Sleeper's projections endpoint actually
-  populates `rush_fd`, `rec_fd`, and `player_scoring.LONG_PLAY_THRESHOLDS`'s
-  `*_40p`/`*_50p` keys — all real, non-zero scoring categories for this
-  league — was never specifically checked. Unlike `bonus_rec_te`, these
-  genuinely are raw countable stats a projection provider could plausibly
-  include, so this is a "verify against live data" gap, not a structural
-  certainty. If Sleeper's projections omit them, the dot product already
-  handles it gracefully (an absent key just contributes 0, same as any
-  other stat this league doesn't score) — the open question is only
-  whether it's silently *systematically* undercounting these categories the
-  same way `bonus_rec_te` was, not whether it crashes. Worth a quick live
-  check of one real projection payload's full key set next time this is
-  touched.
 - [ ] **VA-5: `win_pct` doesn't credit a tie as half a win** (assistant
   valuation review, 2026-08-02) — `team_power_timeline_scores()` computes
   `wins / games_played` where `games_played = wins + losses + ties`; a
