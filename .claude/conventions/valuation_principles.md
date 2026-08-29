@@ -632,6 +632,33 @@ here — small-sample "no guidance" beats a plausible-looking wrong-market
 number) or verify empirically, against real data, that the suspected
 premium is small enough to ignore before broadening it in.
 
+**Correction, 2026-08-29 (review of the fix itself, `RT-29`):** the
+implementation of the rule above only closed half of what its own
+docstring claimed to close. `nearest_comparable_bids()` was changed so a
+QB candidate never broadens *out* into RB/WR/TE bids — but a non-QB
+candidate with a thin same-position sample still broadens *into* the
+unfiltered sample, QB rows included, since the new `candidate_position ==
+"QB"` check only gates whether the QB candidate's own pool stays
+same-position, not whether QB rows are excluded from the pool everyone
+else broadens into. The docstring explicitly named this as "(or the
+reverse)" of the case actually fixed — the risk was correctly identified
+in writing and then only half-implemented, caught by re-reading the
+docstring's own claim against the code rather than by the new tests, none
+of which constructed a broadened pool containing a QB row.
+
+**The rule, extended**: when a fix's own docstring or commit message
+names a risk as two-directional ("X, or the reverse"; "A into B or B into
+A"), treat that phrasing as a checklist, not a flourish — verify the code
+change actually closes both directions, and that at least one new test
+exercises each direction independently. A test suite that only ever
+constructs the sample for the direction the author was actively thinking
+about (here: a QB candidate broadening out) will pass cleanly while the
+symmetric case (a non-QB candidate broadening in) stays exactly as broken
+as before the fix — the same "test coverage matches the direction already
+expected, not the failure mode itself" gap this project's review process
+already watches for, now confirmed on a fix that named its own blind spot
+and missed it anyway.
+
 ## A generic stat-vocabulary dot product silently drops any scoring rule that isn't itself a raw stat
 
 `_weekly_projected_points()` (`dynasty_core/lineup.py`, `RT-27`,

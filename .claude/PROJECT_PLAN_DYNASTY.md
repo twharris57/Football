@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-28`, `VA-7`, `CQ-10`, `DL-9`.
+below): `NB-2`, `RT-29`, `VA-7`, `CQ-10`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -70,18 +70,32 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-`feature/league-tab-nav-restructure` (PR #61), reviewed 2026-08-29.
+`feature/faab-qb-broadening-fix` (PR #62), reviewed 2026-08-29.
 
-Empty right now — both findings from this review are fixed:
-`_render_team_summary()` now formats `win_pct` as a percentage with the
-same "no games played yet" zero-games special case `roster_tab.py`/
-`rookie_draft.py` already use (instead of `cols()`'s generic
-`NumberColumn(format="%.2f")` printing the raw `0.0-1.0` fraction under a
-"Win %" header), and the table no longer leaks the `games_played`/
-`roster_id` columns (`games_played` dropped after being folded into the
-formatted `win_pct` string, `roster_id` index hidden). See
-`valuation_principles.md`'s extended "field used as both an internal
-score input and a user-facing label" rule for the durable lesson.
+- [ ] `RT-29` — **QB rows still contaminate broadened comparables for
+  non-QB candidates: this branch's own stated risk, only half-fixed.**
+  `nearest_comparable_bids()`'s updated docstring says mixing a thin QB
+  sample into RB/WR/TE comparables "(or the reverse)" would present a
+  demand-curve-mismatched range — but the code only closes the first
+  half. A QB candidate now always stays on the QB-only pool no matter how
+  thin (never broadens out), but a non-QB candidate whose own
+  same-position sample is thin still broadens into the *entire*
+  unfiltered `sample`, QB rows included. Confirmed live: a TE candidate
+  compared against a sample containing one QB row (value 100, bid 45) and
+  one far-away RB row returns the QB bid as its sole comparable, with
+  `same_position=False`. Worse, `roster_tab.py`'s guidance display shows
+  only `bid` and `adj_value` per comparable, never `position` — so a user
+  reading "Recent winning FAAB bids for similarly-valued players: $45
+  (value 100)" has no way to tell that number came from a QB bid rather
+  than a real TE/WR/RB one. Same silent-contamination shape this whole PR
+  exists to close, just uncaught in the reverse direction; none of the
+  new tests construct a broadened pool containing a QB row for a non-QB
+  candidate. Fix: exclude QB rows from the broadened ("every position")
+  pool whenever the candidate itself isn't QB (e.g.
+  `sample[sample["position"] != "QB"]` for the broadened branch), not
+  just make QB candidates immune to broadening themselves. See
+  `valuation_principles.md`'s extended note on this under the RT-28
+  entry.
 
 ## Now — blocking
 
