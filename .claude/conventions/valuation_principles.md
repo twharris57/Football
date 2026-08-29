@@ -192,6 +192,34 @@ that names the field literally ("Win %", "Value", "Rank") — expose both
 under distinct names rather than letting one name's meaning silently
 depend on which caller reads it.
 
+**Extension — a correct value can still drift when it reaches a new
+display path, not just a new transform (`RT-5`/`CQ-10`, 2026-08-29
+review).** The League tab's Team summary table (`league_tab.py`) is a
+second consumer of `team_power_timeline_scores()`'s already-correct, raw
+`win_pct` — no transform bug this time, the *value* is right. But it
+reached the UI through `cols()`'s generic float-column handling
+(`st.column_config.NumberColumn(format="%.2f")`) instead of the
+`f"{win_pct:.0%}"` percent-formatting and `games_played == 0` special
+case every other consumer (`roster_tab.py`, `rookie_draft.py`) already
+applies by hand — so it renders as `"0.60"` under a header reading
+`"Win %"`, reading as "0.60%" to anyone who takes the header literally.
+Same root cause as the rule above (a field's established display contract
+isn't attached to the field, so each new consumer has to independently
+remember it) one layer downstream: this time the drift was in
+*formatting*, not in *which* value got wired in.
+
+**The rule, extended**: when a field already has an established,
+non-default display convention elsewhere in the app (a percent format, a
+unit suffix, a special-case string for a sentinel value), treat that
+convention as part of the field's contract, not an incidental detail of
+whichever call site wrote it first. A new consumer — even one going
+through a shared, generic rendering helper (`cols()`/`NumberColumn`) —
+needs to either reuse the same formatting logic or explicitly special-case
+the field, not inherit whatever the generic helper does by default for
+its raw dtype. Grep for the field's name across existing display code
+before wiring it into a new table/view, the same discipline the base rule
+already asks for before applying a transform.
+
 ## Mutually exclusive candidate pools must derive from each other's membership
 
 This project has several "candidate pool" functions that enumerate a slice
