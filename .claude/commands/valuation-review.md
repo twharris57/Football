@@ -80,6 +80,15 @@ For each changed/reviewed function, check:
   finding would predict, or only the direction the author already expected? (A common
   gap: a "known-good vs. known-bad" sanity check that can't surface a conflation between
   two independent signals moving in different directions.)
+- **Dangling backlog-ID citations** — does any new or touched doc (`docs/*.md`) or code
+  comment/docstring cite a `RT-<n>`/`VA-<n>`/`CQ-<n>`/`DL-<n>`/`NB-<n>` tag as the reason
+  for a design choice? Check whether that tag's entry still exists in
+  `PROJECT_PLAN_DYNASTY.md` — if not (or if the same PR is the one deleting it), the
+  citation is dangling from the moment it's written. This keeps recurring (see
+  `valuation_principles.md`'s "docs and comments cite durable explanations, not
+  ephemeral backlog IDs" rule) — flag every instance found, not just ones in the diff
+  under review, since a doc file touched for one reason often carries older dangling
+  citations nobody has re-read since.
 
 ### 3. Rank findings by real-world consequence, not theoretical purity
 

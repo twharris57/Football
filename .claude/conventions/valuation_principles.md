@@ -192,6 +192,34 @@ that names the field literally ("Win %", "Value", "Rank") — expose both
 under distinct names rather than letting one name's meaning silently
 depend on which caller reads it.
 
+**Extension — a correct value can still drift when it reaches a new
+display path, not just a new transform (`RT-5`/`CQ-10`, 2026-08-29
+review).** The League tab's Team summary table (`league_tab.py`) is a
+second consumer of `team_power_timeline_scores()`'s already-correct, raw
+`win_pct` — no transform bug this time, the *value* is right. But it
+reached the UI through `cols()`'s generic float-column handling
+(`st.column_config.NumberColumn(format="%.2f")`) instead of the
+`f"{win_pct:.0%}"` percent-formatting and `games_played == 0` special
+case every other consumer (`roster_tab.py`, `rookie_draft.py`) already
+applies by hand — so it renders as `"0.60"` under a header reading
+`"Win %"`, reading as "0.60%" to anyone who takes the header literally.
+Same root cause as the rule above (a field's established display contract
+isn't attached to the field, so each new consumer has to independently
+remember it) one layer downstream: this time the drift was in
+*formatting*, not in *which* value got wired in.
+
+**The rule, extended**: when a field already has an established,
+non-default display convention elsewhere in the app (a percent format, a
+unit suffix, a special-case string for a sentinel value), treat that
+convention as part of the field's contract, not an incidental detail of
+whichever call site wrote it first. A new consumer — even one going
+through a shared, generic rendering helper (`cols()`/`NumberColumn`) —
+needs to either reuse the same formatting logic or explicitly special-case
+the field, not inherit whatever the generic helper does by default for
+its raw dtype. Grep for the field's name across existing display code
+before wiring it into a new table/view, the same discipline the base rule
+already asks for before applying a transform.
+
 ## Mutually exclusive candidate pools must derive from each other's membership
 
 This project has several "candidate pool" functions that enumerate a slice
@@ -686,3 +714,40 @@ recognize it here as: a *fallback's own trigger condition* can have the
 identical blind spot as the primary computation it's meant to backstop, so
 auditing the primary path's `isinstance`/`pd.isna` discipline isn't enough
 if the fallback next to it doesn't apply the same standard to its own gate.
+
+## Docs and comments cite durable explanations, not ephemeral backlog IDs
+
+`docs/dynasty-draft-web-app.md`'s League tab writeup (`RT-5`/`CQ-10`,
+2026-08-29 review) cited both tags repeatedly as the reason a section
+existed or was laid out a certain way — and by the time the PR that added
+those citations had even merged, `PROJECT_PLAN_DYNASTY.md`'s own
+convention (delete an item's entry the instant it's done) had already
+removed both entries, so the citations were dangling from the first
+commit. The same doc, and `docs/rookie-draft-big-board.md`, also carried
+several older citations (`RT-27`, `RT-15`, `RT-14`, `RT-10`, `RT-18`) that
+had been dangling far longer, unnoticed because nothing re-reads a
+finished doc section looking for a pointer that no longer resolves. This
+is the dynasty side's version of a failure mode
+`confidence_pool_principles.md` already documented and fixed for that
+subsystem's docs — independently rediscovered here because the two
+subsystems' conventions files are kept deliberately separate (see that
+file's own note on this) and a fix to one doesn't propagate to the other.
+
+**The rule** (identical to the confidence-pool version, restated for this
+subsystem): a `RT-<n>`/`VA-<n>`/`CQ-<n>`/`DL-<n>`/`NB-<n>` tag names
+*currently open, in-progress work* in `PROJECT_PLAN_DYNASTY.md` — the
+moment an item resolves, its entry is deleted, per that file's own stated
+convention. `docs/*.md` files, per `docs/README.md`'s own policy, describe
+*present, durable behavior* — a fact that should live in exactly one place
+and not depend on the plan file's current contents. Citing a tag there as
+"the reason" a design choice was made is citing something guaranteed to
+eventually 404, often before the citing PR has even merged. Write the
+durable explanation in the doc's own prose instead of outsourcing it to a
+backlog pointer; if a doc genuinely needs to point a reader at *currently
+open* related work (a "Known gaps" bullet, a "Static assumptions" table's
+"what to revisit" column), point at the plan file's stable section name
+(`.claude/PROJECT_PLAN_DYNASTY.md`'s Roster & trade tooling section) rather
+than a specific item number — the section persists even as individual
+items inside it churn. A backlog ID itself belongs only in a commit
+message (permanent, historical) or the plan file's own attribution line —
+never in a doc or code comment that will outlive the ID it points to.

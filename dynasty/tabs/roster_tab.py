@@ -352,22 +352,6 @@ def _render_handcuffs(analysis: dict) -> None:
     )
 
 
-def _render_pick_values(state: dict) -> None:
-    st.subheader("Draft pick trade values")
-    st.caption(
-        "League-wide (not filtered to the team selected above) - every remaining pick this "
-        "season, exact-slot valued and matched to its real current owner, plus next season's "
-        "picks at a flat round value applied the same to every team (no real projected "
-        "standings this far out to justify guessing who picks early vs. late)."
-    )
-    pick_values_display = state["pick_trade_values"].drop(columns="owner_roster_id", errors="ignore")
-    show_df(
-        pick_values_display,
-        "(no picks to show)",
-        column_config=cols(pick_values_display, ("pick", "Pick"), ("owner", "Owner"), ("value", "Value")),
-    )
-
-
 def render_roster_tab(state: dict) -> None:
     team_names_by_id = state["team_names"]
     user_roster_id = state["user_roster_id"]
@@ -393,13 +377,24 @@ def render_roster_tab(state: dict) -> None:
             state["projections"],
         )
 
-    _render_team_timeline(state, selected_roster_id)
-    _render_capacity(analysis)
-    _render_needs(analysis)
-    _render_value_analysis(analysis)
-    _render_sellable(analysis)
-    _render_free_agents(state, analysis, selected_roster_id)
-    _render_bye_impact(state, analysis)
-    _render_weekly_gaps(analysis)
-    _render_handcuffs(analysis)
-    _render_pick_values(state)
+    # Split into subtabs - a Roster visit used to render all nine sections
+    # below as one long scrolling page; grouped by theme so only the active
+    # group's content is on screen at once. Draft pick trade values moved
+    # out entirely - it was already league-wide, not team-scoped, so it now
+    # lives on the League tab instead (see docs/dynasty-draft-web-app.md).
+    overview_tab, value_tab, free_agents_tab, schedule_tab = st.tabs(
+        ["Overview", "Value & Handcuffs", "Free Agents", "Schedule"]
+    )
+    with overview_tab:
+        _render_team_timeline(state, selected_roster_id)
+        _render_capacity(analysis)
+        _render_needs(analysis)
+    with value_tab:
+        _render_value_analysis(analysis)
+        _render_sellable(analysis)
+        _render_handcuffs(analysis)
+    with free_agents_tab:
+        _render_free_agents(state, analysis, selected_roster_id)
+    with schedule_tab:
+        _render_bye_impact(state, analysis)
+        _render_weekly_gaps(analysis)

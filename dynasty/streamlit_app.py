@@ -23,6 +23,7 @@ import requests
 import streamlit as st
 from tabs.components import cols, show_df, show_glossary
 from tabs.draft_tab import render_draft_tab
+from tabs.league_tab import render_league_tab
 from tabs.plan_tab import render_plan_tab
 from tabs.roster_tab import render_roster_tab
 from tabs.summary_tab import render_summary_tab
@@ -250,6 +251,7 @@ tab_specs: list[tuple[str, Callable[[], None]]] = [
     ("Draft Plan", lambda: render_plan_tab(state)),
     ("Lineup", _render_lineup_tab),
     ("Draft Board", lambda: render_draft_tab(state)),
+    ("League", lambda: render_league_tab(state)),
     ("Roster", lambda: render_roster_tab(state)),
     ("Trade Evaluator", lambda: render_trade_tab(state)),
     ("Summary", lambda: render_summary_tab(state)),

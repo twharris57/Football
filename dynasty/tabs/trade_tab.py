@@ -451,9 +451,9 @@ def _render_suggested_trades(state: dict) -> None:
     st.subheader("Suggested Trades")
     with st.expander("How this works"):
         st.caption(
-            "Leaguewide by default, not scoped to the 'Your team'/'Trade partner' selectors "
-            "above — always scans for your own actual roster, regardless of what's selected "
-            "there for the manual evaluator.\n"
+            "Leaguewide by default, not scoped to the Manual Trade tab's 'Your team'/'Trade "
+            "partner' selectors — always scans for your own actual roster, regardless of "
+            "what's selected there for the manual evaluator.\n"
             "- **Leaguewide candidates** — every fantasy-relevant player on every other "
             "team's roster, ranked by the same season-average marginal-lineup read used "
             "elsewhere, pre-filtered to ones your own sellable depth could plausibly afford "
@@ -503,36 +503,46 @@ def _render_suggested_trades(state: dict) -> None:
 
 
 def render_trade_tab(state: dict) -> None:
-    trade_team_names = state["team_names"]
-    trade_user_roster_id = state["user_roster_id"]
+    # Split into subtabs - these were two long sections stacked on
+    # one page; they're already structurally independent (own team pickers
+    # vs. a leaguewide scan that explicitly ignores those pickers - see
+    # _render_suggested_trades' own "not scoped to the pickers" caption), so
+    # the "Your team"/"Trade partner" selectors move inside the Manual Trade
+    # subtab with the section that actually uses them, rather than staying
+    # shared above both.
+    manual_tab, suggested_tab = st.tabs(["Manual Trade", "Suggested Trades"])
+    with manual_tab:
+        trade_team_names = state["team_names"]
+        trade_user_roster_id = state["user_roster_id"]
 
-    your_team_id = team_selectbox(
-        "Your team", trade_team_names, trade_user_roster_id, "trade_your_team_select"
-    )
-    partner_team_id = team_selectbox(
-        "Trade partner",
-        trade_team_names,
-        trade_user_roster_id,
-        "trade_partner_team_select",
-        exclude=your_team_id,
-        tag_you=False,
-    )
+        your_team_id = team_selectbox(
+            "Your team", trade_team_names, trade_user_roster_id, "trade_your_team_select"
+        )
+        partner_team_id = team_selectbox(
+            "Trade partner",
+            trade_team_names,
+            trade_user_roster_id,
+            "trade_partner_team_select",
+            exclude=your_team_id,
+            tag_you=False,
+        )
 
-    your_trade_roster = state["rosters_by_id"][your_team_id]
-    partner_trade_roster = state["rosters_by_id"][partner_team_id]
-    trade_players = state["players"]
-    trade_pick_values = state["pick_trade_values"]
-    pick_value_by_name = dict(zip(trade_pick_values["pick"], trade_pick_values["value"]))
+        your_trade_roster = state["rosters_by_id"][your_team_id]
+        partner_trade_roster = state["rosters_by_id"][partner_team_id]
+        trade_players = state["players"]
+        trade_pick_values = state["pick_trade_values"]
+        pick_value_by_name = dict(zip(trade_pick_values["pick"], trade_pick_values["value"]))
 
-    _render_manual_evaluator(
-        state,
-        trade_team_names,
-        your_team_id,
-        partner_team_id,
-        your_trade_roster,
-        partner_trade_roster,
-        trade_players,
-        trade_pick_values,
-        pick_value_by_name,
-    )
-    _render_suggested_trades(state)
+        _render_manual_evaluator(
+            state,
+            trade_team_names,
+            your_team_id,
+            partner_team_id,
+            your_trade_roster,
+            partner_trade_roster,
+            trade_players,
+            trade_pick_values,
+            pick_value_by_name,
+        )
+    with suggested_tab:
+        _render_suggested_trades(state)
