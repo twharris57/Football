@@ -494,6 +494,41 @@ removes a human review step earlier stages relied on — automating "pick
 and present" is what turns a merely-imprecise signal into a wrong action
 recommendation a user might actually act on.
 
+**Correction, 2026-08-29 (assistant valuation review, full-pipeline pass):**
+this rule's own opening paragraph asserted that `free_agent_board()` has an
+existing "worth surfacing at all" convention — that was never true. A
+`git log -S` check found `free_agent_board()` (`marginal_value.py`) has
+never filtered its output to `marginal_value > 0` at any point in its
+history; it returns the top `top_n` (default 25) candidates by marginal
+value regardless of sign, rendered directly and unfiltered on the Roster
+tab. The false belief wasn't confined to this doc — it was carried
+verbatim into two real code comments (`state.py`'s `build_pickup_alerts()`:
+"matching `free_agent_board()`'s own round-then-filter order"; `trade.py`'s
+`leaguewide_trade_candidates()`: "matches `free_agent_board`/`pickup_alerts`'
+existing 'worth surfacing at all' convention"), each written by someone
+who trusted the assumption instead of checking the function itself. The
+practical effect: `free_agent_board()` was the one consumer of this
+project's shared marginal-value ranking that did *not* apply the floor
+every sibling consumer (`build_pickup_alerts`, `leaguewide_trade_candidates`,
+`suggested_trades`, and `summary.py`'s own re-filtering of
+`free_agent_board`'s output before it enters the Attention Digest) applies.
+Fixed directly in `free_agent_board()` by rounding to one decimal and then
+filtering to `marginal_value > 0` — the same order `build_pickup_alerts()`
+already used — rather than leaving the two false comments in place; both
+became true statements the moment the underlying function changed to
+match what they'd always assumed.
+
+**The rule, extended**: a comment that credits another function with
+enforcing a convention "matching" or "the same as" that function's own
+behavior is itself a factual claim about that function — subject to the
+same live-verification discipline as any other claim about existing code
+(see this file's "prefer real scoring rules pulled live" rule's closing
+note on unverified claims about external systems; this is the same
+failure mode turned inward, on this codebase's own functions). Don't take
+a sibling docstring's word for what a shared function does — read the
+function, or `git log -S` its defining feature, before citing it as
+precedent.
+
 ## A fixed-anchor tolerance formula stays correct only while its anchor stays fixed
 
 `find_trade_offers()`'s partner-acceptance gate anchors its tolerance
@@ -806,3 +841,26 @@ than a specific item number — the section persists even as individual
 items inside it churn. A backlog ID itself belongs only in a commit
 message (permanent, historical) or the plan file's own attribution line —
 never in a doc or code comment that will outlive the ID it points to.
+
+**Extension, 2026-08-29 (assistant valuation review, full-pipeline pass):**
+the fix above only ever swept `docs/*.md` — the rule's own title already
+says "docs *and comments*," but no pass has actually checked `.py` files
+for the same pattern until now. It turns up in eleven places across
+`dynasty_core/` and `tabs/`, all citing already-closed tags as parenthetical
+feature labels: `RT-9`/`RT-20` (`snapshot_io.py`), `RT-10`
+(`marginal_value.py`, `state.py`), `RT-12`/`RT-14`/`RT-15`/`RT-17`/`RT-18`/
+`RT-27` (`trade.py`, `state.py`, `team_analysis.py`, `trade_tab.py`), `RT-24`
+(`trade_tab.py`), `NB-2` (`streamlit_app.py`). None of
+these happened to be a comment's *sole* justification (each carried real
+prose reasoning alongside the tag, so `code_conventions.md`'s literal bar
+against "sole justification" was technically met) — but they were exactly
+the same dangling-pointer shape once the cited item was deleted from the
+plan file, just in a lower-severity form. Fixed by removing each tag and
+replacing it with the durable feature name it stood in for (e.g. "Suggested
+Trades" for `RT-15`, already how most of these docstrings referred to the
+feature on first mention anyway), same-PR rather than filed for later.
+**The rule, extended**: treat `.py` docstrings/comments as covered by this
+rule exactly as much as `docs/*.md` — a closed backlog tag used as a
+feature's inline nickname should be replaced with the feature's actual
+name the next time the surrounding code is touched, rather than assuming
+code comments are exempt because they're not the literal `docs/` directory.

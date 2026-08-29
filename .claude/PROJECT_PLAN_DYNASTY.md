@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-29`, `VA-7`, `CQ-10`, `DL-9`.
+below): `NB-2`, `RT-29`, `VA-8`, `CQ-11`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -383,7 +383,6 @@ cutoff.
   ties are rare enough in a points-based scoring format that this hasn't
   mattered in practice — low priority, but a real accuracy gap if it
   ever comes up. Fix: give `wins + 0.5 * ties` credit in the numerator.
-
 ## Code quality, tests & UX polish
 
 - [ ] **CQ-5: Represent draft-pick identity as structured fields at ingestion, not a

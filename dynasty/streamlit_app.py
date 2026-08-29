@@ -241,7 +241,7 @@ def _render_lineup_tab() -> None:
 
 
 # Tab order shifts with the season rather than staying fixed: Draft Plan is
-# the tab checked right before a live pick (see NB-2), so it leads while a
+# the tab checked right before a live pick, so it leads while a
 # draft is ongoing/upcoming; Summary is more useful once the draft is behind
 # you, so it leads instead once draft_complete (same condition already
 # driving the "Draft complete."/on-the-clock banner above - both "before any
