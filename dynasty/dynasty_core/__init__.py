@@ -47,6 +47,7 @@ from .draft_plan import (
 )
 from .draft_snapshots import AMBIGUOUS, reconcile_snapshot
 from .handcuffs import HANDCUFFS_CACHE_TTL_SECONDS, handcuff_map, handcuff_targets, roster_handcuff_status
+from .league_summary import league_team_summaries
 from .lineup import (
     assign_starters,
     bye_for_row,
@@ -209,6 +210,7 @@ __all__ = [
     "handcuff_targets",
     "hypothetical_needs_and_handcuffs",
     "improve_incoming_offer",
+    "league_team_summaries",
     "leaguewide_trade_candidates",
     "lineup_breakdown",
     "multi_round_plan",

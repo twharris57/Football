@@ -50,10 +50,9 @@ too, per the convention above), don't let this become a history log.
 
 **Next up, in order** (user-set 2026-08-28, during in-season play — picked
 over `RT-4`'s phase-aware need rework, which stays a longer-term
-foundational item rather than the immediate next feature):
-1. `RT-5` / `CQ-10` — League tab all-teams summary view and the tab
-   navigation restructure, taken together as the UX-focused pair.
-2. `RT-28` — FAAB position-broadening review; deliberately last since it
+foundational item rather than the immediate next feature). `RT-5`/`CQ-10`
+(League tab + tab nav restructure) shipped 2026-08-29:
+1. `RT-28` — FAAB position-broadening review; deliberately last since it
    benefits from more season data existing to check against.
 
 **Nice to have (no deadline, worth doing when there's room):**
@@ -183,19 +182,6 @@ Deliberately out of v1, not forgotten:
   rather than asking the user to track and set it by hand. Doesn't change
   the scope of the work itself, just a candidate input worth evaluating
   when this is actually picked up.
-- [ ] **RT-5: League tab — all-teams summary view** (user-flagged 2026-07-29,
-  longer term). A compact row per team (total roster value, biggest need,
-  capacity) to scan the whole league at a glance before drilling into one
-  team, complementing the Roster tab's team selector (added
-  2026-07-29), which only ever shows one team at a time. Cheaper than it
-  would have been before that selector shipped —
-  `dynasty_core.team_roster_analysis()` already runs this exact per-team
-  analysis for any roster on demand; this is "call it for all ~12 teams
-  and lay out a summary row," not new analysis logic. A natural
-  lighter-weight complement to the power/timeline read
-  (`team_power_timeline_scores()`) — this surfaces raw stats per team, not a
-  rebuild-vs-contend classification, but both answer "what does this team
-  look like" at a glance.
 - [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
   (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
   unconfirmed) — a rare, explicitly user-triggered lookup (not a
@@ -473,31 +459,6 @@ cutoff.
   helper (e.g. `_pick_value_lookup(pick_value_table)` returning both the
   dict and a `sum(names)` closure) next time either function is touched,
   rather than a third copy appearing.
-- [ ] **CQ-10: Restructure top-level tab navigation — unclear where things
-  live, too much vertical scroll per tab** (user-flagged 2026-08-22) —
-  `streamlit_app.py` currently has 6 flat top-level tabs (Draft Plan,
-  Lineup, Draft Board, Roster, Trade Evaluator, Summary), each rendering
-  its whole section (often several `st.subheader`-delimited blocks plus
-  "How this works" expanders — see `DL-5`, a related but distinct
-  cleanup) as one long scrolling page with no further structure. User's
-  read: it's not always obvious which tab a given piece of information is
-  under, and several tabs (Roster and Trade Evaluator especially, given
-  how many `team_roster_analysis` sub-sections they each render — needs,
-  value, sellable, free agents, bye conflicts, weekly gaps, handcuffs,
-  lineup) require a lot of scrolling to reach content lower on the page.
-  Needs a concrete redesign pass, not just this note: candidates include
-  splitting a tab's own sub-sections into `st.tabs`/`st.segmented_control`
-  subtabs (mirroring how `_render_lineup_tab`'s "By value"/"This week's
-  projection" radio already splits one tab's content in two), collapsing
-  less-frequently-needed sections into expanders by default, or
-  re-grouping what currently lives under which top-level tab entirely.
-  Should land as its own scoped UX pass (per `web_guidelines.md` and
-  `docs/dynasty-draft-web-app.md`'s existing layout conventions) rather
-  than bundled into unrelated feature work — worth sketching the proposed
-  new tab/section structure and checking it against a live phone session
-  (this app is explicitly meant to be usable from a phone during a live
-  draft, per `streamlit_app.py`'s own module docstring) before committing
-  to a layout.
 - [ ] **CQ-8: Add signal handlers for graceful container shutdown**
   (user-flagged 2026-08-20) — `docker_guidelines.md`'s existing "Graceful
   Shutdown" section already covers half of this (`CMD` exec form so

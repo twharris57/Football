@@ -6,7 +6,7 @@ of requiring a terminal, and deployable to the user's Synology NAS.
 
 ## Streamlit app (`dynasty/streamlit_app.py` + `dynasty/tabs/`)
 
-Five tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
+Seven tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
 
 1. **Draft Plan** — the round-by-round marginal-value simulation, backup
    alternates in expanders, a full player-projection lookup, weekly-gap
@@ -21,16 +21,29 @@ Five tabs, all reading from one `dynasty_core.gather_state()` call per refresh:
    rather than crashing if the undocumented projections endpoint fails
    (see `data_warnings`).
 3. **Draft Board** — the full rookie class, tiered, with draft attribution.
-4. **Roster** — capacity, needs, value analysis, bye conflicts, weekly
+4. **League** (`RT-5`) — a one-row-per-team summary (total value, biggest
+   need, capacity, power/timeline phase and rank) so the whole league is
+   scannable before drilling into one team via the Roster tab, plus the
+   league-wide Draft pick trade values table (moved here from Roster —
+   see below). Sits between Draft Board and Roster: "see the whole league,
+   then drill into one team."
+5. **Roster** — capacity, needs, value analysis, bye conflicts, weekly
    gaps, handcuffs, sellable veterans, free agents, and the team timeline
    read, for any team in the league via a selector (defaults to the user's
-   own).
-5. **Trade Evaluator** — an arbitrary multi-asset trade (players and/or
+   own). Split into four subtabs (`CQ-10`) — Overview, Value & Handcuffs,
+   Free Agents, Schedule — so only one group's sections are on screen at
+   once instead of one long scrolling page.
+6. **Trade Evaluator** — an arbitrary multi-asset trade (players and/or
    picks) between two selected teams, evaluated for both sides, plus
    Suggested Trades: leaguewide by default (no partner/target pre-selected),
    or search one specific player directly. Its own tab rather than another
    Roster section — it's inherently two-team, not the "pick a team, see
-   everything about them" shape every Roster section shares.
+   everything about them" shape every Roster section shares. Split into two
+   subtabs (`CQ-10`) — Manual Trade (with its own "Your team"/"Trade
+   partner" selectors) and Suggested Trades (which never used those
+   selectors in the first place — see below).
+7. **Summary** — the attention digest; moves to the front once the draft is
+   complete (see `streamlit_app.py`'s tab-ordering logic).
 
 There is exactly one ranking method for "what should I pick next," used
 everywhere in the app — the round-by-round Draft Plan. See
@@ -55,11 +68,11 @@ second) that no separate caching was needed. `gather_state` exposes
 `league` at the top level specifically so this (and the drop-search below)
 can be computed outside the main per-refresh pass.
 
-**Not built:** a league-wide summary view (one row per team — value,
-biggest need, capacity — scannable before drilling into one team); see
-`.claude/PROJECT_PLAN_DYNASTY.md`. The team-selector approach answers "how does the
-tool see this *one* team" well; it doesn't answer "which teams across the
-league are worth scouting first."
+The team-selector approach answers "how does the tool see this *one* team"
+well; it doesn't answer "which teams across the league are worth scouting
+first" — that question is what the League tab's Team summary
+(`dynasty_core.league_team_summaries()`, `RT-5`) answers instead, deliberately
+without calling `team_roster_analysis()` per team (see "League tab" below).
 
 ### Roster needs: VOR / Weak columns
 
@@ -85,23 +98,46 @@ of a misleading flat 50%. The CLI mirrors this with a `--- Team timeline
 A "❓ Glossary" button next to the page title opens an `st.dialog` (`GLOSSARY`
 in `tabs/components.py`) defining VOR, power score, and adj. value.
 
-### Sellable veterans / Free agents / Draft pick trade values
+### League tab
 
-Three sections in the Roster tab, added for trade/roster-move evaluation
-— see `docs/rookie-draft-big-board.md` and `.claude/PROJECT_PLAN_DYNASTY.md` for
+Two sections, neither scoped to a single team (`RT-5`/`CQ-10`).
+
+"Team summary" (`dynasty_core.league_team_summaries()`) is one row per
+team: total value (sum of `adj_value` via `roster_value_analysis()`),
+biggest need (the position with the lowest `vor` from
+`positional_strength_summary()` — the *same* signal driving the Roster
+tab's own "Weak" flag, not a second needs metric), active/taxi open slots
+(`roster_capacity()`), and the phase/rank/win-percentage columns already
+computed by `team_power_timeline_scores()` for every team, joined in
+rather than recomputed. Deliberately does **not** call
+`team_roster_analysis()` per team — that bundle's `free_agent_board()`
+runs an 18-week `assign_starters()` pass per free-agent-pool candidate
+(~350-450 players), meant for one team at a time; running it for all ~12
+teams every refresh just for a summary row would be roughly 12x that cost
+for no benefit. Computed live inside `render_league_tab()` on every
+rerun, not cached — cheaper than the Roster tab's own per-team
+`team_roster_analysis()` call, which already isn't cached either.
+
+"Draft pick trade values" moved here from the Roster tab — it was always
+explicitly *not* filtered to a selected team (a pick's owner is already a
+column in `state["pick_trade_values"]`, computed once league-wide in
+`gather_state` the same way `team_power_timeline` is), so it was a
+league-wide section sitting in a per-team-selector tab. Moving it both
+gives the League tab real content beyond the summary table and trims one
+section's worth of scroll off the Roster tab.
+
+### Sellable veterans / Free agents
+
+Two sections in the Roster tab's "Value & Handcuffs" and "Free Agents"
+subtabs respectively, added for trade/roster-move evaluation — see
+`docs/rookie-draft-big-board.md` and `.claude/PROJECT_PLAN_DYNASTY.md` for
 what's deliberately out of scope.
 
 "Sellable veterans" sits right after Roster value analysis, and "Free
-agents" right after that, both for whichever team the selector above has
-picked — `analysis["sellable_players"]`/`analysis["free_agent_board"]`,
+agents" has its own subtab — both for whichever team the selector above
+has picked — `analysis["sellable_players"]`/`analysis["free_agent_board"]`,
 same on-demand-per-team pattern as the rest of the tab (unlike Team
-timeline above, neither needs every team's row together). "Draft pick
-trade values" sits at the bottom of the tab instead, explicitly *not*
-filtered to the selected team — a pick's owner is already a column in
-`state["pick_trade_values"]`, computed once league-wide in `gather_state`
-the same way `team_power_timeline` is; a caption says so directly so it
-doesn't read as a bug that changing the team selector above doesn't change
-this table.
+timeline above, neither needs every team's row together).
 
 A "FAAB bid guidance" section (`RT-10`) sits directly below the Free
 agents table — a "Check a candidate" selectbox over that same board (its
@@ -121,7 +157,14 @@ shows), or a plainer `st.info` if it's just above the range.
 
 Its own tab, not folded into Roster — a trade is inherently two teams plus
 a hypothetical exchange, so it gets its own "Trade partner" selector,
-independent of the Roster tab's. Four multiselects (players/picks given
+independent of the Roster tab's. Split into two subtabs (`CQ-10`) — Manual
+Trade and Suggested Trades — since the two were always structurally
+independent (own team pickers vs. a leaguewide scan that explicitly
+ignores those pickers, see below) and previously just stacked as one long
+scrolling page.
+
+The "Manual Trade" subtab holds the "Your team"/"Trade partner" selectors
+and the manual evaluator. Four multiselects (players/picks given
 up/received) built from data already in `state`; recomputes reactively on
 every change rather than needing an "Evaluate" button. Calls
 `dynasty_core.evaluate_trade()` twice, once per side — "both sides" falls
@@ -130,9 +173,10 @@ value" metric shows `lineup_delta_after_drops` (post-forced-cuts) rather
 than the raw `lineup_delta` when cuts are needed, raw number one hover
 away via `help=` — same pattern as the Team timeline metric's raw z-score.
 
-A second section, "Suggested Trades," sits below and is deliberately
-*not* wired to the manual evaluator's team selectors — it always scans for
-`state["user_roster_id"]`'s real roster (`RT-15`). A `st.selectbox` across
+The "Suggested Trades" subtab is deliberately *not* wired to the manual
+evaluator's team selectors (they're not even in this subtab — see above)
+— it always scans for `state["user_roster_id"]`'s real roster (`RT-15`).
+A `st.selectbox` across
 every player on every other roster is the optional single-target picker:
 choosing one runs `dynasty_core.find_trade_offers()` immediately (same
 "acquire for free" read plus each suggested offer's both sides in its own
