@@ -226,7 +226,7 @@ def _render_snapshot_selector(
     current_picks: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Lets the user switch between a week's frozen `'first'` look and its
-    `'current'` snapshot (CP-26) -- `'current'` keeps changing on every
+    `'current'` snapshot -- `'current'` keeps changing on every
     regenerate pre-lock and is what eventually gets locked in, while
     `'first'` stays frozen from the first eligible look, so comparing them
     shows what moved. No toggle is shown until a `'first'` snapshot

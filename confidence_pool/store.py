@@ -355,7 +355,7 @@ def save_week(
     `game_id`/`points`/`predicted_winner`/`confidence`/`algorithm_version`
     (as produced by `picks_core.rank_games`).
 
-    `lock_warning` (CP-15) records a caveat about this specific lock -- e.g.
+    `lock_warning` records a caveat about this specific lock -- e.g.
     `picks_core.resolve_week_lock()`'s "computed after kickoff" flag -- so it
     stays visible on every later view of the locked week, not just the one
     page load when the lock happened. Ignored unless `lock` is also set.
@@ -467,8 +467,8 @@ def load_week(
     conn: sqlite3.Connection, season_year: int, week: int, snapshot_type: str = "current"
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict | None]:
     """Load a previously-saved week's games, picks, and status for one
-    snapshot -- `'current'` by default, or `'first'` (CP-26) to see the
-    frozen initial look instead. Empty DataFrames (and `None` status --
+    snapshot -- `'current'` by default, or `'first'` to see the frozen
+    initial look instead. Empty DataFrames (and `None` status --
     status is week-level, not per-snapshot) if nothing has been saved for
     that snapshot yet.
 

@@ -49,6 +49,14 @@ Add a comment only when the *why* is non-obvious — a hidden constraint, a subt
 invariant, a workaround for a known external limitation or bug. Never describe what
 the code does; well-named identifiers do that.
 
+Never cite a backlog/ticket ID (`JIRA-456`, `CP-12`, `#123`, etc.) as a comment or
+docstring's sole justification for a design choice. Trackers are for currently open
+work — their entries get closed or deleted once resolved — so a comment that
+outsources its reasoning to one is guaranteed to eventually point at nothing. Write
+the durable reason directly in the comment itself; a backlog ID belongs in the commit
+message or PR description, which are permanent records, not in code that outlives
+the ticket.
+
 ## Code Smells and Design Principles
 
 ### Prefer the simplest correct solution

@@ -359,7 +359,7 @@ def resolve_week_lock(
     If that fresh computation happens after kickoff for one of the
     included games -- the app was never opened for this week until well
     after its deadline, possibly after games have already started or
-    finished (CP-15) -- `warning` flags which games, since their moneylines
+    finished -- `warning` flags which games, since their moneylines
     may no longer reflect the original pregame line. Still locks in the
     computed result rather than refusing to lock at all: there's no better
     data to fall back to, and leaving the week unresolved forever would be

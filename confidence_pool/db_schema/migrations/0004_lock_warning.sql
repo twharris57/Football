@@ -1,4 +1,4 @@
--- CP-15: surface when the deadline auto-lock's last-resort "compute fresh"
+-- Surface when the deadline auto-lock's last-resort "compute fresh"
 -- fallback ran after one of that week's included games had already kicked
 -- off -- its odds may no longer reflect the original pregame line. Persisted
 -- (rather than shown once at the moment of locking) so it stays visible on
