@@ -17,7 +17,7 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-32`.
+**ID tracker** (last number assigned): `CP-33`.
 
 ## Current branch — fix before merge
 
@@ -115,3 +115,22 @@ Empty right now — nothing blocking.
   against — needs `CP-3` (join snapshots against outcomes) as the
   remaining prerequisite; raw-input/algorithm-version storage is done
   (`algorithm_versions`, Phase 1 schema redesign).
+- [ ] **CP-33: `resolve_week_lock()`'s "pending odds" early return never
+  mentions a game that's also already kicked off** (assistant
+  confidence-pool review, 2026-08-28). CP-15 added a kickoff-time warning
+  to the fresh-computation fallback, but only on the path reached when
+  every included game already has odds (`pending.empty`). If the week was
+  never opened before its deadline *and* one included game is still
+  missing odds *and* a different included game has already kicked off,
+  the function returns `locked=False` with only "odds aren't posted yet
+  for: X — reload once odds are posted" — the already-started game goes
+  unmentioned, and if that game's moneyline never posts (a real
+  possibility this app has no control over, see `CLAUDE.md`'s "fully
+  dependent on `nfl_data_py`'s upstream data availability" constraint),
+  the week could stay unlocked indefinitely with a message that never
+  hints at the more consequential problem. Low real-world likelihood
+  (odds for a whole week's slate normally post together, days out) but
+  worth closing given this is exactly the unattended-safety-net path
+  `confidence_pool_principles.md` singles out for extra scrutiny — fold
+  the kickoff check into the pending-odds warning message too, rather
+  than only running it on the "everything has odds" branch.
