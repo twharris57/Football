@@ -83,9 +83,8 @@ else stays flat, on purpose.
   big board, roster analysis (needs/value/capacity/byes/weekly gaps/handcuffs),
   optimal-lineup assignment, and the round-by-round draft plan — split into
   one submodule per concern (see its own `__init__.py`), behind one
-  `gather_state()` call, used by both `rookie_draft.py` (CLI, interactive
-  refresh loop) and `streamlit_app.py` + `tabs/` (web dashboard, 5 tabs, one
-  module per non-trivial tab). Full methodology in
+  `gather_state()` call, used by `streamlit_app.py` + `tabs/` (web
+  dashboard, 5 tabs, one module per non-trivial tab). Full methodology in
   `docs/rookie-draft-big-board.md`; web/Docker details in
   `docs/dynasty-draft-web-app.md`.
 - **Web + Docker**: `web_guidelines.md` applies to both Streamlit UIs
@@ -155,7 +154,6 @@ dynasty/
                             team analysis, orchestration) - see its __init__.py for the full map
   player_scoring.py        Per-player real-scoring correction (league scoring_settings vs. FantasyCalc's assumed baseline)
   scripts/                 One-off/derivation scripts, e.g. derive_position_multipliers.py (rookie play-style bucket ratios)
-  rookie_draft.py          Rookie draft big board CLI, with interactive refresh loop
   streamlit_app.py         Rookie draft big board web dashboard entry point (thin orchestrator)
   tabs/                    One module per Streamlit tab, plus components.py for shared display helpers
 tests/
@@ -183,9 +181,6 @@ python confidence_pool/football.py            # legacy simple picker (untouched)
 python confidence_pool/football_enhanced.py   # legacy weighted picker (untouched)
 streamlit run confidence_pool/streamlit_app.py # confidence pool web app (port 8502)
 
-python dynasty/rookie_draft.py         # dynasty rookie draft big board, interactive refresh loop
-python dynasty/rookie_draft.py --once  # one snapshot, no prompt
-
 streamlit run dynasty/streamlit_app.py # dynasty rookie draft big board, web dashboard (port 8501)
 
 docker compose up --build      # local: build and run both apps in Docker
@@ -197,11 +192,14 @@ Test coverage is intentionally narrow so far: `tests/dynasty_core/` covers
 `assign_starters`, the capacity-aware drop logic, `season_average_starter_value`'s
 bye-week handling, and `roster_weekly_gaps`, one file per `dynasty_core/` submodule;
 `tests/test_player_scoring.py` covers the per-player real-scoring correction's
-`_sane_ratio` guard and multiplier fallback chain; `tests/confidence_pool/` covers
-`picks_core.py`'s game-selection/ranking/deadline logic and `store.py`'s
-persistence round-trip and lock enforcement. All run against synthetic data
-(no real API calls). The legacy confidence-pool scripts and the Sleeper/
-FantasyCalc clients themselves still have none. See `testing.md` for general
+`_sane_ratio` guard and multiplier fallback chain; `tests/test_sleeper_api.py`/
+`tests/test_fantasycalc_api.py` cover each client's retry/session config and
+on-disk cache TTL behavior (`_session.get` monkeypatched, no real network
+calls); `tests/confidence_pool/` covers `picks_core.py`'s
+game-selection/ranking/deadline logic and `store.py`'s persistence
+round-trip and lock enforcement. All run against synthetic data or
+monkeypatched API boundaries — no real API calls. The legacy
+confidence-pool scripts still have none. See `testing.md` for general
 conventions.
 
 ## Available Skills

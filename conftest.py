@@ -5,10 +5,9 @@ flat sibling modules, regardless of how pytest is invoked (bare `pytest`,
 
 This repo deliberately has no real Python package structure - modules
 resolve each other via whichever directory happens to be on sys.path at
-runtime, the same way `streamlit run dynasty/streamlit_app.py` or
-`python dynasty/rookie_draft.py` auto-add dynasty/ (and, for the
-confidence pool, `streamlit run confidence_pool/streamlit_app.py`
-auto-adds confidence_pool/) by virtue of it being the directory the
+runtime, the same way `streamlit run dynasty/streamlit_app.py` (and, for
+the confidence pool, `streamlit run confidence_pool/streamlit_app.py`)
+auto-adds its own directory by virtue of it being the directory the
 entry-point script lives in. pytest has no equivalent "directory of the
 script being run" to anchor on, so this does it explicitly instead of
 relying on pytest's own conftest-directory sys.path insertion (which

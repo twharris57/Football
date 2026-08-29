@@ -33,7 +33,7 @@ def _render_team_summary(state: dict) -> None:
         state["team_power_timeline"],
     )
     summary_display = summary.sort_values("rank").copy()
-    # Match roster_tab.py's/rookie_draft.py's win_pct display convention
+    # Match roster_tab.py's win_pct display convention
     # (percent-formatted, zero-games special case) - cols()'s generic
     # float-column handling would otherwise print the raw 0-1 fraction
     # under a "Win %" header.

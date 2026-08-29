@@ -55,7 +55,7 @@ def player_status_details(
 
 
 def player_status_flags(player_id: str, info: dict, taxi_ids: set[str], reserve_ids: set[str]) -> str:
-    """Compact icon-only summary of player_status_details, for plain-text display (the CLI)."""
+    """Compact icon-only summary of player_status_details, as a single string."""
     return " ".join(icon for icon, _description in player_status_details(player_id, info, taxi_ids, reserve_ids))
 
 

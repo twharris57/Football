@@ -3,9 +3,8 @@
 What `dynasty/dynasty_core/` computes: a full analysis of the user's Sleeper dynasty
 league (id `1324888291937386496`, "Dynasty Degenerates") ahead of and during
 the rookie draft — who to pick, who to drop, and what that does to the roster
-across a season. Consumed by both `dynasty/rookie_draft.py` (CLI) and
-`dynasty/streamlit_app.py` (web dashboard); see `docs/dynasty-draft-web-app.md`
-for the presentation layer.
+across a season. Consumed by `dynasty/streamlit_app.py` (web dashboard);
+see `docs/dynasty-draft-web-app.md` for the presentation layer.
 
 ## Data sources
 
@@ -235,7 +234,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
     roster."
   - **Actual record** — two separate fields, deliberately not one: `win_pct`
     is the real `wins / (wins + losses + ties)` from Sleeper's standings,
-    exactly what the CLI/Streamlit "Win %" display prints; `win_pct_shrunk`
+    exactly what the "Win %" display prints; `win_pct_shrunk`
     is what actually feeds the z-scoring, blended toward a neutral `0.5`
     early in the season (`_shrunk_win_pct()`, weight `games_played /
     (games_played + WIN_PCT_SHRINKAGE_K)`) so a 1-0/0-1 start doesn't swing
@@ -258,7 +257,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
   pattern.
 
   `rank` (1 = strongest `power_score` in the league) and `games_played` are
-  also exposed, both display-only derivatives — the UI/CLI lead with "3 of
+  also exposed, both display-only derivatives — the UI leads with "3 of
   12" rather than a raw z-score, with the raw score available as a
   tooltip/aside. `games_played == 0` is the signal a UI needs to show "no
   games played yet" instead of a misleading flat 50% win rate before the
@@ -293,8 +292,8 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
   specific description (e.g. the real `injury_status` word, expanding a
   cryptic Sleeper abbreviation like `PUP` where needed via
   `INJURY_STATUS_DESCRIPTIONS`) — `player_status_flags()` is the icon-only
-  string built from it, for plain-text display (the CLI). In Streamlit,
-  this table renders as plain HTML (`show_status_table()`) instead of
+  string built from it. This table renders as plain HTML
+  (`show_status_table()`) instead of
   `st.dataframe`, specifically so each status icon gets a real per-cell
   hover tooltip with its description — `st.dataframe`'s `column_config`
   only supports a tooltip on the column header, not per cell.

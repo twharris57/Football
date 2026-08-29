@@ -5,10 +5,10 @@
 Meant to be usable from a phone during the live draft: sidebar inputs for
 league ID / username, a Refresh button (re-pulls league/rosters/draft/picks —
 cheap, always live), and an "Advanced refresh" section (players/values cache
-bust, plus a scoring-multiplier prewarm) — the web equivalent of the CLI's
-Enter-vs-`f` prompt, split further so the slow multiplier recompute (1-2
-min) is never an accidental side effect of a routine refresh, but is still
-reachable from a phone if the user needs to prewarm it away from a terminal.
+bust, plus a scoring-multiplier prewarm) split out separately so the slow
+multiplier recompute (1-2 min) is never an accidental side effect of a
+routine refresh, but is still reachable from a phone if the user needs to
+prewarm it.
 """
 
 from __future__ import annotations
