@@ -32,11 +32,20 @@ def _render_team_summary(state: dict) -> None:
         state["team_names"],
         state["team_power_timeline"],
     )
-    summary_display = summary.sort_values("rank")
+    summary_display = summary.sort_values("rank").copy()
+    # Match roster_tab.py's/rookie_draft.py's win_pct display convention
+    # (percent-formatted, zero-games special case) - cols()'s generic
+    # float-column handling would otherwise print the raw 0-1 fraction
+    # under a "Win %" header.
+    summary_display["win_pct"] = summary_display.apply(
+        lambda row: "no games played yet" if row["games_played"] == 0 else f"{row['win_pct']:.0%}",
+        axis=1,
+    )
+    summary_display = summary_display.drop(columns="games_played")
     show_df(
         summary_display,
         "(no teams to show)",
-        hide_index=False,
+        hide_index=True,
         column_config=cols(
             summary_display,
             ("team", "Team"),

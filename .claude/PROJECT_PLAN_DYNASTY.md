@@ -74,44 +74,18 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-**Branch**: `feature/league-tab-nav-restructure` (PR #61) — reviewed
-2026-08-29 (`/valuation-review`).
+`feature/league-tab-nav-restructure` (PR #61), reviewed 2026-08-29.
 
-- **League tab's "Win %" column displays a raw 0-1 fraction, not a
-  percentage.** `league_tab.py`'s `_render_team_summary()` passes
-  `team_power_timeline`'s `win_pct` (a `0.0-1.0` float, e.g. `0.6` for a
-  3-2 team) straight into `cols()`, whose generic float-column handling
-  applies `st.column_config.NumberColumn(format="%.2f")` — a printf-style
-  spec on the *raw* value, not a percent transform. The column will render
-  literally as `"0.60"` under a header reading `"Win %"`, which reads as
-  "0.60%" (near-zero), the opposite of what a real 60% record means. Every
-  other place `win_pct` reaches a user — `roster_tab.py`'s Team timeline
-  section and `rookie_draft.py`'s CLI output — formats it explicitly as
-  `f"{power['win_pct']:.0%}"` (→ `"60%"`) and special-cases
-  `games_played == 0` to print "no games played yet" instead of the
-  neutral `0.5` default; this is the first place `win_pct` was routed
-  through the generic `cols()`/`NumberColumn` table path instead, and
-  neither the percent-scaling nor the zero-games special case survived
-  the switch. Fix by formatting `win_pct` as a percentage before display
-  (e.g. a dedicated `%`-scaled column, or `NumberColumn(format="percent")`
-  if the installed Streamlit version supports it) and matching the
-  existing "no games played yet" treatment for `games_played == 0`, rather
-  than leaving it to the same default path as `total_value`/`adj_value`.
-- **Team summary table leaks two unlabeled columns.** `league_team_summaries()`
-  joins in `games_played` (for the `win_pct`/games-played distinction
-  documented in `power_timeline.py`) and returns a frame indexed by
-  `roster_id`, but `_render_team_summary()`'s `cols()` call only configures
-  `team`/`total_value`/`biggest_need`/`active_open`/`taxi_open`/`phase`/
-  `rank`/`win_pct` — it never references `games_played`, and (unlike
-  `roster_tab.py`'s equivalent `("_index", "Pos")` spec) never labels the
-  index either. Since `show_df()` passes `column_config` straight to
-  `st.dataframe()` without a `column_order`, both `games_played` and the
-  `roster_id` index still render, with raw snake_case/default headers, in
-  a table whose "How this works" caption never mentions either. Either
-  add both to the `cols()` spec (labeled, and rounded/formatted like the
-  rest) or drop `games_played` from the joined columns and add
-  `("_index", ...)` to hide or label `roster_id` — whichever the intended
-  display was.
+Empty right now — both findings from this review are fixed:
+`_render_team_summary()` now formats `win_pct` as a percentage with the
+same "no games played yet" zero-games special case `roster_tab.py`/
+`rookie_draft.py` already use (instead of `cols()`'s generic
+`NumberColumn(format="%.2f")` printing the raw `0.0-1.0` fraction under a
+"Win %" header), and the table no longer leaks the `games_played`/
+`roster_id` columns (`games_played` dropped after being folded into the
+formatted `win_pct` string, `roster_id` index hidden). See
+`valuation_principles.md`'s extended "field used as both an internal
+score input and a user-facing label" rule for the durable lesson.
 
 ## Now — blocking
 
