@@ -714,16 +714,23 @@ candidates.
   a partial exception — Sleeper's own weekly projections presumably
   reflect official injury designations to whatever degree Sleeper itself
   accounts for them, but this app doesn't verify or model that directly.
-- The "This week's projection" mode's scoring dot product only covers
-  ordinary counting stats shared between Sleeper's projections and this
-  league's `scoring_settings` directly by key name; `bonus_rec_te` (TE
-  premium) is handled as an explicit position-conditional exception (see
-  `valuation_principles.md`'s "generic stat-vocabulary dot product" rule)
-  since it's a scoring weight, not a raw stat category Sleeper's global
-  (non-league-scoped) projections endpoint could ever emit directly.
-  Whether other threshold/long-play bonus categories this league scores
-  (`rush_fd`, `rec_fd`, `*_40p`/`*_50p`) are actually present in Sleeper's
-  projections is unverified (`.claude/PROJECT_PLAN_DYNASTY.md`'s `VA-7`).
+- The "This week's projection" mode's scoring dot product covers ordinary
+  counting stats shared between Sleeper's projections and this league's
+  `scoring_settings` directly by key name, including the threshold/long-play
+  categories this league scores (`rush_fd`, `rec_fd`, `rush_40p`, `rec_40p`,
+  `pass_cmp_40p`) - confirmed present in live payloads (`VA-7`, 2026-08-28).
+  `bonus_rec_te` (TE premium) is also emitted directly by Sleeper, scoped
+  correctly to TEs - the earlier assumption that a global, non-league-scoped
+  endpoint could never emit a position-conditional weight as its own key
+  turned out to be wrong; a small explicit fallback still derives it from
+  `rec` for the rare TE projection that omits the key (see
+  `valuation_principles.md`'s "generic stat-vocabulary dot product" rule for
+  the full history). **Confirmed absent**, with no fallback able to recover
+  it: `pass_td_40p`, `pass_td_50p`, `rush_td_40p`, `rush_td_50p`,
+  `rec_td_40p`, `rec_td_50p` - Sleeper's weekly projections carry no
+  per-play-length data, so any player projected to score a long touchdown
+  has those points systematically missing from "This week's projection"
+  mode, permanently, for as long as this endpoint's payload shape holds.
 - Handcuffs are RB-only — the standard fantasy usage of the term.
 - `free_agent_board` treats every candidate as active-roster-only
   (`taxi_eligible=False`) and shows FAAB budget for context without any

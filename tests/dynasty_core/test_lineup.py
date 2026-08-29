@@ -73,7 +73,9 @@ class TestWeeklyProjectedValueRows:
 
         assert rows == []
 
-    def test_te_gets_bonus_rec_te_applied_against_the_rec_stat(self):
+    def test_te_missing_bonus_rec_te_key_falls_back_to_deriving_it_from_rec(self):
+        """Sleeper usually emits bonus_rec_te directly (VA-7); this covers the rare
+        projection that omits it, where the code must still derive it from rec."""
         players = {"a": make_player("TE")}
         projections = {"a": {"rec": 5.0}}
         scoring_settings = {"rec": 1.0, "bonus_rec_te": 0.5}
@@ -81,6 +83,18 @@ class TestWeeklyProjectedValueRows:
         rows = dc.weekly_projected_value_rows(["a"], players, projections, scoring_settings)
 
         assert rows == [{"player_id": "a", "pos": "TE", "adj_value": 7.5}]  # 5*1 + 5*0.5
+
+    def test_te_bonus_rec_te_already_in_projection_is_not_double_counted(self):
+        """Live Sleeper projections do emit bonus_rec_te scoped to TEs (VA-7) - the
+        generic dot product already prices it in once, so the fallback must not add
+        it a second time."""
+        players = {"a": make_player("TE")}
+        projections = {"a": {"rec": 5.0, "bonus_rec_te": 5.0}}
+        scoring_settings = {"rec": 1.0, "bonus_rec_te": 0.5}
+
+        rows = dc.weekly_projected_value_rows(["a"], players, projections, scoring_settings)
+
+        assert rows == [{"player_id": "a", "pos": "TE", "adj_value": 7.5}]  # 5*1 + 5*0.5, once
 
     def test_non_te_does_not_get_bonus_rec_te_applied(self):
         players = {"a": make_player("WR")}

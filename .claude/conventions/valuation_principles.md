@@ -614,3 +614,35 @@ otherwise line up. Reuse `player_scoring._stat_points()`'s own explicit
 `if position == ...` branches as the reference for which keys need this,
 rather than assuming "same stat-key vocabulary confirmed live" covers
 every key in `scoring_settings`.
+
+**Correction, `VA-7`, 2026-08-28**: the claim above that Sleeper's global
+projections endpoint "can never emit a raw stat literally named
+`bonus_rec_te`" was itself an unverified assumption, not confirmed live —
+and turned out to be wrong. A live payload check found Sleeper's
+projections do emit `bonus_rec_te` directly, scoped correctly to TEs
+(112/115 projected TEs), holding the TE's own reception count — so the fix
+above's explicit TE fallback was silently double-counting it for every TE
+whose projection included the key: once via the generic dot product (which
+already picks up any key present in the payload, `bonus_rec_te` included),
+and again via the explicit fallback. Fixed by gating the fallback on the
+key's absence (`if position == "TE" and "bonus_rec_te" not in projection`)
+rather than removing it outright — a handful of TE entries (3/115, likely
+near-zero-reception players) still omit the key, so the fallback still
+earns its place, just narrowed to when it's actually needed. The same live
+check confirmed `rush_fd`, `rec_fd`, `rush_40p`, `rec_40p`, and
+`pass_cmp_40p` genuinely are present and handled correctly by the generic
+dot product with no special-casing required — but `pass_td_40p`,
+`pass_td_50p`, `rush_td_40p`, `rush_td_50p`, `rec_td_40p`, `rec_td_50p`
+never appear in any payload checked, a real and permanent gap (no per-play
+length data behind a weekly projection), documented in
+`docs/rookie-draft-big-board.md`'s "Known limitations" rather than treated
+as fixable.
+
+**The broader rule, restated**: "this endpoint structurally can never emit
+X" is itself a factual claim about an external, undocumented API — treat it
+with the same live-verification discipline as any other unverified
+assumption about a third-party data source (see this file's "prefer real
+scoring rules pulled live over hardcoding" rule), not as something safe to
+reason out from the endpoint's general shape (global vs. league-scoped)
+alone. The reasoning here was plausible and still wrong; only a real
+payload settled it.

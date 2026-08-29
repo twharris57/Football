@@ -50,13 +50,15 @@ too, per the convention above), don't let this become a history log.
 
 **Next up, in order** (user-set 2026-08-28, during in-season play — picked
 over `RT-4`'s phase-aware need rework, which stays a longer-term
-foundational item rather than the immediate next feature):
-1. `VA-7` — verify Sleeper's weekly projections against a live payload for
-   the threshold/long-play bonus categories; same undercounting risk shape
-   as the already-fixed `bonus_rec_te` bug, and cheapest to close.
-2. `RT-5` / `CQ-10` — League tab all-teams summary view and the tab
+foundational item rather than the immediate next feature). `VA-7` (verify
+Sleeper's weekly projections against a live payload) is done — found and
+fixed a real `bonus_rec_te` double-count bug plus confirmed a permanent gap
+in TD-length bonus categories; see `valuation_principles.md`'s "generic
+stat-vocabulary dot product" rule and `docs/rookie-draft-big-board.md`'s
+"Known limitations":
+1. `RT-5` / `CQ-10` — League tab all-teams summary view and the tab
    navigation restructure, taken together as the UX-focused pair.
-3. `RT-28` — FAAB position-broadening review; deliberately last since it
+2. `RT-28` — FAAB position-broadening review; deliberately last since it
    benefits from more season data existing to check against.
 
 **Nice to have (no deadline, worth doing when there's room):**
@@ -420,24 +422,6 @@ cutoff.
   `_derive_rookie_buckets`/multiplier machinery as additional features
   rather than requiring a new pipeline.
 
-- [ ] **VA-7: Unverified whether Sleeper's weekly projections include the
-  threshold/long-play bonus categories this league also scores** (assistant
-  valuation review, 2026-08-21, RT-27) — `_weekly_projected_points()`'s
-  dot product (`dynasty_core/lineup.py`) now correctly handles
-  `bonus_rec_te` as a position-conditional weight rather than a raw stat
-  (fixed same review), but whether Sleeper's projections endpoint actually
-  populates `rush_fd`, `rec_fd`, and `player_scoring.LONG_PLAY_THRESHOLDS`'s
-  `*_40p`/`*_50p` keys — all real, non-zero scoring categories for this
-  league — was never specifically checked. Unlike `bonus_rec_te`, these
-  genuinely are raw countable stats a projection provider could plausibly
-  include, so this is a "verify against live data" gap, not a structural
-  certainty. If Sleeper's projections omit them, the dot product already
-  handles it gracefully (an absent key just contributes 0, same as any
-  other stat this league doesn't score) — the open question is only
-  whether it's silently *systematically* undercounting these categories the
-  same way `bonus_rec_te` was, not whether it crashes. Worth a quick live
-  check of one real projection payload's full key set next time this is
-  touched.
 - [ ] **VA-5: `win_pct` doesn't credit a tie as half a win** (assistant
   valuation review, 2026-08-02) — `team_power_timeline_scores()` computes
   `wins / games_played` where `games_played = wins + losses + ties`; a
