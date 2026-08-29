@@ -17,7 +17,7 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-33`.
+**ID tracker** (last number assigned): `CP-34`.
 
 ## Current branch — fix before merge
 
@@ -134,3 +134,29 @@ Empty right now — nothing blocking.
   `confidence_pool_principles.md` singles out for extra scrutiny — fold
   the kickoff check into the pending-odds warning message too, rather
   than only running it on the "everything has odds" branch.
+- [ ] **CP-34: Derive `select_games()`'s standard-week selection from
+  kickoff-datetime vs. a real cutoff moment, instead of the current
+  weekday-string heuristic** (user, 2026-08-28). Today's `'standard'` rule
+  (`is_monday | is_sunday_afternoon`) approximates "games that kick off at
+  or after the deadline" by enumerating weekdays -- a proxy that's one
+  step removed from the actual rule the docstring says it's protecting
+  (no selected game's result can leak before the deadline). Replace it
+  with a real datetime-window comparison: compute that NFL week's Sunday
+  date from the schedule data itself (not from an already-selected
+  subset, so this doesn't reintroduce the circularity `week_deadline()`
+  has for standard weeks -- deadline is still derived *from* the selected
+  set's earliest kickoff, unchanged), then select any game whose
+  `kickoff_datetime()` falls in `[that Sunday at
+  season.sunday_afternoon_cutoff, the following Tuesday 23:59 ET]` --
+  reusing the existing per-season `sunday_afternoon_cutoff` knob rather
+  than a new constant. Catches a real (if rare) gap the weekday-enum
+  approach can't: a Tuesday makeup game (weather postponement -- has
+  happened at least once in NFL history) would be silently excluded today
+  even though it satisfies the filter's own no-leak rationale just as
+  well as a Monday game does. Separately, once a `season_week_rules` row
+  has a `deadline_override` (today's `'all_games'` weeks), selection
+  could derive the same way -- "kickoff >= deadline_override" -- instead
+  of the current blanket no-filter, which only works because the override
+  is *assumed* to predate every kickoff that week rather than that being
+  derived from anything; doing so would let `'all_games'` collapse away
+  entirely as its own selection-rule branch.
