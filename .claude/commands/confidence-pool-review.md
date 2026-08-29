@@ -100,6 +100,15 @@ For each changed/reviewed function, check:
   would predict (a game excluded then reloaded, a lock attempted with pending odds, a
   lock attempted with an existing snapshot to reuse), or only the path the author already
   had in mind?
+- **Dangling backlog-ID citations** — does any new or touched doc (`docs/*.md`) or code
+  comment/docstring cite a `CP-<n>` tag as the reason for a design choice? Check whether
+  that tag's entry still exists in `PROJECT_PLAN_CONFIDENCE_POOL.md` — if not (or if the
+  same PR is the one deleting it), the citation is dangling from the moment it's written.
+  This keeps recurring (see `confidence_pool_principles.md`'s "Code comments cite durable
+  docs, not ephemeral backlog IDs" rule, and its dynasty-side counterpart in
+  `valuation_principles.md`) — flag every instance found, not just ones in the diff under
+  review, since a doc file touched for one reason often carries older dangling citations
+  nobody has re-read since.
 
 ### 3. Rank findings by real-world consequence, not theoretical purity
 

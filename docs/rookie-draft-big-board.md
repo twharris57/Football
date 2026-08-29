@@ -366,7 +366,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
     league's rebuild strategy) is already-spent capacity, not "no room,"
     the distinction a 2026-08-02 review found this simplification had
     collapsed.
-  - **FAAB bid guidance** (`RT-10`, `dynasty_core/waiver_bids.py`) — real
+  - **FAAB bid guidance** (`dynasty_core/waiver_bids.py`) — real
     comparable bid history, not an invented formula. Sleeper's
     `/league/{id}/transactions/{leg}` endpoint records every waiver
     transaction with the actual dollar amount bid
@@ -376,9 +376,10 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
     player's position and *current* `adj_value` — not their value at the
     time of the bid, which isn't reconstructable without historical
     roster/value snapshots this project doesn't keep, a reasonable proxy
-    for the short in-season windows this covers today (see `RT-25` for
-    why that gets materially less accurate the further back a lookback
-    reaches, ahead of extending this to prior seasons).
+    for the short in-season windows this covers today: this gets
+    materially less accurate the further back a lookback reaches, worth
+    revisiting with a recency-aware sample if guidance ever extends to
+    prior seasons.
     `nearest_comparable_bids()` finds up to `COMPARABLE_NEAREST_K` real
     bids nearest a candidate's value (same position preferred, broadened
     to every position only when the same-position sample is under
@@ -460,7 +461,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
   - A pick with no resolvable value (the same FantasyCalc pick-naming-mismatch
     gap `pick_trade_values` already documents) contributes `0` to that
     side's asset value, surfaced to the user rather than silently wrong.
-  - **Non-obvious-value callouts** (RT-18) — `callouts`, a list of
+  - **Non-obvious-value callouts** — `callouts`, a list of
     plain-text notes surfacing value the two headline deltas alone can
     miss, all composed from existing primitives (no new signal, per
     `.claude/conventions/valuation_principles.md`'s "one valuation
@@ -484,7 +485,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
     omitting them just skips the callouts that need them, so every
     pre-existing caller/test keeps working unchanged.
 - **Suggested Trades** (`find_trade_offers()`, `leaguewide_trade_candidates()`,
-  `suggested_trades()` — `RT-15`) — one step earlier than the evaluator
+  `suggested_trades()`) — one step earlier than the evaluator
   above, and leaguewide by default rather than requiring a hand-picked
   partner and target first. Fully decoupled from the manual evaluator's
   `your_team_id`/`partner_team_id` selectors — always scans for
@@ -542,7 +543,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
     offer, and ranks survivors primarily by their best offer's
     `lineup_delta_after_drops` — multi-season roster strength, matching this
     league's rebuild strategy, stays the primary question. Ties are broken
-    (RT-27 follow-up, 2026-08-22) by net weekly-gap improvement (weeks
+    by net weekly-gap improvement (weeks
     closed minus weeks opened, from the same `weekly_gaps_opened`/
     `weekly_gaps_closed` the manual evaluator's callouts already compute) —
     a real but secondary signal for when a trade is otherwise-equal on
@@ -564,7 +565,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
   candidates by — still fully usable in the manual evaluator above),
   multi-asset targets, and 3-way trades. Lives in the Trade Evaluator tab
   below the manual evaluator.
-- **Improve an incoming offer** (`improve_incoming_offer()` — `RT-14`) —
+- **Improve an incoming offer** (`improve_incoming_offer()`) —
   a distinct question from the two above: a partner has *already* proposed
   a specific, fully-specified trade (both sides, potentially multiple
   assets each — players, current- or future-season picks, any mix) *to*
@@ -625,7 +626,7 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
   crosswalk (`nfl.import_ids()`) generally hasn't caught up with the
   incoming class yet, not a join bug; `handcuff_to` fills in gradually
   later in the year, not all at once.
-- **Lineup** (`RT-27`) — the `assign_starters` breakdown exposed directly as
+- **Lineup** — the `assign_starters` breakdown exposed directly as
   its own view, with a mode switch between two different ranking
   questions, both reusing `assign_starters()`/the taxi-IR-bench split
   unchanged (`_lineup_breakdown_from_rows()` in `dynasty_core/lineup.py`):
@@ -710,7 +711,7 @@ candidates.
   "for" which pick.
 - `roster_weekly_gaps` doesn't model FLEX/SUPER_FLEX, only dedicated slots.
 - Handcuff logic and the Lineup tab's "By value" mode have no
-  injury-status awareness. The "This week's projection" mode (`RT-27`) is
+  injury-status awareness. The "This week's projection" mode is
   a partial exception — Sleeper's own weekly projections presumably
   reflect official injury designations to whatever degree Sleeper itself
   accounts for them, but this app doesn't verify or model that directly.
@@ -734,8 +735,9 @@ candidates.
 - Handcuffs are RB-only — the standard fantasy usage of the term.
 - `free_agent_board` treats every candidate as active-roster-only
   (`taxi_eligible=False`) and shows FAAB budget for context without any
-  bid-sizing logic — see the "Free agents" bullet above and
-  `.claude/PROJECT_PLAN_DYNASTY.md`'s `RT-8`/`RT-10`.
+  bid-sizing logic — see the "Free agents" bullet above; taxi-slot
+  eligibility modeling and richer bid-sizing logic are tracked in
+  `.claude/PROJECT_PLAN_DYNASTY.md`'s Roster & trade tooling section.
 - `find_trade_offers` targets one asset at a time (not a bundle), and its
   need-match ranking checks the partner's roster as it stands today, not
   the hypothetical roster after the trade — see the "Suggested Trades"
@@ -773,6 +775,6 @@ is a deliberate decision, not a silent bug:
 | `roster_id` values are a contiguous `1..num_teams` range | `_future_pick_owners` (`pick_trade_values`, `dynasty_core/picks.py`) | The only place in this codebase that treats `roster_id` as a range rather than an opaque key (needed to synthesize future pick ownership with no real draft object). Confirmed true today; a non-contiguous ID (e.g. a departed team) would silently synthesize a phantom pick | Iterate the real `rosters` list instead of a synthesized range |
 | `TRADE_OFFER_POOL_CAP` (12) / `TRADE_OFFER_MAX_COMBO_SIZE` (3) / `TRADE_OFFER_PREFILTER_LOW`–`HIGH` (0.5×–2.0×) / `TRADE_OFFER_PARTNER_TOLERANCE_PCT` (15%) / `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` (25) | `find_trade_offers`/`_asset_pool`/`improve_incoming_offer` (`dynasty_core/trade.py`) | Judgment calls bounding an offer search's candidate pool/combinatorial search and partner-acceptance gate, not derived from any league rule — sized for this league's realistic team count and per-team sellable-pool size. Shared by both `find_trade_offers()`'s combo search and `improve_incoming_offer()`'s neighbor search via the common `_asset_pool()`/tolerance formula, not two separate constants | Adjust by feel if a real sellable pool ever exceeds the cap in practice, or the tolerance reads as too loose/strict against real trade talk |
 | `SUGGESTED_TRADE_SCAN_TOP_K = 15` | `leaguewide_trade_candidates`/`suggested_trades` (`dynasty_core/trade.py`) | How many of Stage 1's cheap, affordability-filtered leaguewide candidates get Stage 2's expensive real search — bounds Suggested Trades' scan cost to a constant regardless of league size, sized to the same order of magnitude as the original single-partner whole-roster scan concept | Raise if 15 candidates routinely produce fewer than 3 viable offers in practice; lower if a scan feels slow |
-| A historical winning bid's comparable value is the player's *current* `adj_value`, not their value at the time of the bid | `won_bid_sample` (`dynasty_core/waiver_bids.py`) | Not reconstructable without historical roster/value snapshots this project doesn't keep. Reasonable for the short in-season windows FAAB guidance covers today; gets progressively less accurate the further back a comparable bid is from, which is exactly why extending this to prior seasons (`RT-25`) needs a recency-aware sample, not a flat pool | Revisit if bid guidance ever extends beyond the current season, or starts looking systematically off for older in-season comparables |
+| A historical winning bid's comparable value is the player's *current* `adj_value`, not their value at the time of the bid | `won_bid_sample` (`dynasty_core/waiver_bids.py`) | Not reconstructable without historical roster/value snapshots this project doesn't keep. Reasonable for the short in-season windows FAAB guidance covers today; gets progressively less accurate the further back a comparable bid is from, which is exactly why extending this to prior seasons needs a recency-aware sample, not a flat pool | Revisit if bid guidance ever extends beyond the current season, or starts looking systematically off for older in-season comparables |
 | `COMPARABLE_NEAREST_K = 5` / `MIN_SAME_POSITION = 3` / `MIN_COMPARABLE_SAMPLE = 3` / `COMPARABLE_MAX_DISTANCE_PCT = 0.5` / `COMPARABLE_MIN_ABSOLUTE_DISTANCE = 50.0` | `dynasty_core/waiver_bids.py` | Judgment calls sizing the FAAB bid-guidance comparable sample and its value-distance tolerance, not derived from any league rule | Adjust by feel once a full season of real bid history exists to judge against |
 | `GET /projections/nfl/regular/{season}/{week}`'s path shape and its stat-key vocabulary lining up 1:1 with `league["scoring_settings"]` for ordinary counting stats | `sleeper_api.get_weekly_projections`, `dynasty_core/lineup.py`'s `_weekly_projected_points` | An undocumented, unofficial Sleeper endpoint — no contract to rely on. Confirmed live (2026-08-21, re-confirmed 2026-08-28) to return real per-stat projections in the same stat-key vocabulary this league's `scoring_settings` already uses, including the threshold/long-play categories it scores (`rush_fd`, `rec_fd`, `rush_40p`, `rec_40p`, `pass_cmp_40p`) and, contrary to an earlier assumption, `bonus_rec_te` directly (scoped correctly to TEs) — a small fallback still covers the rare TE projection missing a usable value (see `valuation_principles.md`'s "generic stat-vocabulary dot product" and "presence check on a key" rules). `pass_td_40p`/`50p`, `rush_td_40p`/`50p`, `rec_td_40p`/`50p` are confirmed permanently absent (no per-play-length data behind a weekly projection). Wrapped in its own try/except (`gather_state`) so a fetch failure degrades to a `data_warnings` entry and an "unavailable" Lineup-tab mode; a non-numeric value within a successful fetch is skipped rather than crashing | Re-verify the live response shape if the weekly-projection lineup mode ever starts looking systematically wrong; extend the position-conditional handling if `scoring_settings` ever gains another non-raw-stat weight beyond `bonus_rec_te` |

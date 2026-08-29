@@ -51,7 +51,8 @@ draft currently being reconciled gets renamed with an `.orphaned` suffix (a
 draft's own file stops being written to once the draft ends, so its mtime
 is a reasonable proxy for "this draft is over"). This is a soft,
 reversible marker, not deletion — actual removal of `.orphaned` files is
-still open, tracked as `DL-8`'s Phase 2 in `.claude/PROJECT_PLAN_DYNASTY.md`.
+still open, tracked in `.claude/PROJECT_PLAN_DYNASTY.md`'s Deferred/low
+priority section.
 
 ## The conceptual split: import vs. cached-derived vs. cheap-derived vs. on-demand
 
@@ -136,6 +137,7 @@ them — none of which is true today.
 
 Open work on this data model (consolidating the two accumulator snapshot
 files, ingest-time filtering, structured pick identity, etc.) is tracked in
-`.claude/PROJECT_PLAN_DYNASTY.md` under `CQ-6`, `DL-9`, and `CQ-5` — not here; fold a
-finished item's outcome into the relevant section above when it lands,
-rather than describing planned-but-not-yet-true state in this doc.
+`.claude/PROJECT_PLAN_DYNASTY.md`'s Code quality and Deferred/low priority
+sections — not here; fold a finished item's outcome into the relevant
+section above when it lands, rather than describing planned-but-not-yet-true
+state in this doc.

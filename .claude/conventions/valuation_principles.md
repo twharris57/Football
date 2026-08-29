@@ -714,3 +714,40 @@ recognize it here as: a *fallback's own trigger condition* can have the
 identical blind spot as the primary computation it's meant to backstop, so
 auditing the primary path's `isinstance`/`pd.isna` discipline isn't enough
 if the fallback next to it doesn't apply the same standard to its own gate.
+
+## Docs and comments cite durable explanations, not ephemeral backlog IDs
+
+`docs/dynasty-draft-web-app.md`'s League tab writeup (`RT-5`/`CQ-10`,
+2026-08-29 review) cited both tags repeatedly as the reason a section
+existed or was laid out a certain way — and by the time the PR that added
+those citations had even merged, `PROJECT_PLAN_DYNASTY.md`'s own
+convention (delete an item's entry the instant it's done) had already
+removed both entries, so the citations were dangling from the first
+commit. The same doc, and `docs/rookie-draft-big-board.md`, also carried
+several older citations (`RT-27`, `RT-15`, `RT-14`, `RT-10`, `RT-18`) that
+had been dangling far longer, unnoticed because nothing re-reads a
+finished doc section looking for a pointer that no longer resolves. This
+is the dynasty side's version of a failure mode
+`confidence_pool_principles.md` already documented and fixed for that
+subsystem's docs — independently rediscovered here because the two
+subsystems' conventions files are kept deliberately separate (see that
+file's own note on this) and a fix to one doesn't propagate to the other.
+
+**The rule** (identical to the confidence-pool version, restated for this
+subsystem): a `RT-<n>`/`VA-<n>`/`CQ-<n>`/`DL-<n>`/`NB-<n>` tag names
+*currently open, in-progress work* in `PROJECT_PLAN_DYNASTY.md` — the
+moment an item resolves, its entry is deleted, per that file's own stated
+convention. `docs/*.md` files, per `docs/README.md`'s own policy, describe
+*present, durable behavior* — a fact that should live in exactly one place
+and not depend on the plan file's current contents. Citing a tag there as
+"the reason" a design choice was made is citing something guaranteed to
+eventually 404, often before the citing PR has even merged. Write the
+durable explanation in the doc's own prose instead of outsourcing it to a
+backlog pointer; if a doc genuinely needs to point a reader at *currently
+open* related work (a "Known gaps" bullet, a "Static assumptions" table's
+"what to revisit" column), point at the plan file's stable section name
+(`.claude/PROJECT_PLAN_DYNASTY.md`'s Roster & trade tooling section) rather
+than a specific item number — the section persists even as individual
+items inside it churn. A backlog ID itself belongs only in a commit
+message (permanent, historical) or the plan file's own attribution line —
+never in a doc or code comment that will outlive the ID it points to.
