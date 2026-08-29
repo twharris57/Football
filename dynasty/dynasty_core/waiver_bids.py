@@ -1,4 +1,4 @@
-"""FAAB bid guidance from this league's own real waiver transaction history (RT-10).
+"""FAAB bid guidance from this league's own real waiver transaction history.
 
 Sleeper's transaction log records every waiver claim, win or lose, with the
 actual dollar amount bid (`settings.waiver_bid`) - a real, this-league-
@@ -47,8 +47,7 @@ def won_bid_sample(
     position and *current* `adj_value` - not value at the time of the bid,
     which isn't reconstructable without historical roster/value snapshots
     this project doesn't keep (a documented simplification, reasonable for
-    the short in-season windows this covers - see RT-25 in
-    `.claude/PROJECT_PLAN_DYNASTY.md` for why this gets materially less accurate
+    the short in-season windows this covers; gets materially less accurate
     over a longer, multi-season lookback and needs revisiting before this
     extends that far).
 
@@ -92,7 +91,19 @@ def nearest_comparable_bids(
     Same-position rows preferred; broadens to every row in `sample`
     (still nearest-by-value) only when the same-position count is below
     `min_same_position`, since bidding behavior plausibly differs
-    meaningfully by position. Whichever pool gets selected, a row only
+    meaningfully by position - **except for QB, which never broadens**.
+    This is a confirmed superflex league (`SUPER_FLEX` is a real roster
+    slot), so a QB can draw a real bidding premium purely from 2-QB-
+    startable scarcity that a same-`adj_value` RB/WR/TE never faces -
+    mixing a thin QB sample into RB/WR/TE comparables (or the reverse)
+    would present a calibrated-looking range built from a different demand
+    curve than the one the candidate is actually being bid into. A live
+    check of this league's own transaction history found only 2 real QB
+    winning bids to date - too few to confirm or rule out the premium
+    empirically, so this stays a small-sample "no guidance yet" for QB
+    (via `bid_guidance`'s `MIN_COMPARABLE_SAMPLE` floor) rather than a
+    mismatched-demand-curve range; revisit once a real QB sample exists to
+    check against. Whichever pool gets selected, a row only
     counts as a real comparable if its `adj_value` is within
     `max(COMPARABLE_MAX_DISTANCE_PCT * candidate_adj_value,
     COMPARABLE_MIN_ABSOLUTE_DISTANCE)` of the candidate's - nearest-K alone
@@ -106,13 +117,14 @@ def nearest_comparable_bids(
     asking the reader to trust an unverifiable "similar" claim.
     `same_position` is `False` when broadening happened, so a caller can
     say so honestly rather than implying a position-specific comparison
-    that isn't really there.
+    that isn't really there. Always `True` for QB, since QB never
+    broadens (an empty/thin QB pool means no guidance, not a broadened one).
     """
     if sample.empty:
         return [], True
 
     same_position = sample[sample["position"] == candidate_position]
-    if len(same_position) >= min_same_position:
+    if candidate_position == "QB" or len(same_position) >= min_same_position:
         pool, used_same_position = same_position, True
     else:
         pool, used_same_position = sample, False

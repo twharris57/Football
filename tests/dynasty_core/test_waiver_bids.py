@@ -91,6 +91,28 @@ class TestNearestComparableBids:
         assert same_position is False
         assert 50.0 in {c["bid"] for c in comparables}  # the RB row is now eligible since no TE rows exist at all
 
+    def test_qb_never_broadens_even_when_same_position_sample_is_too_thin(self):
+        # Superflex scarcity means a QB bid isn't comparable to a same-value
+        # RB/WR/TE bid - QB should stay on its own thin pool (empty here)
+        # rather than broadening into the WR/RB rows, per RT-28.
+        sample = self._sample()  # no QB rows at all
+
+        comparables, same_position = dc.nearest_comparable_bids(100.0, "QB", sample, min_same_position=3)
+
+        assert comparables == []
+        assert same_position is True
+
+    def test_qb_stays_on_its_own_thin_sample_instead_of_the_broadened_pool(self):
+        sample = pd.concat(
+            [self._sample(), pd.DataFrame([{"player_id": "qb1", "position": "QB", "adj_value": 100.0, "bid": 40.0}])],
+            ignore_index=True,
+        )
+
+        comparables, same_position = dc.nearest_comparable_bids(100.0, "QB", sample, min_same_position=3)
+
+        assert same_position is True
+        assert {c["bid"] for c in comparables} == {40.0}  # only the 1 real QB row, never the WR/RB rows
+
     def test_returns_genuinely_nearest_by_value_not_just_first_k(self):
         sample = pd.DataFrame(
             [
@@ -185,3 +207,17 @@ class TestBidGuidance:
 
         assert guidance is not None
         assert guidance["same_position"] is False
+
+    def test_qb_gets_no_guidance_rather_than_a_broadened_range(self):
+        # A same-value RB sample clears MIN_COMPARABLE_SAMPLE easily, but a
+        # QB candidate should never be shown a range built from non-QB bids
+        # (RT-28) - "no guidance yet" is the honest outcome here.
+        sample = pd.DataFrame(
+            [
+                {"player_id": "rb1", "position": "RB", "adj_value": 100.0, "bid": 10.0},
+                {"player_id": "rb2", "position": "RB", "adj_value": 101.0, "bid": 20.0},
+                {"player_id": "rb3", "position": "RB", "adj_value": 99.0, "bid": 30.0},
+            ]
+        )
+
+        assert dc.bid_guidance(100.0, "QB", sample) is None

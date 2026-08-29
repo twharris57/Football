@@ -199,7 +199,7 @@ def _render_free_agents(state: dict, analysis: dict, selected_roster_id: int) ->
 
 
 def _render_faab_bid_guidance(state: dict, board: pd.DataFrame) -> None:
-    """RT-10: real comparable FAAB bids for one selected free-agent candidate,
+    """Real comparable FAAB bids for one selected free-agent candidate,
     computed on demand rather than for every board row every refresh - most
     rows are never looked at this closely."""
     if board.empty or "player_id" not in board.columns:
@@ -214,7 +214,14 @@ def _render_faab_bid_guidance(state: dict, board: pd.DataFrame) -> None:
             "only when there aren't enough same-position comparables yet), and each "
             "one's own value is shown alongside its bid so you can judge how close a "
             "match it really is. A bid whose player is too far off in value to be a "
-            "meaningful comparable is excluded rather than shown anyway. Shown as the "
+            "meaningful comparable is excluded rather than shown anyway. QB is the one "
+            "exception to broadening: this is a superflex league, so a QB can draw a real "
+            "bidding premium purely from 2-QB-startable scarcity that a same-value "
+            "RB/WR/TE never faces, and mixing a thin QB sample into other positions' bids "
+            "would present a range built from a different demand curve than the one a QB "
+            "candidate is actually being bid into - so QB guidance simply says \"not "
+            "enough comparable bid history yet\" until enough real QB bids exist, rather "
+            "than ever broadening. Shown as the "
             "real numbers directly, plus a low/median/high computed from that exact list "
             "- never a separately-modeled number. \"Not enough comparable bid history "
             "yet\" means too few real winning bids exist close enough in value this "

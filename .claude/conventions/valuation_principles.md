@@ -604,6 +604,34 @@ for a number a human might act on, surface enough of the underlying match
 judge closeness themselves rather than trusting a black-box "similar
 enough" verdict.
 
+**Extension — closeness in the measured dimension doesn't imply the same
+demand curve (RT-28, 2026-08-29).** The distance floor above catches two
+rows that are far apart *in `adj_value`*. It doesn't catch two rows that
+are close in `adj_value` but priced by structurally different bidding
+behavior — this project's confirmed superflex format means a QB can draw a
+real FAAB premium purely from 2-QB-startable scarcity that a same-value
+RB/WR/TE never faces, so broadening a thin QB sample into RB/WR/TE
+comparables (or the reverse) could pass both the count *and* the distance
+floor while still mixing two different markets. A live check of this
+league's real transaction history found only 2 winning QB bids to
+date — nowhere near enough to empirically confirm or size the premium, so
+`nearest_comparable_bids()` was changed to never broaden a QB candidate
+across positions at all: too few real QB comparables now correctly
+resolves to `bid_guidance()`'s existing "not enough data yet" `None`,
+the same honest-gap outcome the count floor already produces, rather than
+a distance-floor-passing but demand-curve-mismatched range.
+
+**The rule**: before broadening a "nearest" search's candidate pool across
+a categorical boundary (position, format, tier), check whether that
+boundary is known to carry a *structural* pricing/demand difference in
+this league's specific rules (superflex QB scarcity, TE premium, etc.) —
+not just whether the rows happen to be numerically close on the one
+dimension being measured. If so, don't let a distance floor alone justify
+mixing them; either exclude that category from broadening entirely (as
+here — small-sample "no guidance" beats a plausible-looking wrong-market
+number) or verify empirically, against real data, that the suspected
+premium is small enough to ignore before broadening it in.
+
 ## A generic stat-vocabulary dot product silently drops any scoring rule that isn't itself a raw stat
 
 `_weekly_projected_points()` (`dynasty_core/lineup.py`, `RT-27`,
