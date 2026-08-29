@@ -165,6 +165,17 @@ class TestSelectGames:
 
         assert set(selected["game_id"]) == {"sat", "sun_early", "sun_afternoon", "mon"}
 
+    def test_all_games_rule_with_no_configured_deadline_tolerates_an_unset_gametime(self):
+        # A late-season week's exact kickoff time may not be finalized in
+        # nfl_data_py's schedule data yet -- selecting everything (the
+        # fallback while no deadline is configured) shouldn't need to
+        # parse a kickoff time that isn't there yet.
+        schedule = pd.DataFrame([_game("g1", 17, "Saturday", None)])
+
+        selected = pc.select_games(schedule, 2026, 17, selection_rule="all_games")
+
+        assert set(selected["game_id"]) == {"g1"}
+
     def test_all_games_rule_excludes_a_game_before_a_configured_deadline(self):
         # Once a real deadline is known, 'all_games' should stop assuming
         # it predates every kickoff that week and actually check.

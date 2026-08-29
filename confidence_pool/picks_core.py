@@ -174,16 +174,22 @@ def select_games(
         & (schedule["game_type"] == "REG")
         & (schedule["week"] == week)
     ]
-    kickoffs = pd.Series(
-        [kickoff_datetime(row["gameday"], row["gametime"]) for _, row in week_games.iterrows()],
-        index=week_games.index,
-    )
+    def _kickoffs() -> pd.Series:
+        # Only called once a branch below actually needs real kickoff
+        # times -- the "select everything" fallbacks (no configured
+        # deadline yet; no games to anchor a window to) must stay usable
+        # even when a game's gametime isn't finalized in the schedule data
+        # yet (nfl_data_py has no guarantee it is).
+        return pd.Series(
+            [kickoff_datetime(row["gameday"], row["gametime"]) for _, row in week_games.iterrows()],
+            index=week_games.index,
+        )
 
     if selection_rule == "all_games":
         if configured_deadline is None:
             selected = week_games
         else:
-            selected = week_games[kickoffs >= configured_deadline]
+            selected = week_games[_kickoffs() >= configured_deadline]
     else:
         sunday = _week_sunday(week_games)
         if sunday is None:
@@ -191,6 +197,7 @@ def select_games(
         else:
             window_start = kickoff_datetime(str(sunday), sunday_afternoon_cutoff)
             window_end = kickoff_datetime(str(sunday + timedelta(days=2)), "23:59")
+            kickoffs = _kickoffs()
             selected = week_games[(kickoffs >= window_start) & (kickoffs <= window_end)]
 
     return selected[GAME_COLUMNS].reset_index(drop=True)
