@@ -383,7 +383,17 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
     `nearest_comparable_bids()` finds up to `COMPARABLE_NEAREST_K` real
     bids nearest a candidate's value (same position preferred, broadened
     to every position only when the same-position sample is under
-    `MIN_SAME_POSITION`), filtered to rows within
+    `MIN_SAME_POSITION`) — **except QB, which never broadens**: this
+    league is superflex, so a QB can draw a real bidding premium purely
+    from 2-QB-startable scarcity that a same-value RB/WR/TE never faces,
+    and mixing a thin QB sample into other positions' bids would present a
+    range built from a different demand curve than the one a QB candidate
+    is actually being bid into. A live check of this league's own
+    transaction history (2026-08-29) found only 2 real QB winning bids to
+    date — too few to confirm or rule out the premium empirically, so QB
+    stays a small-sample "not enough data yet" via `MIN_COMPARABLE_SAMPLE`
+    rather than a broadened, mismatched-demand-curve range; revisit once a
+    real QB sample exists to check against. Filtered to rows within
     `max(COMPARABLE_MAX_DISTANCE_PCT * candidate_adj_value,
     COMPARABLE_MIN_ABSOLUTE_DISTANCE)` of the candidate's own value — a
     count floor alone (`MIN_COMPARABLE_SAMPLE`) doesn't catch a sparse or

@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-28`, `VA-7`, `CQ-10`, `DL-9`.
+below): `NB-2`, `RT-29`, `VA-7`, `CQ-10`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -48,12 +48,8 @@ it's stopped being a "short" list — thin it back out to what's actually
 active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
-**Next up, in order** (user-set 2026-08-28, during in-season play — picked
-over `RT-4`'s phase-aware need rework, which stays a longer-term
-foundational item rather than the immediate next feature). `RT-5`/`CQ-10`
-(League tab + tab nav restructure) shipped 2026-08-29:
-1. `RT-28` — FAAB position-broadening review; deliberately last since it
-   benefits from more season data existing to check against.
+Empty right now (user-set 2026-08-28 order — `RT-5`/`CQ-10` shipped
+2026-08-29, `RT-28` shipped 2026-08-29) — next priority not yet set.
 
 **Nice to have (no deadline, worth doing when there's room):**
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
@@ -74,18 +70,18 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-`feature/league-tab-nav-restructure` (PR #61), reviewed 2026-08-29.
+`feature/faab-qb-broadening-fix` (PR #62), reviewed 2026-08-29.
 
-Empty right now — both findings from this review are fixed:
-`_render_team_summary()` now formats `win_pct` as a percentage with the
-same "no games played yet" zero-games special case `roster_tab.py`/
-`rookie_draft.py` already use (instead of `cols()`'s generic
-`NumberColumn(format="%.2f")` printing the raw `0.0-1.0` fraction under a
-"Win %" header), and the table no longer leaks the `games_played`/
-`roster_id` columns (`games_played` dropped after being folded into the
-formatted `win_pct` string, `roster_id` index hidden). See
-`valuation_principles.md`'s extended "field used as both an internal
-score input and a user-facing label" rule for the durable lesson.
+Empty right now — `RT-29` is fixed: `nearest_comparable_bids()`'s
+broadened ("every position") pool now excludes QB rows whenever the
+candidate itself isn't QB (`sample[sample["position"] != "QB"]`), closing
+the reverse direction of the contamination the branch's own docstring had
+already named but only partly guarded against. Two new tests
+(`test_qb_row_is_excluded_from_a_non_qb_candidates_broadened_pool`,
+`test_non_qb_candidate_never_gets_a_qb_bid_folded_into_its_guidance`)
+cover a non-QB candidate against a sample containing a nearest-by-value QB
+row. See `valuation_principles.md`'s extended note under the RT-28 entry
+for the durable lesson.
 
 ## Now — blocking
 
@@ -297,28 +293,6 @@ Deliberately out of v1, not forgotten:
   a comparable bid is from).
   A weighted-by-recency sample (or a hard recency window) is likely
   needed, not a flat pool across all available seasons.
-- [ ] **RT-28: FAAB bid guidance's position-broadening may mix structurally
-  different bidding behavior, not just different players** (assistant
-  valuation review, 2026-08-19) — when a candidate's same-position sample
-  is under `MIN_SAME_POSITION`, `nearest_comparable_bids()` broadens to
-  the nearest bids across *every* position, on the theory that "nearest by
-  value" is still a reasonable comparable. That holds for raw dynasty
-  value, but FAAB is a bidding-*behavior* signal, and this is a confirmed
-  superflex league (see `valuation_principles.md`'s superflex section) —
-  a backup-QB-tier player plausibly draws a real bidding premium purely
-  from 2-QB-startable scarcity that a RB/WR/TE at the identical
-  `adj_value` never faces, independent of whatever the market-value layer
-  already prices in. Broadening a thin QB sample into RB/WR/TE
-  comparables (or the reverse) risks presenting a calibrated-looking
-  range built from a different demand curve than the one the candidate is
-  actually being bid into. Already partially disclosed (`same_position ==
-  False` triggers a caption in `roster_tab.py`), so not filed as a
-  fix-before-merge blocker — but worth a deliberate look once enough
-  season data exists to check empirically: either exclude QB from
-  cross-position broadening entirely (small-sample "no guidance yet" is
-  more honest than a mismatched-demand-curve range), or widen the
-  disclosure to name the superflex-scarcity risk specifically rather than
-  the generic "showing bids across all positions" caption.
 - [ ] **RT-26: Draft Board — a year selector, defaulting to the current
   year** (user-flagged 2026-08-20, future years) — once more than one
   rookie draft's worth of history exists, add a dropdown to the Draft

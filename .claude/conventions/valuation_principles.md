@@ -604,6 +604,61 @@ for a number a human might act on, surface enough of the underlying match
 judge closeness themselves rather than trusting a black-box "similar
 enough" verdict.
 
+**Extension — closeness in the measured dimension doesn't imply the same
+demand curve (RT-28, 2026-08-29).** The distance floor above catches two
+rows that are far apart *in `adj_value`*. It doesn't catch two rows that
+are close in `adj_value` but priced by structurally different bidding
+behavior — this project's confirmed superflex format means a QB can draw a
+real FAAB premium purely from 2-QB-startable scarcity that a same-value
+RB/WR/TE never faces, so broadening a thin QB sample into RB/WR/TE
+comparables (or the reverse) could pass both the count *and* the distance
+floor while still mixing two different markets. A live check of this
+league's real transaction history found only 2 winning QB bids to
+date — nowhere near enough to empirically confirm or size the premium, so
+`nearest_comparable_bids()` was changed to never broaden a QB candidate
+across positions at all: too few real QB comparables now correctly
+resolves to `bid_guidance()`'s existing "not enough data yet" `None`,
+the same honest-gap outcome the count floor already produces, rather than
+a distance-floor-passing but demand-curve-mismatched range.
+
+**The rule**: before broadening a "nearest" search's candidate pool across
+a categorical boundary (position, format, tier), check whether that
+boundary is known to carry a *structural* pricing/demand difference in
+this league's specific rules (superflex QB scarcity, TE premium, etc.) —
+not just whether the rows happen to be numerically close on the one
+dimension being measured. If so, don't let a distance floor alone justify
+mixing them; either exclude that category from broadening entirely (as
+here — small-sample "no guidance" beats a plausible-looking wrong-market
+number) or verify empirically, against real data, that the suspected
+premium is small enough to ignore before broadening it in.
+
+**Correction, 2026-08-29 (review of the fix itself, `RT-29`):** the
+implementation of the rule above only closed half of what its own
+docstring claimed to close. `nearest_comparable_bids()` was changed so a
+QB candidate never broadens *out* into RB/WR/TE bids — but a non-QB
+candidate with a thin same-position sample still broadens *into* the
+unfiltered sample, QB rows included, since the new `candidate_position ==
+"QB"` check only gates whether the QB candidate's own pool stays
+same-position, not whether QB rows are excluded from the pool everyone
+else broadens into. The docstring explicitly named this as "(or the
+reverse)" of the case actually fixed — the risk was correctly identified
+in writing and then only half-implemented, caught by re-reading the
+docstring's own claim against the code rather than by the new tests, none
+of which constructed a broadened pool containing a QB row.
+
+**The rule, extended**: when a fix's own docstring or commit message
+names a risk as two-directional ("X, or the reverse"; "A into B or B into
+A"), treat that phrasing as a checklist, not a flourish — verify the code
+change actually closes both directions, and that at least one new test
+exercises each direction independently. A test suite that only ever
+constructs the sample for the direction the author was actively thinking
+about (here: a QB candidate broadening out) will pass cleanly while the
+symmetric case (a non-QB candidate broadening in) stays exactly as broken
+as before the fix — the same "test coverage matches the direction already
+expected, not the failure mode itself" gap this project's review process
+already watches for, now confirmed on a fix that named its own blind spot
+and missed it anyway.
+
 ## A generic stat-vocabulary dot product silently drops any scoring rule that isn't itself a raw stat
 
 `_weekly_projected_points()` (`dynasty_core/lineup.py`, `RT-27`,
