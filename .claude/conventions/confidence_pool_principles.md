@@ -311,6 +311,52 @@ particular has several rules (6, 2, 7) that push scores toward or below
 zero on purpose, so this shape is more likely to recur here than in a
 typical CRUD form.
 
+## Replacing a loose selection heuristic with a real check must keep the old check's tolerance for missing data
+
+`select_games()`'s `'standard'` rule used to approximate "games at or
+after the deadline" with a weekday-string comparison
+(`week_games["gametime"] >= sunday_afternoon_cutoff`, gated to Sunday
+rows) -- loose, but incidentally safe: pandas' object-dtype comparison
+evaluates `None >= "13:00"` as `False` rather than raising, so a game
+with an unset `gametime` was silently excluded, never fatal. `CP-34`
+(2026-08-29) replaced it with a real datetime-window comparison via
+`kickoff_datetime()` (`datetime.strptime(gametime, "%H:%M")`), which is
+the *more correct* check -- but `strptime(None, ...)` raises `TypeError`
+where the old comparison quietly returned `False`. Both the `'standard'`
+branch and `'all_games'` (once a `configured_deadline` exists) call this
+over *every* game in that week, including ones that would never have been
+selected -- so one game anywhere in the week with a not-yet-finalized
+kickoff time (nfl_data_py's normal state for a flex-scheduled late-season
+game, i.e. the exact `KNOWN_LATE_SEASON_WEEKS` weeks this pool's own
+`'all_games'` rule targets) crashes selection for the *entire* week, not
+just a warning or a dropped game -- and nothing between `picks_core` and
+`panels/picks_tab.py`'s unconditional call site catches it, so the crash
+reaches the user as a broken Picks tab. A same-branch follow-up commit
+("make lazy") explicitly tried to fix this exact scenario, but its test
+only covered a single game with nothing else in the week and no
+configured deadline -- it never exercised the mixed known/unknown-gametime
+case inside a branch that actually filters, which is the case that still
+crashes (`CP-35`, 2026-08-29 confidence-pool review).
+
+**The rule**: when replacing an approximate/loose selection heuristic with
+a stricter, more "correct" real check, explicitly verify the new check's
+behavior on the exact missing/malformed-input cases the old heuristic
+happened to tolerate -- don't assume "more correct" also means "at least
+as safe." A heuristic built from loose string/weekday comparisons often
+degrades gracefully on `None`/`NaN` by accident (pandas' vectorized
+comparisons silently return `False`); a real parse (`strptime`, `int()`,
+a strict datetime construction) usually doesn't, and will raise instead.
+This is easiest to miss in exactly the case that matters most here: the
+new stricter code path is being added *because* the old one was too loose
+for some edge case, so the review attention is on the new case being
+caught correctly, not on whether the input the old code silently ignored
+can still flow into the new one uncaught. Test the "some real, some
+missing" mixed case for any field this pool's own upstream data source
+(`nfl_data_py`) is documented -- by this project's own commit history --
+as not guaranteeing populated (`gametime` for late-season/flex-scheduled
+games is the known example), not just the "all present" and "all absent"
+extremes.
+
 **The rule**: a nullable numeric column read through `pd.read_sql_query`
 (or any pandas DB loader) is not "float only where the value is missing"
 — a single `NULL` anywhere in the *result set* changes the dtype of every

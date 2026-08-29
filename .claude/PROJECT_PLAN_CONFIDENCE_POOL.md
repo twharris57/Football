@@ -17,11 +17,59 @@ once in document order and never reused or renumbered even after the item
 it names is completed and deleted. Cross-reference other items by tag
 (`see CP-3`), never by list position.
 
-**ID tracker** (last number assigned): `CP-34`.
+**ID tracker** (last number assigned): `CP-35`.
 
 ## Current branch — fix before merge
 
-Empty right now.
+`feature/cp-34-kickoff-based-game-selection` (PR #57) — CP-34's move from a
+weekday-string heuristic to a real kickoff-datetime comparison.
+
+- [ ] **CP-35: `select_games()`'s real-datetime comparison crashes the
+  whole week -- not just the ambiguous game -- the moment any one game
+  that week has an unfinalized `gametime`**, and `week_deadline()` has the
+  same problem one call downstream (assistant confidence-pool review,
+  2026-08-29). `_kickoffs()` (both the `'standard'` branch, and
+  `'all_games'` once `configured_deadline` is set) calls
+  `kickoff_datetime()` -- `datetime.strptime(gametime, "%H:%M")` -- over
+  *every* game in that week unconditionally, including games that would
+  never have been selected anyway. `datetime.strptime(None, "%H:%M")`
+  raises `TypeError`, uncaught anywhere between `picks_core.select_games`
+  and `panels/picks_tab.py`'s unconditional call site -- so it crashes the
+  entire Picks tab render, for whichever week the user has selected, not
+  just a warning or a dropped game. Verified live (both reproduce a hard
+  `TypeError`):
+  - `'standard'`: a schedule with a Thursday game (`gametime=None`) and a
+    normal Sunday game raises on `select_games(schedule, year, week)`
+    even though the Thursday game was never going to be selected --
+    `'standard'` has no "we don't know yet" fallback at all once any game
+    exists that week (`_week_sunday` only returns `None` on an empty
+    week).
+  - `'all_games'` + `configured_deadline` set: a schedule with one game
+    that has a real `gametime` and one that doesn't (the flex-scheduling
+    reality for weeks 16-18 -- times aren't finalized until close to the
+    week) raises the moment a commissioner deadline has been configured
+    in Settings -- i.e. exactly the state `CP-1` asks the user to reach.
+  - Downstream, `week_deadline()` computes `kickoffs` for every row
+    unconditionally too, *before* checking whether `configured_deadline`
+    was even supplied -- so even the one fallback that does tolerate an
+    unset `gametime` (`'all_games'` with no `configured_deadline` yet)
+    gets re-crashed one function call later in `picks_tab.py`, on the very
+    same `auto_games` `select_games()` just successfully returned.
+
+  This is a real regression, not just an unhardened new path: the old
+  weekday-string comparison (`week_games["gametime"] >= cutoff`) never
+  raised on a `None`/`NaN` gametime -- pandas' object-dtype comparison
+  quietly evaluates `None >= "13:00"` as `False` and moves on, so an
+  unset-gametime game was silently excluded before, not fatal. The
+  "make `select_games()`'s kickoff-time computation lazy" commit on this
+  same branch explicitly set out to fix "regressing exactly the
+  late-season weeks nfl_data_py is most likely to still have an
+  unfinalized kickoff time for" -- but its own test only covers a single
+  game with no other games and no configured deadline; it never exercises
+  the mixed known/unknown-gametime case inside a branch that actually
+  filters, which is the case that still crashes. See
+  `confidence_pool_principles.md`'s new "tightening a selection heuristic
+  into a real check" rule for the durable pattern this instance of.
 
 ## Now — blocking
 

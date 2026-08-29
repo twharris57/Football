@@ -228,6 +228,14 @@ actually covers it.
   (injury impact, weather/altitude, sentiment) aren't wired into
   `picks_core.py` — `CP-6`, deliberately deferred; the pure-odds approach
   already placed 7th of 100+ last season.
+- **An unfinalized `gametime` crashes `select_games()` for the whole
+  week, not just the one game** — `CP-35`. Both `'standard'` and
+  `'all_games'` (once a deadline is configured) parse every game's
+  `gametime` in that week to compare it against the selection window/
+  deadline; a game whose kickoff time nfl_data_py hasn't finalized yet
+  (normal for a flex-scheduled late-season game, i.e. weeks 16-18) raises
+  instead of being tolerated, taking down the whole Picks tab for
+  whichever week is selected. Fix tracked in `CP-35`.
 
 ## Static assumptions
 
