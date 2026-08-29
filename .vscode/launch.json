@@ -5,25 +5,6 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Dynasty: Rookie Draft CLI (interactive)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/dynasty/rookie_draft.py",
-            "cwd": "${workspaceFolder}",
-            "justMyCode": false,
-            "console": "integratedTerminal"
-        },
-        {
-            "name": "Dynasty: Rookie Draft CLI (--once)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/dynasty/rookie_draft.py",
-            "args": ["--once"],
-            "cwd": "${workspaceFolder}",
-            "justMyCode": false,
-            "console": "integratedTerminal"
-        },
-        {
             "name": "Dynasty: Streamlit Dashboard",
             "type": "debugpy",
             "request": "launch",
