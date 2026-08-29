@@ -21,7 +21,7 @@ from .roster_needs import (
     roster_needs_summary,
 )
 
-# Trade-target optimizer (RT-12) bounds - judgment calls, not derived from
+# Trade-target optimizer bounds - judgment calls, not derived from
 # any league rule, same status as the rebuild-strategy constants elsewhere.
 # Sized for this league's realistic team count (~12) and per-team
 # sellable-pool size (typically 5-15 candidates between bench depth and
@@ -34,7 +34,7 @@ TRADE_OFFER_PREFILTER_HIGH = 2.0
 TRADE_OFFER_PARTNER_TOLERANCE_PCT = 0.15
 TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE = 25.0
 
-# Leaguewide Suggested Trades (RT-15) - how many of the cheap, leaguewide
+# Leaguewide Suggested Trades - how many of the cheap, leaguewide
 # marginal-value-ranked candidates get the expensive per-candidate
 # find_trade_offers() search. Bounds Stage 2's cost to a constant
 # regardless of league size (see leaguewide_trade_candidates()/
@@ -211,8 +211,8 @@ def _pick_context_callouts(pick_names: list[str], pick_value_table: pd.DataFrame
     round-only "2027 1st" (no real draft object yet to assign a slot).
     Splitting on " Pick " instead would leave a next-season pick's "season"
     as its own full name, putting it alone in a one-pick class that always
-    ranks #1 - fixed after verifying live (RT-18 fix-before-merge review,
-    2026-08-07 - see `.claude/conventions/valuation_principles.md`).
+    ranks #1 - fixed after verifying live (2026-08-07 review - see
+    `.claude/conventions/valuation_principles.md`).
     """
     if not pick_names or pick_value_table is None or pick_value_table.empty:
         return []
@@ -276,8 +276,8 @@ def evaluate_trade(
     trade-only number. Newly-incoming players are protected from being
     recommended for their own trade's forced cut via `exclude_ids`.
 
-    `weekly_gaps_opened`/`weekly_gaps_closed` (RT-27 follow-up, week numbers
-    where this trade newly breaks/fixes a dedicated-slot weekly gap, via
+    `weekly_gaps_opened`/`weekly_gaps_closed` (week numbers where this trade
+    newly breaks/fixes a dedicated-slot weekly gap, via
     `_weekly_gap_changes()`/`gap_delta()`) are a secondary signal, not a
     third independent valuation axis - `lineup_delta`/`lineup_delta_after_drops`
     stay the primary read for whether a trade is worth it (this league's
@@ -288,7 +288,7 @@ def evaluate_trade(
     since `find_trade_offers()`'s combinatorial search loop runs with
     `compute_callouts=False` for cost but still needs this to rank offers.
 
-    `callouts` (RT-18) surfaces non-obvious value the two headline deltas
+    `callouts` surfaces non-obvious value the two headline deltas
     can miss - the same weekly-gap change as text, an incoming
     player who handcuffs one of this roster's own current RBs, an outgoing
     player who was buried on this bench or an incoming one who'd start
@@ -474,7 +474,7 @@ def find_trade_offers(
     combo counts, so an empty result can say something concrete.
 
     `handcuffs` and `pick_value_table` pass straight through to every
-    `evaluate_trade()` call for its `callouts` (RT-18) - `pick_value_table`
+    `evaluate_trade()` call for its `callouts` - `pick_value_table`
     is already required here for offer search, so it's reused rather than
     a second lookup table.
     """
@@ -630,7 +630,7 @@ def improve_incoming_offer(
     handcuffs: dict[str, str] | None = None,
     top_n: int = 3,
 ) -> dict[str, Any]:
-    """Evaluate a trade a partner has already proposed to us (RT-14) - both
+    """Evaluate a trade a partner has already proposed to us - both
     sides already fully specified, unlike `find_trade_offers()`'s single
     target - and either confirm it's worth taking, suggest a nearby
     adjustment that would make it worth taking, or say plainly that no
@@ -855,7 +855,7 @@ def leaguewide_trade_candidates(
     pick_value_table: pd.DataFrame,
     top_n: int = SUGGESTED_TRADE_SCAN_TOP_K,
 ) -> list[dict]:
-    """Cheap, leaguewide "worth pursuing" pre-rank - Stage 1 of Suggested Trades (RT-15).
+    """Cheap, leaguewide "worth pursuing" pre-rank - Stage 1 of Suggested Trades.
 
     Every fantasy-relevant player on every *other* roster is a candidate.
     Reuses `rank_by_marginal_value()` exactly like `free_agent_board()`
@@ -933,7 +933,7 @@ def suggested_trades(
     handcuffs: dict[str, str] | None = None,
     top_n: int = 3,
 ) -> list[dict]:
-    """Stage 2 of Suggested Trades (RT-15): the real offer search, only for Stage 1's short list.
+    """Stage 2 of Suggested Trades: the real offer search, only for Stage 1's short list.
 
     `candidates` is typically `leaguewide_trade_candidates()`'s output -
     already capped to a small K, which is what keeps this affordable at
@@ -954,8 +954,8 @@ def suggested_trades(
     `.claude/conventions/valuation_principles.md`'s "worth surfacing" filter
     rule) before being ranked primarily by that same number - the same
     number `_show_trade_side()` already surfaces per offer today, not a new
-    metric. `your_side["weekly_gaps_closed"]`/`["weekly_gaps_opened"]` (RT-27
-    follow-up) break ties only - this league's rebuild strategy means
+    metric. `your_side["weekly_gaps_closed"]`/`["weekly_gaps_opened"]`
+    break ties only - this league's rebuild strategy means
     multi-season roster strength stays the primary question `suggested_trades()`
     answers, with which weeks a trade smooths over a recurring starter gap as
     a secondary nudge between otherwise-similar options, never able to

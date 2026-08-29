@@ -85,9 +85,9 @@ def best_position_relevant_drop(
     definition), the "restrict to a shared slot type" narrowing above is a
     no-op for every candidate: `eligible_positions` always expands to every
     fantasy position, so `drop_pool` is effectively the same as
-    `recommend_drop()`'s whole-roster pool (RT-17, confirmed 2026-08-06 -
-    `.claude/PROJECT_PLAN_DYNASTY.md`). This doesn't make the *result* wrong: the
-    search still runs the real `season_average_starter_value()` simulation
+    `recommend_drop()`'s whole-roster pool (confirmed 2026-08-06). This
+    doesn't make the *result* wrong: the search still runs the real
+    `season_average_starter_value()` simulation
     over that pool and returns whichever drop empirically maximizes
     marginal value, so correctness rests entirely on the simulation, not on
     the narrowing - the same way `assign_starters()` already lets the
@@ -267,6 +267,21 @@ def free_agent_board(
     pass has) before sorting and slicing to `top_n` - cheap enough even at
     free-agent-pool scale (~350-450 players) to score everyone rather than
     pre-filtering.
+
+    Filtered to a positive *rounded* marginal_value - matching this
+    project's "worth surfacing at all" convention everywhere else this
+    same ranking is consumed (`build_pickup_alerts`,
+    `leaguewide_trade_candidates`/`suggested_trades`). This function itself
+    did not actually apply that floor until a 2026-08-29 review found two
+    of those other callers' docstrings incorrectly describing a filter
+    this function never had (see
+    `.claude/conventions/valuation_principles.md`'s "worth surfacing"
+    rule). Rounds before filtering, not after, for the same
+    reason `build_pickup_alerts` already does - a raw value in (0, 0.05)
+    would otherwise pass a raw `> 0` check but still render as the
+    self-contradicting "would add +0.0 to your lineup" once formatted to
+    one decimal (see `valuation_principles.md`'s "a displayed number and
+    the filter gating its display must round on the same basis" rule).
     """
     ineligible_ids = frozenset(roster.get("taxi") or []) | frozenset(roster.get("reserve") or [])
     reserve_filled = len(roster.get("reserve") or [])
@@ -287,12 +302,15 @@ def free_agent_board(
 
     rows = []
     for candidate in ranked:
+        marginal_value = round(candidate["marginal_value"], 1)
+        if marginal_value <= 0:
+            continue
         info = players.get(candidate["player_id"], {})
         drop = candidate["drop"]
         rows.append(
             {
                 # An internal join key for a caller that needs to act on a
-                # specific candidate (RT-10's FAAB bid guidance looks up its
+                # specific candidate (FAAB bid guidance looks up its
                 # current adj_value by this), not just display it - same
                 # pattern as sellable_players()'s own player_id column, drop
                 # it before rendering a table.
@@ -300,7 +318,7 @@ def free_agent_board(
                 "name": info.get("full_name"),
                 "pos": info.get("position"),
                 "team": info.get("team"),
-                "marginal_value": round(candidate["marginal_value"], 1),
+                "marginal_value": marginal_value,
                 "drop_name": drop["name"] if drop else None,
                 "drop_is_starter": drop["is_starter"] if drop else None,
             }

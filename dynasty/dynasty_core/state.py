@@ -164,7 +164,7 @@ def gather_state(
             "not mean there are none."
         )
     try:
-        # RT-10: real FAAB bid history (dynasty_core/waiver_bids.py's
+        # Real FAAB bid history (dynasty_core/waiver_bids.py's
         # calibration source). Passed through raw, not pre-computed into
         # guidance here - a UI only needs bid_guidance() for whichever one
         # free-agent candidate it's currently showing, not all ~25 board
@@ -180,7 +180,7 @@ def gather_state(
             "comparable bids, which does not mean there aren't any."
         )
 
-    # RT-27: this week's per-player projections, for the Lineup tab's
+    # This week's per-player projections, for the Lineup tab's
     # "this week's projected lineup" mode - an unofficial, undocumented
     # Sleeper endpoint (see sleeper_api.get_weekly_projections), so this
     # degrades to "unavailable" rather than breaking the refresh if it
@@ -328,8 +328,8 @@ def gather_state(
         projections,
     )
 
-    # Leaguewide "worth pursuing" pre-rank for Suggested Trades (RT-15) -
-    # Stage 1 of the two-stage design (see trade.py's
+    # Leaguewide "worth pursuing" pre-rank for Suggested Trades - Stage 1
+    # of the two-stage design (see trade.py's
     # leaguewide_trade_candidates()/suggested_trades() docstrings for the
     # full cost reasoning). Cheap enough (one batch rank_by_marginal_value()
     # call, same order of magnitude as free_agent_board's existing
@@ -388,12 +388,12 @@ def gather_state(
         "fc_by_sleeper_id": fc_by_sleeper_id,
         "byes": byes,
         "handcuffs": handcuffs,
-        # Raw waiver transaction history (RT-10) - a UI computes
+        # Raw waiver transaction history - a UI computes
         # dynasty_core.bid_guidance() from this on demand, for whichever
         # free-agent candidate is currently selected, not precomputed here
         # for the whole board every refresh.
         "transactions": transactions,
-        # RT-27: this week's raw per-player projections and the week number
+        # This week's raw per-player projections and the week number
         # they're for - a UI computes weekly_lineup_* on demand for
         # whichever team it's showing (see team_roster_analysis) rather than
         # this being precomputed for every team every refresh. Empty dict
@@ -430,7 +430,7 @@ def gather_state(
         # team_power_timeline above, not per-team, since a pick's owner is
         # already a column rather than something a team selector filters.
         "pick_trade_values": pick_values,
-        # Stage 1 of Suggested Trades (RT-15) - see leaguewide_trade_candidates()'s
+        # Stage 1 of Suggested Trades - see leaguewide_trade_candidates()'s
         # docstring. The tab's "Scan the league for offers" button runs Stage 2
         # (suggested_trades()) against this list on demand; this part is cheap
         # enough to already be computed here every refresh.

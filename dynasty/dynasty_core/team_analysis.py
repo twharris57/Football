@@ -42,7 +42,7 @@ def team_roster_analysis(
     and passed in, not recomputed here. `available_free_agents`
     (`free_agent_pool()`'s output) is likewise computed once per refresh and
     passed in, not recomputed per team looked up through the team selector.
-    `projections` (RT-27, this week's per-player point projections) defaults
+    `projections` (this week's per-player point projections) defaults
     to `{}` — only the Lineup tab's own team actually renders
     `weekly_lineup_*`, so a caller that doesn't have (or care about) this
     week's projections, like the Roster tab's other-team lookup, can omit

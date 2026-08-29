@@ -257,7 +257,7 @@ def _render_improve_offer_section(
     trade_players: dict,
     trade_pick_values: pd.DataFrame,
 ) -> None:
-    """RT-14: someone proposed the trade above *to* us. Reuses the exact
+    """Someone proposed the trade above *to* us. Reuses the exact
     assets already selected in the manual evaluator - no new selectors -
     to either confirm it's worth taking, suggest a nearby adjustment, or
     say plainly that no adjustment found makes it worth taking.
@@ -265,12 +265,12 @@ def _render_improve_offer_section(
     The result is tagged with a signature of everything it was computed
     from (which teams, which assets, and state["version"]) and dropped on
     a mismatch - the same versioned-on-demand-result pattern
-    docs/dynasty-data-model.md documents for Suggested Trades (RT-24), extended
+    docs/dynasty-data-model.md documents for Suggested Trades, extended
     here to also cover the user's own selection changing, not just a
-    refresh. Unlike RT-24, no "data changed" message on invalidation -
-    the trigger here is the user's own edit to the selection, not a
-    background refresh, so it isn't surprising that the button needs a
-    fresh click.
+    refresh. Unlike that Suggested Trades case, no "data changed" message
+    on invalidation - the trigger here is the user's own edit to the
+    selection, not a background refresh, so it isn't surprising that the
+    button needs a fresh click.
     """
     current_signature = (
         state["version"],

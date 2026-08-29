@@ -264,6 +264,28 @@ class TestFreeAgentBoard:
 
         assert board.iloc[0]["drop_name"] is None
 
+    def test_zero_or_negative_marginal_value_candidates_are_excluded(self):
+        # VA-8: free_agent_board() used to show every candidate regardless
+        # of sign. A candidate too weak to win the roster's one WR slot
+        # gets added and then immediately recommended for its own drop by
+        # the capacity-forced cut - a self-canceling, marginal_value 0.0
+        # non-recommendation that used to still appear on the board.
+        league = {"roster_positions": ["WR"]}
+        roster = {"players": ["starter_wr"], "taxi": [], "reserve": []}
+        players = {
+            "starter_wr": make_player("WR", full_name="Starter WR"),
+            "great_fa": make_player("WR", full_name="Great Free Agent"),
+            "worthless_fa": make_player("WR", full_name="Worthless Free Agent"),
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("starter_wr", 500), fc_entry("great_fa", 900), fc_entry("worthless_fa", 10)]
+        )
+        pool = {"great_fa": players["great_fa"], "worthless_fa": players["worthless_fa"]}
+
+        board = dc.free_agent_board(pool, roster, players, fc_by_id, {}, league)
+
+        assert list(board["name"]) == ["Great Free Agent"]
+
 
 class TestRecommendDropIneligibility:
     """A taxi/IR player must never be misclassified as a "starter", even if its

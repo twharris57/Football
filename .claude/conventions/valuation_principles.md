@@ -507,12 +507,16 @@ verbatim into two real code comments (`state.py`'s `build_pickup_alerts()`:
 `leaguewide_trade_candidates()`: "matches `free_agent_board`/`pickup_alerts`'
 existing 'worth surfacing at all' convention"), each written by someone
 who trusted the assumption instead of checking the function itself. The
-practical effect: `free_agent_board()` is the one consumer of this
-project's shared marginal-value ranking that does *not* apply the floor
+practical effect: `free_agent_board()` was the one consumer of this
+project's shared marginal-value ranking that did *not* apply the floor
 every sibling consumer (`build_pickup_alerts`, `leaguewide_trade_candidates`,
 `suggested_trades`, and `summary.py`'s own re-filtering of
-`free_agent_board`'s output before it enters the Attention Digest) applies
-— filed as `VA-8` in `PROJECT_PLAN_DYNASTY.md`.
+`free_agent_board`'s output before it enters the Attention Digest) applies.
+Fixed directly in `free_agent_board()` by rounding to one decimal and then
+filtering to `marginal_value > 0` — the same order `build_pickup_alerts()`
+already used — rather than leaving the two false comments in place; both
+became true statements the moment the underlying function changed to
+match what they'd always assumed.
 
 **The rule, extended**: a comment that credits another function with
 enforcing a convention "matching" or "the same as" that function's own
@@ -846,15 +850,17 @@ for the same pattern until now. It turns up in eleven places across
 feature labels: `RT-9`/`RT-20` (`snapshot_io.py`), `RT-10`
 (`marginal_value.py`, `state.py`), `RT-12`/`RT-14`/`RT-15`/`RT-17`/`RT-18`/
 `RT-27` (`trade.py`, `state.py`, `team_analysis.py`, `trade_tab.py`), `RT-24`
-(`trade_tab.py`), `NB-2` (`streamlit_app.py`) — filed as `CQ-11`. None of
-these happen to be a comment's *sole* justification (each carries real
+(`trade_tab.py`), `NB-2` (`streamlit_app.py`). None of
+these happened to be a comment's *sole* justification (each carried real
 prose reasoning alongside the tag, so `code_conventions.md`'s literal bar
-against "sole justification" is technically met) — but they're exactly the
-same dangling-pointer shape once the cited item is deleted from the plan
-file, just in a lower-severity form. **The rule, extended**: treat `.py`
-docstrings/comments as covered by this rule exactly as much as `docs/*.md`
-— a closed backlog tag used as a feature's inline nickname should be
-replaced with the feature's actual name (most of these already name the
-feature on first mention anyway, e.g. "Suggested Trades" for `RT-15`) the
-next time the surrounding code is touched, rather than assuming code
-comments are exempt because they're not the literal `docs/` directory.
+against "sole justification" was technically met) — but they were exactly
+the same dangling-pointer shape once the cited item was deleted from the
+plan file, just in a lower-severity form. Fixed by removing each tag and
+replacing it with the durable feature name it stood in for (e.g. "Suggested
+Trades" for `RT-15`, already how most of these docstrings referred to the
+feature on first mention anyway), same-PR rather than filed for later.
+**The rule, extended**: treat `.py` docstrings/comments as covered by this
+rule exactly as much as `docs/*.md` — a closed backlog tag used as a
+feature's inline nickname should be replaced with the feature's actual
+name the next time the surrounding code is touched, rather than assuming
+code comments are exempt because they're not the literal `docs/` directory.

@@ -1,8 +1,9 @@
 """Shared load/write shell for a persisted-across-refreshes JSON snapshot,
 with explicit schema versioning and forward migrations.
 
-Factored out of draft_snapshots.py (RT-20) so a second, structurally different
-snapshot type (pickup_snapshots.py, RT-9) doesn't reimplement the same
+Factored out of draft_snapshots.py's draft-pick-attribution snapshot so a
+second, structurally different snapshot type (pickup_snapshots.py's
+in-season pickup-alert snapshot) doesn't reimplement the same
 load-or-seed / write-only-if-changed shape independently - see
 .claude/conventions/valuation_principles.md's pattern of two independent
 copies of the same logic drifting apart over time.
