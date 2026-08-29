@@ -48,9 +48,18 @@ it's stopped being a "short" list — thin it back out to what's actually
 active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
+**Next up, in order** (user-set 2026-08-28, during in-season play — picked
+over `RT-4`'s phase-aware need rework, which stays a longer-term
+foundational item rather than the immediate next feature):
+1. `VA-7` — verify Sleeper's weekly projections against a live payload for
+   the threshold/long-play bonus categories; same undercounting risk shape
+   as the already-fixed `bonus_rec_te` bug, and cheapest to close.
+2. `RT-5` / `CQ-10` — League tab all-teams summary view and the tab
+   navigation restructure, taken together as the UX-focused pair.
+3. `RT-28` — FAAB position-broadening review; deliberately last since it
+   benefits from more season data existing to check against.
+
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `CQ-10` — restructure top-level tab navigation (subtabs/collapsing to
-  cut vertical scroll), starting with Roster and Trade Evaluator.
 - [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
   power/timeline read instead of a manually-set phase.
 - [ ] `DL-7` — table column overflow on the rookie big board (downgraded
