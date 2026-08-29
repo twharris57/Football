@@ -72,30 +72,16 @@ below as a normal backlog item, same as any other deferred work.
 
 `feature/faab-qb-broadening-fix` (PR #62), reviewed 2026-08-29.
 
-- [ ] `RT-29` — **QB rows still contaminate broadened comparables for
-  non-QB candidates: this branch's own stated risk, only half-fixed.**
-  `nearest_comparable_bids()`'s updated docstring says mixing a thin QB
-  sample into RB/WR/TE comparables "(or the reverse)" would present a
-  demand-curve-mismatched range — but the code only closes the first
-  half. A QB candidate now always stays on the QB-only pool no matter how
-  thin (never broadens out), but a non-QB candidate whose own
-  same-position sample is thin still broadens into the *entire*
-  unfiltered `sample`, QB rows included. Confirmed live: a TE candidate
-  compared against a sample containing one QB row (value 100, bid 45) and
-  one far-away RB row returns the QB bid as its sole comparable, with
-  `same_position=False`. Worse, `roster_tab.py`'s guidance display shows
-  only `bid` and `adj_value` per comparable, never `position` — so a user
-  reading "Recent winning FAAB bids for similarly-valued players: $45
-  (value 100)" has no way to tell that number came from a QB bid rather
-  than a real TE/WR/RB one. Same silent-contamination shape this whole PR
-  exists to close, just uncaught in the reverse direction; none of the
-  new tests construct a broadened pool containing a QB row for a non-QB
-  candidate. Fix: exclude QB rows from the broadened ("every position")
-  pool whenever the candidate itself isn't QB (e.g.
-  `sample[sample["position"] != "QB"]` for the broadened branch), not
-  just make QB candidates immune to broadening themselves. See
-  `valuation_principles.md`'s extended note on this under the RT-28
-  entry.
+Empty right now — `RT-29` is fixed: `nearest_comparable_bids()`'s
+broadened ("every position") pool now excludes QB rows whenever the
+candidate itself isn't QB (`sample[sample["position"] != "QB"]`), closing
+the reverse direction of the contamination the branch's own docstring had
+already named but only partly guarded against. Two new tests
+(`test_qb_row_is_excluded_from_a_non_qb_candidates_broadened_pool`,
+`test_non_qb_candidate_never_gets_a_qb_bid_folded_into_its_guidance`)
+cover a non-QB candidate against a sample containing a nearest-by-value QB
+row. See `valuation_principles.md`'s extended note under the RT-28 entry
+for the durable lesson.
 
 ## Now — blocking
 

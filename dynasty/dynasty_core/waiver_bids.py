@@ -91,20 +91,24 @@ def nearest_comparable_bids(
     Same-position rows preferred; broadens to every row in `sample`
     (still nearest-by-value) only when the same-position count is below
     `min_same_position`, since bidding behavior plausibly differs
-    meaningfully by position - **except for QB, which never broadens**.
-    This is a confirmed superflex league (`SUPER_FLEX` is a real roster
-    slot), so a QB can draw a real bidding premium purely from 2-QB-
-    startable scarcity that a same-`adj_value` RB/WR/TE never faces -
-    mixing a thin QB sample into RB/WR/TE comparables (or the reverse)
-    would present a calibrated-looking range built from a different demand
-    curve than the one the candidate is actually being bid into. A live
-    check of this league's own transaction history found only 2 real QB
-    winning bids to date - too few to confirm or rule out the premium
-    empirically, so this stays a small-sample "no guidance yet" for QB
-    (via `bid_guidance`'s `MIN_COMPARABLE_SAMPLE` floor) rather than a
-    mismatched-demand-curve range; revisit once a real QB sample exists to
-    check against. Whichever pool gets selected, a row only
-    counts as a real comparable if its `adj_value` is within
+    meaningfully by position - **except for QB, which never broadens in
+    either direction**. This is a confirmed superflex league (`SUPER_FLEX`
+    is a real roster slot), so a QB can draw a real bidding premium purely
+    from 2-QB-startable scarcity that a same-`adj_value` RB/WR/TE never
+    faces - mixing a thin QB sample into RB/WR/TE comparables *or the
+    reverse* would present a calibrated-looking range built from a
+    different demand curve than the one the candidate is actually being
+    bid into. Both directions are guarded: a QB candidate's own pool never
+    broadens out past same-position QB rows, and a non-QB candidate's
+    broadened pool has QB rows excluded before ranking, so a QB bid can
+    never surface as an unlabeled comparable for a TE/WR/RB candidate
+    either. A live check of this league's own transaction history found
+    only 2 real QB winning bids to date - too few to confirm or rule out
+    the premium empirically, so this stays a small-sample "no guidance
+    yet" for QB (via `bid_guidance`'s `MIN_COMPARABLE_SAMPLE` floor)
+    rather than a mismatched-demand-curve range; revisit once a real QB
+    sample exists to check against. Whichever pool gets selected, a row
+    only counts as a real comparable if its `adj_value` is within
     `max(COMPARABLE_MAX_DISTANCE_PCT * candidate_adj_value,
     COMPARABLE_MIN_ABSOLUTE_DISTANCE)` of the candidate's - nearest-K alone
     has no such floor, so on a sparse or value-skewed sample it would
@@ -127,7 +131,7 @@ def nearest_comparable_bids(
     if candidate_position == "QB" or len(same_position) >= min_same_position:
         pool, used_same_position = same_position, True
     else:
-        pool, used_same_position = sample, False
+        pool, used_same_position = sample[sample["position"] != "QB"], False
 
     distances = (pool["adj_value"] - candidate_adj_value).abs()
     tolerance = max(COMPARABLE_MAX_DISTANCE_PCT * candidate_adj_value, COMPARABLE_MIN_ABSOLUTE_DISTANCE)

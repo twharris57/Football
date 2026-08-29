@@ -113,6 +113,22 @@ class TestNearestComparableBids:
         assert same_position is True
         assert {c["bid"] for c in comparables} == {40.0}  # only the 1 real QB row, never the WR/RB rows
 
+    def test_qb_row_is_excluded_from_a_non_qb_candidates_broadened_pool(self):
+        # RT-29: broadening isn't just one-directional - a QB's superflex-
+        # inflated bid must not surface as an unlabeled comparable for a
+        # non-QB candidate either, even when it's the nearest-by-value row.
+        sample = pd.DataFrame(
+            [
+                {"player_id": "qb1", "position": "QB", "adj_value": 100.0, "bid": 45.0},
+                {"player_id": "rb1", "position": "RB", "adj_value": 300.0, "bid": 8.0},
+            ]
+        )
+
+        comparables, same_position = dc.nearest_comparable_bids(100.0, "TE", sample, min_same_position=3)
+
+        assert same_position is False
+        assert comparables == []  # the QB row is excluded; the RB row is too far in value to qualify
+
     def test_returns_genuinely_nearest_by_value_not_just_first_k(self):
         sample = pd.DataFrame(
             [
@@ -221,3 +237,17 @@ class TestBidGuidance:
         )
 
         assert dc.bid_guidance(100.0, "QB", sample) is None
+
+    def test_non_qb_candidate_never_gets_a_qb_bid_folded_into_its_guidance(self):
+        # RT-29: a QB row that's nearest-by-value must not count toward a
+        # non-QB candidate's comparable sample or its low/median/high, even
+        # when including it would otherwise clear MIN_COMPARABLE_SAMPLE.
+        sample = pd.DataFrame(
+            [
+                {"player_id": "qb1", "position": "QB", "adj_value": 100.0, "bid": 999.0},
+                {"player_id": "rb1", "position": "RB", "adj_value": 100.0, "bid": 10.0},
+                {"player_id": "rb2", "position": "RB", "adj_value": 101.0, "bid": 20.0},
+            ]
+        )  # only 2 non-QB rows within tolerance - below MIN_COMPARABLE_SAMPLE (3)
+
+        assert dc.bid_guidance(100.0, "TE", sample) is None
