@@ -115,33 +115,3 @@ Empty right now — nothing blocking.
   against — needs `CP-3` (join snapshots against outcomes) as the
   remaining prerequisite; raw-input/algorithm-version storage is done
   (`algorithm_versions`, Phase 1 schema redesign).
-- [ ] **CP-15: Flag when the deadline auto-lock's "one final computed"
-  fallback snapshot was generated well after the deadline — potentially
-  after some of that week's games have already kicked off or
-  finished** (user, PR #46 review, 2026-08-23). `resolve_week_lock()`'s
-  fresh-computation fallback (when nothing was ever manually generated
-  for the week) only fires once the deadline has passed, but if the app
-  isn't opened again until days later, some/all of that week's games may
-  have already been played by the time it runs. Needs investigating what
-  `nfl_data_py`'s moneyline field actually returns for an in-progress or
-  completed game (a frozen pregame closing line is fine to treat as a
-  real prediction; a live in-play line would not be) before deciding
-  whether to just timestamp-flag the record or block/warn more
-  aggressively. This is a narrower case than `CP-9`/`CP-10` already fixed
-  (those apply whenever *anything* was manually generated first; this is
-  specifically the "the week was never touched by a human at all" path).
-- [ ] **CP-26: Let the Picks tab UI switch between viewing a week's
-  `'first'` and `'current'` snapshot** (user, 2026-08-24, flagged for a
-  future feature branch — not this one). Now that both are actually
-  stored (the `snapshot_type` split from the Phase 1 schema redesign),
-  surface it: a toggle/selector on the Picks tab to view either
-  snapshot's picks table, so "what did I first see" vs. "what's it look
-  like now" is visible in the UI, not just queryable in the database.
-  Applies to unlocked weeks too, not just locked ones — `'current'`
-  keeps changing on every regenerate pre-lock, while `'first'` stays
-  frozen from the first eligible look, so the comparison is meaningful
-  either way. `store.load_week()` currently only loads `'current'`; needs
-  either a `snapshot_type` parameter or a second loader for `'first'`.
-  Worth considering a diff view (highlight which picks' points/confidence
-  moved) rather than two flat tables side by side, but the toggle itself
-  is the starting ask.

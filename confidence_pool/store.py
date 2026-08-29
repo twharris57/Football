@@ -464,10 +464,13 @@ def save_week(
 
 
 def load_week(
-    conn: sqlite3.Connection, season_year: int, week: int
+    conn: sqlite3.Connection, season_year: int, week: int, snapshot_type: str = "current"
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict | None]:
-    """Load a previously-saved week's `'current'` games, picks, and status.
-    Empty DataFrames (and `None` status) if nothing has been saved for it yet.
+    """Load a previously-saved week's games, picks, and status for one
+    snapshot -- `'current'` by default, or `'first'` (CP-26) to see the
+    frozen initial look instead. Empty DataFrames (and `None` status --
+    status is week-level, not per-snapshot) if nothing has been saved for
+    that snapshot yet.
 
     `games` carries `captured_at` (the snapshot's true generation time) so
     a caller reusing this data verbatim -- e.g. `resolve_week_lock()`
@@ -480,22 +483,22 @@ def load_week(
                wg.home_moneyline, wg.away_moneyline, wg.included, wg.captured_at
         FROM weekly_games wg
         JOIN games g ON wg.game_id = g.game_id
-        WHERE g.season_year = ? AND g.week = ? AND wg.snapshot_type = 'current'
+        WHERE g.season_year = ? AND g.week = ? AND wg.snapshot_type = ?
         ORDER BY g.gameday, g.gametime
         """,
         conn,
-        params=(season_year, week),
+        params=(season_year, week, snapshot_type),
     )
     picks = pd.read_sql_query(
         """
         SELECT wp.game_id, wp.points, wp.predicted_winner, wp.confidence, wp.algorithm_version
         FROM weekly_picks wp
         JOIN games g ON wp.game_id = g.game_id
-        WHERE g.season_year = ? AND g.week = ? AND wp.snapshot_type = 'current'
+        WHERE g.season_year = ? AND g.week = ? AND wp.snapshot_type = ?
         ORDER BY wp.points DESC
         """,
         conn,
-        params=(season_year, week),
+        params=(season_year, week, snapshot_type),
     )
     status = get_week_status(conn, season_year, week)
     return games, picks, status
