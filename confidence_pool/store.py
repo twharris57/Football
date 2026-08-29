@@ -333,6 +333,7 @@ def save_week(
     generated_at: datetime,
     first_snapshot_eligible: bool,
     lock: bool = False,
+    lock_warning: str | None = None,
 ) -> None:
     """Persist a week's evaluated games + generated picks as the `'current'`
     snapshot, overwriting any prior `'current'` snapshot for that week.
@@ -353,6 +354,11 @@ def save_week(
     produced by `picks_core.games_with_included_flags`); `picks` needs
     `game_id`/`points`/`predicted_winner`/`confidence`/`algorithm_version`
     (as produced by `picks_core.rank_games`).
+
+    `lock_warning` (CP-15) records a caveat about this specific lock -- e.g.
+    `picks_core.resolve_week_lock()`'s "computed after kickoff" flag -- so it
+    stays visible on every later view of the locked week, not just the one
+    page load when the lock happened. Ignored unless `lock` is also set.
     """
     status = get_week_status(conn, season_year, week)
     if status and status["locked"]:
@@ -440,17 +446,19 @@ def save_week(
 
         conn.execute(
             """
-            INSERT INTO week_status (season_year, week, locked, locked_at, generated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO week_status (season_year, week, locked, locked_at, generated_at, lock_warning)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(season_year, week) DO UPDATE SET
                 locked = excluded.locked,
                 locked_at = excluded.locked_at,
-                generated_at = excluded.generated_at
+                generated_at = excluded.generated_at,
+                lock_warning = excluded.lock_warning
             """,
             (
                 season_year, week, int(lock),
                 generated_at.isoformat() if lock else None,
                 generated_at.isoformat(),
+                lock_warning if lock else None,
             ),
         )
 

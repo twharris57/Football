@@ -107,16 +107,17 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         # last-generated snapshot (or, absent that, one final computed
         # recommendation) now rather than leaving it open to further edits.
         outcome = pc.resolve_week_lock(auto_games, included_map, saved_games, saved_picks, now)
-        if outcome.warning:
-            st.warning(outcome.warning)
         if outcome.locked:
             store.save_week(
                 conn, season, week, outcome.games, outcome.picks, outcome.generated_at,
                 first_snapshot_eligible=pc.is_first_look_window(auto_games, outcome.generated_at),
                 lock=True,
+                lock_warning=outcome.warning,
             )
             saved_games, saved_picks, status = store.load_week(conn, season, week)
             locked = True
+        elif outcome.warning:
+            st.warning(outcome.warning)
 
     _render_deadline(deadline, now, is_override=configured_deadline is not None)
     if week_rule:
@@ -128,6 +129,8 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
 
     if locked:
         st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
+        if status.get("lock_warning"):
+            st.warning(status["lock_warning"])
         _render_picks_table(saved_games, saved_picks, team_names)
         _render_pick_details(saved_games, saved_picks, team_names)
         _render_actual_picks_form(conn, season, week, saved_games, saved_picks, team_names)

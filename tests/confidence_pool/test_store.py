@@ -239,6 +239,26 @@ class TestSaveAndLoadWeek:
         assert status["locked"] == 1
         assert status["locked_at"] == "2026-09-13T13:00:00"
 
+    def test_locking_persists_a_lock_warning(self, conn):
+        # CP-15: a caveat from resolve_week_lock() (e.g. "computed after
+        # kickoff") must survive reload, not just the moment it's set.
+        _save(
+            conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0),
+            lock=True, lock_warning="odds computed after kickoff",
+        )
+
+        status = store.get_week_status(conn, 2026, 1)
+        assert status["lock_warning"] == "odds computed after kickoff"
+
+    def test_lock_warning_is_ignored_when_not_locking(self, conn):
+        _save(
+            conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0),
+            lock_warning="should not be persisted",
+        )
+
+        status = store.get_week_status(conn, 2026, 1)
+        assert status["lock_warning"] is None
+
     def test_first_save_captures_an_immutable_first_snapshot(self, conn):
         _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.2), datetime(2026, 9, 10, 9, 0))
         _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.9), datetime(2026, 9, 12, 9, 0))
