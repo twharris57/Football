@@ -35,7 +35,10 @@ most of the season. `picks_core.select_games()` encodes this as:
   weekday enumeration would have silently excluded. The reason this
   window exists at all: the deadline (below) is "before kickoff" of the
   *earliest selected* game, so an excluded early game's result can't leak
-  information before picks are due.
+  information before picks are due. A game whose kickoff time nfl_data_py
+  hasn't finalized yet (most likely a late-season, flex-scheduling-eligible
+  game) is excluded from this window rather than crashing the rest of the
+  week's selection over it.
 - **`'all_games'` rule: every game that week, once no deadline is
   configured yet** — applies to the season's final few weeks —
   `store.KNOWN_LATE_SEASON_WEEKS`, 16-18 as of the 2026 rules (see below).
@@ -46,7 +49,11 @@ most of the season. `picks_core.select_games()` encodes this as:
   deadline" below), so in practice this ends up including every game
   anyway — but it's now an actual comparison against the configured
   deadline rather than an assumption that the deadline always predates
-  every kickoff that week.
+  every kickoff that week. A game whose kickoff time isn't finalized yet
+  is *included* rather than excluded here — the opposite default from
+  `'standard'`'s window — since this rule's own deadline is already
+  documented to predate every real kickoff that week regardless, so an
+  unknown time is never evidence the game should come off the sheet.
 
 **Which weeks get the `'all_games'` rule changes year to year — confirmed
 against real bylaws documents twice, not assumed to carry forward.** An
@@ -228,14 +235,6 @@ actually covers it.
   (injury impact, weather/altitude, sentiment) aren't wired into
   `picks_core.py` — `CP-6`, deliberately deferred; the pure-odds approach
   already placed 7th of 100+ last season.
-- **An unfinalized `gametime` crashes `select_games()` for the whole
-  week, not just the one game** — `CP-35`. Both `'standard'` and
-  `'all_games'` (once a deadline is configured) parse every game's
-  `gametime` in that week to compare it against the selection window/
-  deadline; a game whose kickoff time nfl_data_py hasn't finalized yet
-  (normal for a flex-scheduled late-season game, i.e. weeks 16-18) raises
-  instead of being tolerated, taking down the whole Picks tab for
-  whichever week is selected. Fix tracked in `CP-35`.
 
 ## Static assumptions
 

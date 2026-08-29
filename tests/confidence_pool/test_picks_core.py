@@ -193,6 +193,42 @@ class TestSelectGames:
 
         assert set(selected["game_id"]) == {"sat"}
 
+    def test_all_games_rule_includes_a_game_with_an_unset_gametime_past_a_configured_deadline(self):
+        # CP-35: an unfinalized kickoff must not crash the whole week, and
+        # 'all_games' specifically must not drop a real game off the sheet
+        # just because its exact time isn't posted yet -- the rule's own
+        # deadline is documented to predate every real kickoff that week
+        # regardless.
+        schedule = pd.DataFrame(
+            [
+                _game("known", 17, "Saturday", "13:00", gameday="2026-12-26"),
+                _game("tbd", 17, "Sunday", None, gameday="2026-12-27"),
+            ]
+        )
+        deadline = datetime(2026, 12, 26, 13, 0, tzinfo=pc.ET)
+
+        selected = pc.select_games(
+            schedule, 2026, 17, selection_rule="all_games", configured_deadline=deadline
+        )
+
+        assert set(selected["game_id"]) == {"known", "tbd"}
+
+    def test_standard_rule_tolerates_an_unset_gametime_on_a_non_window_game(self):
+        # CP-35: the old weekday-string comparison never crashed on a
+        # missing gametime -- the real datetime comparison must not either,
+        # even for a game (like this Thursday one) that was never going to
+        # be selected in the first place.
+        schedule = pd.DataFrame(
+            [
+                _game("thu", 1, "Thursday", None, gameday="2026-09-10"),
+                _game("sun_afternoon", 1, "Sunday", "13:00", gameday="2026-09-13"),
+            ]
+        )
+
+        selected = pc.select_games(schedule, 2026, 1)
+
+        assert set(selected["game_id"]) == {"sun_afternoon"}
+
     def test_standard_rule_is_the_default(self):
         schedule = pd.DataFrame(
             [
@@ -349,6 +385,38 @@ class TestWeekDeadline:
 
         assert deadline == configured
 
+    def test_configured_deadline_never_touches_an_unset_gametime(self):
+        # CP-35: week_deadline must not parse kickoffs at all once a
+        # configured_deadline already answers the question -- select_games'
+        # 'all_games' rule can hand it a game with no gametime yet.
+        games = pd.DataFrame([_game("tbd", 17, "Sunday", None, gameday="2026-12-27")])
+        configured = datetime(2026, 12, 26, 13, 0, tzinfo=pc.ET)
+
+        deadline = pc.week_deadline(games, configured_deadline=configured)
+
+        assert deadline == configured
+
+    def test_unconfigured_deadline_skips_a_game_with_an_unset_gametime(self):
+        # CP-35: the earliest-*known*-kickoff fallback must not crash on a
+        # game with no gametime yet -- it should just be excluded from the
+        # comparison, not treated as the earliest (or block it entirely).
+        games = pd.DataFrame(
+            [
+                _game("tbd", 17, "Sunday", None, gameday="2026-12-27"),
+                _game("known", 17, "Monday", "20:15", gameday="2026-12-28"),
+            ]
+        )
+
+        deadline = pc.week_deadline(games, configured_deadline=None)
+
+        assert deadline == pc.kickoff_datetime("2026-12-28", "20:15")
+
+    def test_unconfigured_deadline_raises_when_no_game_has_a_known_kickoff(self):
+        games = pd.DataFrame([_game("tbd", 17, "Sunday", None, gameday="2026-12-27")])
+
+        with pytest.raises(ValueError):
+            pc.week_deadline(games, configured_deadline=None)
+
 
 class TestGamesWithIncludedFlags:
     """Persisting a real included/excluded flag per game (CP-8)."""
@@ -482,6 +550,19 @@ class TestResolveWeekLock:
         assert "g1" not in outcome.warning  # matches on team names, not game_id
         assert "BBB @ AAA" in outcome.warning
 
+    def test_tolerates_an_included_game_with_an_unset_gametime(self):
+        # CP-35: an unfinalized kickoff (possible via 'all_games' letting a
+        # not-yet-timed game through) must not crash the already-started
+        # check -- it can't be confirmed started, so it's just omitted.
+        auto_games = pd.DataFrame([_game("tbd", 17, "Sunday", None, gameday="2026-12-27")])
+        empty = pd.DataFrame()
+        now = datetime(2026, 12, 27, 13, 0, tzinfo=pc.ET)
+
+        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty, now)
+
+        assert outcome.locked is True
+        assert outcome.warning is None
+
 
 class TestIsFirstLookWindow:
     """Gates whether a save is close enough to kickoff to count as a real
@@ -510,6 +591,25 @@ class TestIsFirstLookWindow:
         monday = datetime(2026, 9, 14, 9, 0, tzinfo=pc.ET)
 
         assert pc.is_first_look_window(games, monday) is True
+
+    def test_ignores_a_game_with_an_unset_gametime(self):
+        # CP-35: an unfinalized kickoff must not crash the earliest-kickoff
+        # computation -- it should just be excluded from it, same as any
+        # other "no games at all" fallback.
+        games = pd.DataFrame(
+            [
+                _game("tbd", 1, "Sunday", None, gameday="2026-09-13"),
+                _game("known", 1, "Monday", "20:15", gameday="2026-09-14"),
+            ]
+        )
+        thursday = datetime(2026, 9, 11, 9, 0, tzinfo=pc.ET)  # 3 days before the known kickoff
+
+        assert pc.is_first_look_window(games, thursday) is True
+
+    def test_not_eligible_when_no_game_has_a_known_kickoff(self):
+        games = pd.DataFrame([_game("tbd", 1, "Sunday", None, gameday="2026-09-13")])
+
+        assert pc.is_first_look_window(games, datetime(2026, 9, 11, 9, 0, tzinfo=pc.ET)) is False
 
 
 class TestCheckActualPicks:

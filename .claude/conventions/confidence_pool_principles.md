@@ -357,6 +357,20 @@ as not guaranteeing populated (`gametime` for late-season/flex-scheduled
 games is the known example), not just the "all present" and "all absent"
 extremes.
 
+Fixed via `_try_kickoff_datetime()`, a `None`-returning wrapper around
+`kickoff_datetime()` used everywhere a whole week's games get compared
+(`select_games`, `week_deadline`, `is_first_look_window`,
+`resolve_week_lock`) -- not by making the parse itself more permissive.
+The two selection rules resolve an unknown kickoff oppositely on purpose:
+`'standard'` excludes it (an unverifiable window match defaults to
+"don't leak, don't include"), `'all_games'` includes it (its deadline is
+already documented to predate every real kickoff that week, so "unknown"
+isn't evidence for dropping a real game off the sheet) -- a reminder that
+"tolerate the missing input" and "what the tolerant default should
+resolve to" are two separate decisions; the second one needs the same
+domain reasoning as the original check, not a single generic default
+reused everywhere it's needed.
+
 **The rule**: a nullable numeric column read through `pd.read_sql_query`
 (or any pandas DB loader) is not "float only where the value is missing"
 — a single `NULL` anywhere in the *result set* changes the dtype of every
