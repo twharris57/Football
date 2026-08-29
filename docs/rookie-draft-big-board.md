@@ -718,12 +718,12 @@ candidates.
   counting stats shared between Sleeper's projections and this league's
   `scoring_settings` directly by key name, including the threshold/long-play
   categories this league scores (`rush_fd`, `rec_fd`, `rush_40p`, `rec_40p`,
-  `pass_cmp_40p`) - confirmed present in live payloads (`VA-7`, 2026-08-28).
+  `pass_cmp_40p`) - confirmed present in a live payload check, 2026-08-28.
   `bonus_rec_te` (TE premium) is also emitted directly by Sleeper, scoped
   correctly to TEs - the earlier assumption that a global, non-league-scoped
   endpoint could never emit a position-conditional weight as its own key
   turned out to be wrong; a small explicit fallback still derives it from
-  `rec` for the rare TE projection that omits the key (see
+  `rec` for the rare TE projection that doesn't carry a usable value (see
   `valuation_principles.md`'s "generic stat-vocabulary dot product" rule for
   the full history). **Confirmed absent**, with no fallback able to recover
   it: `pass_td_40p`, `pass_td_50p`, `rush_td_40p`, `rush_td_50p`,

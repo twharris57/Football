@@ -50,12 +50,7 @@ too, per the convention above), don't let this become a history log.
 
 **Next up, in order** (user-set 2026-08-28, during in-season play — picked
 over `RT-4`'s phase-aware need rework, which stays a longer-term
-foundational item rather than the immediate next feature). `VA-7` (verify
-Sleeper's weekly projections against a live payload) is done — found and
-fixed a real `bonus_rec_te` double-count bug plus confirmed a permanent gap
-in TD-length bonus categories; see `valuation_principles.md`'s "generic
-stat-vocabulary dot product" rule and `docs/rookie-draft-big-board.md`'s
-"Known limitations":
+foundational item rather than the immediate next feature):
 1. `RT-5` / `CQ-10` — League tab all-teams summary view and the tab
    navigation restructure, taken together as the UX-focused pair.
 2. `RT-28` — FAAB position-broadening review; deliberately last since it
@@ -72,7 +67,7 @@ stat-vocabulary dot product" rule and `docs/rookie-draft-big-board.md`'s
 
 ## Current branch — fix before merge
 
-`feature/rt27-weekly-lineup-mode` (PR #44), reviewed 2026-08-21.
+`feature/dynasty-plan-reprioritize` (PR #60), reviewed 2026-08-28.
 
 Findings from reviewing the *active* branch's own not-yet-merged work —
 kept separate from the thematic backlog below so "fix this before the PR
@@ -82,9 +77,11 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty right now — the TE-premium gap found in this review (`_weekly_projected_points()`
-missing `bonus_rec_te`) is fixed; see `valuation_principles.md`'s "generic
-stat-vocabulary dot product" rule for the durable lesson.
+Empty right now — the `bonus_rec_te` fallback's presence-vs-usability gap
+found in this review is fixed (`isinstance(..., (int, float))` instead of
+`in`/`not in`), with a covering test added; see `valuation_principles.md`'s
+"A presence check on a key is not a validity check on its value" rule for
+the durable lesson.
 
 ## Now — blocking
 

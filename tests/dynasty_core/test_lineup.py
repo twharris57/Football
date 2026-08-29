@@ -74,7 +74,7 @@ class TestWeeklyProjectedValueRows:
         assert rows == []
 
     def test_te_missing_bonus_rec_te_key_falls_back_to_deriving_it_from_rec(self):
-        """Sleeper usually emits bonus_rec_te directly (VA-7); this covers the rare
+        """Sleeper usually emits bonus_rec_te directly; this covers the rare
         projection that omits it, where the code must still derive it from rec."""
         players = {"a": make_player("TE")}
         projections = {"a": {"rec": 5.0}}
@@ -85,9 +85,9 @@ class TestWeeklyProjectedValueRows:
         assert rows == [{"player_id": "a", "pos": "TE", "adj_value": 7.5}]  # 5*1 + 5*0.5
 
     def test_te_bonus_rec_te_already_in_projection_is_not_double_counted(self):
-        """Live Sleeper projections do emit bonus_rec_te scoped to TEs (VA-7) - the
-        generic dot product already prices it in once, so the fallback must not add
-        it a second time."""
+        """Live Sleeper projections do emit bonus_rec_te scoped to TEs - the generic
+        dot product already prices it in once, so the fallback must not add it a
+        second time."""
         players = {"a": make_player("TE")}
         projections = {"a": {"rec": 5.0, "bonus_rec_te": 5.0}}
         scoring_settings = {"rec": 1.0, "bonus_rec_te": 0.5}
@@ -95,6 +95,18 @@ class TestWeeklyProjectedValueRows:
         rows = dc.weekly_projected_value_rows(["a"], players, projections, scoring_settings)
 
         assert rows == [{"player_id": "a", "pos": "TE", "adj_value": 7.5}]  # 5*1 + 5*0.5, once
+
+    def test_te_bonus_rec_te_key_present_but_null_still_falls_back_to_rec(self):
+        """A present-but-non-numeric value (an undocumented endpoint returning None
+        for a rarely-projected category) must not be mistaken for a usable value -
+        the fallback needs to fire the same as if the key were absent entirely."""
+        players = {"a": make_player("TE")}
+        projections = {"a": {"rec": 5.0, "bonus_rec_te": None}}
+        scoring_settings = {"rec": 1.0, "bonus_rec_te": 0.5}
+
+        rows = dc.weekly_projected_value_rows(["a"], players, projections, scoring_settings)
+
+        assert rows == [{"player_id": "a", "pos": "TE", "adj_value": 7.5}]  # 5*1 + 5*0.5
 
     def test_non_te_does_not_get_bonus_rec_te_applied(self):
         players = {"a": make_player("WR")}

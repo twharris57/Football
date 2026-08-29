@@ -615,7 +615,7 @@ otherwise line up. Reuse `player_scoring._stat_points()`'s own explicit
 rather than assuming "same stat-key vocabulary confirmed live" covers
 every key in `scoring_settings`.
 
-**Correction, `VA-7`, 2026-08-28**: the claim above that Sleeper's global
+**Correction, 2026-08-28**: the claim above that Sleeper's global
 projections endpoint "can never emit a raw stat literally named
 `bonus_rec_te`" was itself an unverified assumption, not confirmed live —
 and turned out to be wrong. A live payload check found Sleeper's
@@ -624,12 +624,13 @@ projections do emit `bonus_rec_te` directly, scoped correctly to TEs
 above's explicit TE fallback was silently double-counting it for every TE
 whose projection included the key: once via the generic dot product (which
 already picks up any key present in the payload, `bonus_rec_te` included),
-and again via the explicit fallback. Fixed by gating the fallback on the
-key's absence (`if position == "TE" and "bonus_rec_te" not in projection`)
-rather than removing it outright — a handful of TE entries (3/115, likely
-near-zero-reception players) still omit the key, so the fallback still
-earns its place, just narrowed to when it's actually needed. The same live
-check confirmed `rush_fd`, `rec_fd`, `rush_40p`, `rec_40p`, and
+and again via the explicit fallback. Fixed by narrowing the fallback to
+only fire when the value isn't already usable (present and numeric — see
+the "presence check on a key" rule directly below for why presence alone
+isn't enough) rather than removing it outright — a handful of TE entries
+(3/115, likely near-zero-reception players) still lack a usable value, so
+the fallback still earns its place, just narrowed to when it's actually
+needed. The same live check confirmed `rush_fd`, `rec_fd`, `rush_40p`, `rec_40p`, and
 `pass_cmp_40p` genuinely are present and handled correctly by the generic
 dot product with no special-casing required — but `pass_td_40p`,
 `pass_td_50p`, `rush_td_40p`, `rush_td_50p`, `rec_td_40p`, `rec_td_50p`
@@ -646,3 +647,42 @@ scoring rules pulled live over hardcoding" rule), not as something safe to
 reason out from the endpoint's general shape (global vs. league-scoped)
 alone. The reasoning here was plausible and still wrong; only a real
 payload settled it.
+
+## A presence check on a key is not a validity check on its value
+
+The `bonus_rec_te` fix above originally gated its fallback on
+`"bonus_rec_te" not in projection` — but the same function's own docstring,
+one paragraph earlier, documents *why* every other stat in the same dot
+product is read through `isinstance(value, (int, float))` rather than
+trusted outright: "an undocumented endpoint can plausibly return `None` for
+a rarely-projected category." That reasoning applies to `bonus_rec_te`
+exactly as much as it applies to every other key in the same dict, but the
+fallback's original gate checked only whether the key exists, not whether
+its value is the numeric type the arithmetic below it needs. A payload
+shaped `{"bonus_rec_te": None, "rec": 5.0}` — key present, value unusable —
+would have passed the generic dot product's filter as a no-op (`None` isn't
+numeric, skipped) and *also* skipped the fallback (the key is technically
+"in" the dict), so the TE would silently lose the entire bonus for that
+week: not a crash, not a `0.0` that at least looks deliberate, just a
+quietly incomplete sum feeding straight into a start/sit ranking. Caught
+in review (2026-08-28) before being observed live — the live payload check
+only encountered the key missing outright (3/115 TEs), never
+present-with-null — so this was a latent version of the same failure mode
+the fix above was written to close, not a second confirmed bug. Fixed by
+gating on `isinstance(projection.get("bonus_rec_te"), (int, float))`
+instead of key presence.
+
+**The rule**: when gating a fallback on whether an upstream field needs
+deriving, check *value usability* (`isinstance(x, (int, float))`, or
+whatever the consuming arithmetic actually requires), not just key
+*presence* (`in`/`not in`, `.get(x) is None` when `None` isn't the only
+falsy-but-present state a field can take) — especially when a fallback
+exists specifically to cover an external field that might not come through
+cleanly. A `key not in dict` check silently assumes "present" and "usable"
+are the same fact; an undocumented external API is exactly the case where
+they aren't guaranteed to be. This is the same shape as this file's `NaN`-
+vs-`None` rule under "silent data-degradation must surface as a warning" —
+recognize it here as: a *fallback's own trigger condition* can have the
+identical blind spot as the primary computation it's meant to backstop, so
+auditing the primary path's `isinstance`/`pd.isna` discipline isn't enough
+if the fallback next to it doesn't apply the same standard to its own gate.

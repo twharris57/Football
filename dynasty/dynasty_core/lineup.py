@@ -34,20 +34,18 @@ def _weekly_projected_points(projection: dict[str, float], scoring_settings: dic
     line up 1:1), so no crosswalk is needed. `bonus_rec_te` was assumed to be
     an exception - a position-conditional *weight* a global, non-league-scoped
     endpoint could "never" emit as its own raw-stat key - but a live payload
-    check (`VA-7`, 2026-08-28) found Sleeper's projections do emit it
-    directly, scoped correctly to TEs, holding the TE's own reception count.
-    The dot product above already prices it in correctly whenever present;
-    the fallback below only fires when a TE projection omits the key
-    (observed rarely, near-zero-reception TEs), so a normal TE is never
-    double-counted.
+    check found Sleeper's projections do emit it directly, scoped correctly
+    to TEs, holding the TE's own reception count. The dot product above
+    already prices it in correctly whenever present; the fallback below only
+    fires when a TE projection omits the key (observed rarely, near-zero-
+    reception TEs), so a normal TE is never double-counted.
 
-    Confirmed absent from every payload checked (`VA-7`): `pass_td_40p`,
-    `pass_td_50p`, `rush_td_40p`, `rush_td_50p`, `rec_td_40p`, `rec_td_50p` -
-    real, scored categories for this league that Sleeper's projections simply
-    don't carry (no per-play length data behind a weekly projection), so
-    weekly lineup projections systematically miss these bonuses with no
-    fallback able to recover them - see docs/rookie-draft-big-board.md's
-    "Known limitations".
+    Confirmed absent from every payload checked: `pass_td_40p`, `pass_td_50p`,
+    `rush_td_40p`, `rush_td_50p`, `rec_td_40p`, `rec_td_50p` - real, scored
+    categories for this league that Sleeper's projections simply don't carry
+    (no per-play length data behind a weekly projection), so weekly lineup
+    projections systematically miss these bonuses with no fallback able to
+    recover them - see docs/rookie-draft-big-board.md's "Known limitations".
 
     Non-numeric stat values are skipped rather than trusted blindly - an
     undocumented endpoint can plausibly return `None` for a rarely-projected
@@ -59,7 +57,7 @@ def _weekly_projected_points(projection: dict[str, float], scoring_settings: dic
         for stat, value in projection.items()
         if isinstance(value, (int, float))
     )
-    if position == "TE" and "bonus_rec_te" not in projection:
+    if position == "TE" and not isinstance(projection.get("bonus_rec_te"), (int, float)):
         receptions = projection.get("rec")
         if isinstance(receptions, (int, float)):
             points += receptions * scoring_settings.get("bonus_rec_te", 0.0)
