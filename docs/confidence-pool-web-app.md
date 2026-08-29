@@ -104,11 +104,26 @@ permanent historical record `CP-3` depends on), or one final
 computed snapshot if nothing was ever generated. If odds are still
 pending for a selected game and there's no prior snapshot to fall back
 on, the week is left unlocked with an explicit warning rather than
-silently not locking. The picks tab then switches to a read-only view —
-`store.save_week()` refuses to overwrite an already-locked week's row.
-There's no background scheduler: "locked" is computed from `now` vs. the
-deadline on every page load/regenerate attempt, which is sufficient since
-checking the app close to game time is the whole point of using it.
+silently not locking. If that last-resort computed snapshot is generated
+after kickoff for one of that week's included games — the app was never
+opened for the week until well after its deadline — it still locks (no
+better data to fall back to) but carries an explanatory warning
+(`week_status.lock_warning`) naming which games, since their moneylines
+may no longer reflect the original pregame line; the warning is persisted
+so it stays visible on every later view of the locked week, not just the
+page load when the lock happened. The picks tab then switches to a
+read-only view — `store.save_week()` refuses to overwrite an
+already-locked week's row. There's no background scheduler: "locked" is
+computed from `now` vs. the deadline on every page load/regenerate
+attempt, which is sufficient since checking the app close to game time is
+the whole point of using it.
+
+Wherever picks are shown — locked or still open — a "Snapshot" toggle
+lets you switch between the week's frozen `'first'` look and its
+`'current'` snapshot (`store.load_week(..., snapshot_type=...)`), so
+"what did I first see" vs. "what's it look like now/at lock" is visible
+in the UI rather than only queryable in the database. Hidden until a
+`'first'` snapshot actually exists for that week.
 
 Manually overriding a locked week's algorithm recommendation is
 deliberately not built — the locked snapshot is a permanent record, not

@@ -239,6 +239,26 @@ class TestSaveAndLoadWeek:
         assert status["locked"] == 1
         assert status["locked_at"] == "2026-09-13T13:00:00"
 
+    def test_locking_persists_a_lock_warning(self, conn):
+        # CP-15: a caveat from resolve_week_lock() (e.g. "computed after
+        # kickoff") must survive reload, not just the moment it's set.
+        _save(
+            conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0),
+            lock=True, lock_warning="odds computed after kickoff",
+        )
+
+        status = store.get_week_status(conn, 2026, 1)
+        assert status["lock_warning"] == "odds computed after kickoff"
+
+    def test_lock_warning_is_ignored_when_not_locking(self, conn):
+        _save(
+            conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0),
+            lock_warning="should not be persisted",
+        )
+
+        status = store.get_week_status(conn, 2026, 1)
+        assert status["lock_warning"] is None
+
     def test_first_save_captures_an_immutable_first_snapshot(self, conn):
         _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.2), datetime(2026, 9, 10, 9, 0))
         _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.9), datetime(2026, 9, 12, 9, 0))
@@ -252,6 +272,27 @@ class TestSaveAndLoadWeek:
 
         assert first["confidence"] == pytest.approx(0.2)  # untouched by the later regenerate
         assert current["confidence"] == pytest.approx(0.9)
+
+    def test_load_week_can_load_the_first_snapshot_instead_of_current(self, conn):
+        # CP-26: a caller (the Picks tab's snapshot toggle) needs to see the
+        # frozen 'first' look separately from whatever 'current' has since
+        # become, not just 'current' as load_week always returned before.
+        _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.2), datetime(2026, 9, 10, 9, 0))
+        _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.9), datetime(2026, 9, 12, 9, 0))
+
+        _, current_picks, _ = store.load_week(conn, 2026, 1)
+        _, first_picks, _ = store.load_week(conn, 2026, 1, snapshot_type="first")
+
+        assert current_picks.loc[0, "confidence"] == pytest.approx(0.9)
+        assert first_picks.loc[0, "confidence"] == pytest.approx(0.2)
+
+    def test_loading_the_first_snapshot_before_one_exists_returns_empty_frames(self, conn):
+        _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0), first_snapshot_eligible=False)
+
+        games, picks, _ = store.load_week(conn, 2026, 1, snapshot_type="first")
+
+        assert games.empty
+        assert picks.empty
 
     def test_saving_stores_the_stable_game_facts_in_games(self, conn):
         _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 10, 9, 0))

@@ -333,6 +333,7 @@ def save_week(
     generated_at: datetime,
     first_snapshot_eligible: bool,
     lock: bool = False,
+    lock_warning: str | None = None,
 ) -> None:
     """Persist a week's evaluated games + generated picks as the `'current'`
     snapshot, overwriting any prior `'current'` snapshot for that week.
@@ -353,6 +354,11 @@ def save_week(
     produced by `picks_core.games_with_included_flags`); `picks` needs
     `game_id`/`points`/`predicted_winner`/`confidence`/`algorithm_version`
     (as produced by `picks_core.rank_games`).
+
+    `lock_warning` records a caveat about this specific lock -- e.g.
+    `picks_core.resolve_week_lock()`'s "computed after kickoff" flag -- so it
+    stays visible on every later view of the locked week, not just the one
+    page load when the lock happened. Ignored unless `lock` is also set.
     """
     status = get_week_status(conn, season_year, week)
     if status and status["locked"]:
@@ -440,26 +446,31 @@ def save_week(
 
         conn.execute(
             """
-            INSERT INTO week_status (season_year, week, locked, locked_at, generated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO week_status (season_year, week, locked, locked_at, generated_at, lock_warning)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(season_year, week) DO UPDATE SET
                 locked = excluded.locked,
                 locked_at = excluded.locked_at,
-                generated_at = excluded.generated_at
+                generated_at = excluded.generated_at,
+                lock_warning = excluded.lock_warning
             """,
             (
                 season_year, week, int(lock),
                 generated_at.isoformat() if lock else None,
                 generated_at.isoformat(),
+                lock_warning if lock else None,
             ),
         )
 
 
 def load_week(
-    conn: sqlite3.Connection, season_year: int, week: int
+    conn: sqlite3.Connection, season_year: int, week: int, snapshot_type: str = "current"
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict | None]:
-    """Load a previously-saved week's `'current'` games, picks, and status.
-    Empty DataFrames (and `None` status) if nothing has been saved for it yet.
+    """Load a previously-saved week's games, picks, and status for one
+    snapshot -- `'current'` by default, or `'first'` to see the frozen
+    initial look instead. Empty DataFrames (and `None` status --
+    status is week-level, not per-snapshot) if nothing has been saved for
+    that snapshot yet.
 
     `games` carries `captured_at` (the snapshot's true generation time) so
     a caller reusing this data verbatim -- e.g. `resolve_week_lock()`
@@ -472,22 +483,22 @@ def load_week(
                wg.home_moneyline, wg.away_moneyline, wg.included, wg.captured_at
         FROM weekly_games wg
         JOIN games g ON wg.game_id = g.game_id
-        WHERE g.season_year = ? AND g.week = ? AND wg.snapshot_type = 'current'
+        WHERE g.season_year = ? AND g.week = ? AND wg.snapshot_type = ?
         ORDER BY g.gameday, g.gametime
         """,
         conn,
-        params=(season_year, week),
+        params=(season_year, week, snapshot_type),
     )
     picks = pd.read_sql_query(
         """
         SELECT wp.game_id, wp.points, wp.predicted_winner, wp.confidence, wp.algorithm_version
         FROM weekly_picks wp
         JOIN games g ON wp.game_id = g.game_id
-        WHERE g.season_year = ? AND g.week = ? AND wp.snapshot_type = 'current'
+        WHERE g.season_year = ? AND g.week = ? AND wp.snapshot_type = ?
         ORDER BY wp.points DESC
         """,
         conn,
-        params=(season_year, week),
+        params=(season_year, week, snapshot_type),
     )
     status = get_week_status(conn, season_year, week)
     return games, picks, status

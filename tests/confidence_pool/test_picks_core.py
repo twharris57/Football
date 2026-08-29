@@ -355,7 +355,7 @@ class TestResolveWeekLock:
     def test_computes_a_fresh_snapshot_when_nothing_was_ever_saved(self):
         auto_games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00")])
         empty = pd.DataFrame()
-        now = datetime(2026, 9, 13, 13, 0, tzinfo=pc.ET)
+        now = datetime(2026, 9, 13, 12, 0, tzinfo=pc.ET)  # before the 13:00 kickoff
 
         outcome = pc.resolve_week_lock(auto_games, {}, empty, empty, now)
 
@@ -364,6 +364,36 @@ class TestResolveWeekLock:
         assert list(outcome.picks["game_id"]) == ["g1"]
         # No prior snapshot to reuse -- generated_at is genuinely "now".
         assert outcome.generated_at == now
+
+    def test_warns_when_the_fresh_snapshot_is_computed_after_kickoff(self):
+        # CP-15: the app was never opened for this week until well after its
+        # deadline -- possibly after some of its games have already started.
+        auto_games = pd.DataFrame(
+            [
+                _game("started", 1, "Sunday", "13:00", home_team="AAA", away_team="BBB"),
+                _game("not_yet", 1, "Sunday", "20:20", home_team="CCC", away_team="DDD"),
+            ]
+        )
+        empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 16, 0, tzinfo=pc.ET)  # after the 13:00 kickoff, before 20:20
+
+        outcome = pc.resolve_week_lock(auto_games, {}, empty, empty, now)
+
+        assert outcome.locked is True  # still locks -- no better data to fall back to
+        assert outcome.warning is not None
+        assert "BBB @ AAA" in outcome.warning
+        assert "DDD @ CCC" not in outcome.warning  # hasn't kicked off yet
+
+    def test_no_stale_kickoff_warning_for_an_excluded_game_that_already_started(self):
+        auto_games = pd.DataFrame(
+            [_game("g1", 1, "Sunday", "13:00", home_team="AAA", away_team="BBB")]
+        )
+        empty = pd.DataFrame()
+        now = datetime(2026, 9, 13, 16, 0, tzinfo=pc.ET)
+
+        outcome = pc.resolve_week_lock(auto_games, {"g1": False}, empty, empty, now)
+
+        assert outcome.warning is None
 
     def test_excludes_a_previously_unchecked_game_from_the_fresh_snapshot(self):
         auto_games = pd.DataFrame(

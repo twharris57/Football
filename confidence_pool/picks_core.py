@@ -356,6 +356,16 @@ def resolve_week_lock(
     and there's no prior snapshot to fall back to, returns `locked=False`
     with an explanatory `warning` instead of locking nothing silently.
 
+    If that fresh computation happens after kickoff for one of the
+    included games -- the app was never opened for this week until well
+    after its deadline, possibly after games have already started or
+    finished -- `warning` flags which games, since their moneylines
+    may no longer reflect the original pregame line. Still locks in the
+    computed result rather than refusing to lock at all: there's no better
+    data to fall back to, and leaving the week unresolved forever would be
+    worse than locking with a caveat. This can't happen on the preferred,
+    prior-snapshot path above, since that path never recomputes odds.
+
     The returned `generated_at` is what the caller should persist as this
     save's timestamp -- the *reused* snapshot's own original `captured_at`
     (from `saved_games`) when locking in prior data verbatim, not `now`.
@@ -384,7 +394,23 @@ def resolve_week_lock(
             locked=False, games=pd.DataFrame(), picks=pd.DataFrame(), warning=warning,
             generated_at=None,
         )
-    return LockOutcome(locked=True, games=games_all, picks=ranked, warning=None, generated_at=now)
+
+    included_games = games_all[games_all["included"]]
+    started = [
+        (row["away_team"], row["home_team"])
+        for _, row in included_games.iterrows()
+        if kickoff_datetime(row["gameday"], row["gametime"]) <= now
+    ]
+    warning = None
+    if started:
+        matchups = ", ".join(f"{away} @ {home}" for away, home in started)
+        warning = (
+            "No picks were ever generated for this week before the deadline, "
+            f"and kickoff has already passed for: {matchups}. Locked using "
+            "odds computed just now -- these may no longer reflect the "
+            "original pregame line."
+        )
+    return LockOutcome(locked=True, games=games_all, picks=ranked, warning=warning, generated_at=now)
 
 
 def check_actual_picks(
