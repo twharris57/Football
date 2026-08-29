@@ -11,7 +11,7 @@ full game-selection rules and why they're shaped this way.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import nfl_data_py as nfl
@@ -109,48 +109,89 @@ def week_date_labels(schedule: pd.DataFrame) -> dict[int, str]:
     return labels
 
 
+def _week_sunday(week_games: pd.DataFrame) -> date | None:
+    """The calendar date of this NFL week's Sunday -- the anchor for
+    `select_games()`'s standard-week selection window.
+
+    Prefers a real Sunday game's own date when one exists (true for the
+    overwhelming majority of weeks); otherwise rolls any other game's date
+    to that week's Sunday, since an NFL week runs Thursday through the
+    following Monday/Tuesday with exactly one Sunday in between. `None` if
+    there are no games to anchor from (bye week / invalid week number).
+    """
+    if week_games.empty:
+        return None
+    gamedays = pd.to_datetime(week_games["gameday"]).dt.date
+    sunday_games = gamedays[week_games["weekday"] == "Sunday"]
+    if not sunday_games.empty:
+        return sunday_games.iloc[0]
+    reference = gamedays.iloc[0]
+    weekday_num = reference.weekday()  # Monday=0 ... Sunday=6
+    if weekday_num in (0, 1):  # Monday/Tuesday belong to the preceding Sunday
+        return reference - timedelta(days=weekday_num + 1)
+    return reference + timedelta(days=6 - weekday_num)
+
+
 def select_games(
     schedule: pd.DataFrame,
     year: int,
     week: int,
     selection_rule: str = "standard",
     sunday_afternoon_cutoff: str = SUNDAY_AFTERNOON_CUTOFF,
+    configured_deadline: datetime | None = None,
 ) -> pd.DataFrame:
     """Apply the Legion pool's game-selection rules (bylaws rule 14) for one
     week.
 
     `selection_rule` (from `store.season_week_rules` -- only weeks whose
-    rule differs from the default get a row there, e.g. weeks 17-18):
+    rule differs from the default get a row there, e.g. weeks 16-18):
 
-    - `'standard'` (the default): regular season only, Sunday-afternoon
-      (kickoff >= `sunday_afternoon_cutoff`) and Monday-night games. This
-      filter exists so the deadline (the earliest *selected* kickoff)
-      can't fall after an excluded early game (Thursday, an early-Sunday
-      international game) has already been decided, which would leak
-      information before picks are due.
-    - `'all_games'`: every game that week, no weekday filter. Used where
-      the deadline is a single early cutoff *before all* of that week's
-      kickoffs (see `week_deadline()`) rather than "before the earliest
-      selected kickoff" -- the leak `'standard'` guards against can't
-      happen regardless of weekday, so nothing needs excluding. Confirmed
-      against real 2025-season results: week 18's sheet included a
-      Saturday game (Jan 3) alongside the Sunday slate (Jan 4), which a
-      Sunday/Monday-only filter would have excluded.
+    - `'standard'` (the default): a game is selected if its kickoff falls
+      in the window from this week's Sunday at `sunday_afternoon_cutoff`
+      through the following Tuesday end-of-day. In practice that's
+      Sunday-afternoon and Monday-night games, but as a real datetime
+      comparison rather than a fixed weekday enumeration, it also catches
+      a rare Tuesday makeup game (a weather postponement has happened at
+      least once in NFL history) that a Monday/Sunday-only check would
+      silently miss. This window exists so the deadline (the earliest
+      *selected* kickoff) can't fall after an excluded early game
+      (Thursday, an early-Sunday international game) has already been
+      decided, which would leak information before picks are due.
+    - `'all_games'`: every game that week, if `configured_deadline` isn't
+      known yet -- there's nothing yet to compare kickoffs against, so
+      `'standard'`'s no-leak concern can't be evaluated either way. Once a
+      deadline is configured, only games kicking off at or after it count,
+      on the same reasoning as `'standard'`'s window, rather than assuming
+      the override always predates every kickoff that week. Used where the
+      deadline is a single early cutoff *before all* of that week's
+      kickoffs (see `week_deadline()`). Confirmed against real 2025-season
+      results: week 18's sheet included a Saturday game (Jan 3) alongside
+      the Sunday slate (Jan 4), which a Sunday/Monday-only filter would
+      have excluded.
     """
     week_games = schedule[
         (schedule["season"] == year)
         & (schedule["game_type"] == "REG")
         & (schedule["week"] == week)
     ]
+    kickoffs = pd.Series(
+        [kickoff_datetime(row["gameday"], row["gametime"]) for _, row in week_games.iterrows()],
+        index=week_games.index,
+    )
 
     if selection_rule == "all_games":
-        selected = week_games
+        if configured_deadline is None:
+            selected = week_games
+        else:
+            selected = week_games[kickoffs >= configured_deadline]
     else:
-        is_monday = week_games["weekday"] == "Monday"
-        is_sunday_afternoon = (week_games["weekday"] == "Sunday") & (
-            week_games["gametime"] >= sunday_afternoon_cutoff
-        )
-        selected = week_games[is_monday | is_sunday_afternoon]
+        sunday = _week_sunday(week_games)
+        if sunday is None:
+            selected = week_games
+        else:
+            window_start = kickoff_datetime(str(sunday), sunday_afternoon_cutoff)
+            window_end = kickoff_datetime(str(sunday + timedelta(days=2)), "23:59")
+            selected = week_games[(kickoffs >= window_start) & (kickoffs <= window_end)]
 
     return selected[GAME_COLUMNS].reset_index(drop=True)
 

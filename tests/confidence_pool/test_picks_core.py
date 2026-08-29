@@ -94,7 +94,7 @@ class TestSelectGames:
     def test_excludes_thursday_and_early_sunday_games(self):
         schedule = pd.DataFrame(
             [
-                _game("thu", 1, "Thursday", "20:20"),
+                _game("thu", 1, "Thursday", "20:20", gameday="2026-09-10"),
                 _game("early_sun", 1, "Sunday", "09:30"),
                 _game("kept", 1, "Sunday", "13:00"),
             ]
@@ -103,6 +103,34 @@ class TestSelectGames:
         selected = pc.select_games(schedule, 2026, 1)
 
         assert set(selected["game_id"]) == {"kept"}
+
+    def test_includes_a_tuesday_makeup_game(self):
+        # A weather-postponed game moved to Tuesday still counts -- it
+        # kicks off well after the deadline, same no-leak reasoning as a
+        # Monday game, which a weekday-enum check (Monday/Sunday only)
+        # would have silently missed.
+        schedule = pd.DataFrame(
+            [
+                _game("tue_makeup", 1, "Tuesday", "19:00", gameday="2026-09-15"),
+                _game("sun_afternoon", 1, "Sunday", "13:00"),
+            ]
+        )
+
+        selected = pc.select_games(schedule, 2026, 1)
+
+        assert set(selected["game_id"]) == {"tue_makeup", "sun_afternoon"}
+
+    def test_excludes_a_game_the_wednesday_after(self):
+        schedule = pd.DataFrame(
+            [
+                _game("wed", 1, "Wednesday", "19:00", gameday="2026-09-16"),
+                _game("sun_afternoon", 1, "Sunday", "13:00"),
+            ]
+        )
+
+        selected = pc.select_games(schedule, 2026, 1)
+
+        assert set(selected["game_id"]) == {"sun_afternoon"}
 
     def test_excludes_non_regular_season_game_types(self):
         schedule = pd.DataFrame(
@@ -137,10 +165,27 @@ class TestSelectGames:
 
         assert set(selected["game_id"]) == {"sat", "sun_early", "sun_afternoon", "mon"}
 
+    def test_all_games_rule_excludes_a_game_before_a_configured_deadline(self):
+        # Once a real deadline is known, 'all_games' should stop assuming
+        # it predates every kickoff that week and actually check.
+        schedule = pd.DataFrame(
+            [
+                _game("early", 17, "Thursday", "20:00", gameday="2026-12-24"),
+                _game("sat", 17, "Saturday", "13:00", gameday="2026-12-26"),
+            ]
+        )
+        deadline = datetime(2026, 12, 26, 13, 0, tzinfo=pc.ET)
+
+        selected = pc.select_games(
+            schedule, 2026, 17, selection_rule="all_games", configured_deadline=deadline
+        )
+
+        assert set(selected["game_id"]) == {"sat"}
+
     def test_standard_rule_is_the_default(self):
         schedule = pd.DataFrame(
             [
-                _game("sat", 17, "Saturday", "16:30"),
+                _game("sat", 17, "Saturday", "16:30", gameday="2026-09-12"),
                 _game("sun_afternoon", 17, "Sunday", "13:00"),
             ]
         )

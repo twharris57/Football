@@ -23,19 +23,30 @@ most of the season. `picks_core.select_games()` encodes this as:
 
 - `game_type == 'REG'` (excludes preseason and any playoff rows this pool
   never uses).
-- `'standard'` rule (the default): `weekday in ('Sunday', 'Monday')`, and
-  for Sunday, `gametime >= '13:00'` — this excludes Thursday Night
-  Football and any early/international Sunday game. The reason this
-  filter exists at all: the deadline (below) is "before kickoff" of the
+- `'standard'` rule (the default): a game is selected if its kickoff falls
+  in the window from that week's Sunday at the configured
+  `sunday_afternoon_cutoff` (13:00 ET by default) through the following
+  Tuesday end-of-day (**changed 2026-08-29**: previously a
+  `weekday in ('Sunday', 'Monday')` enumeration with a `gametime >= '13:00'`
+  check for Sunday specifically). In practice this is still
+  Sunday-afternoon and Monday-night games, but as a real datetime
+  comparison it also picks up a rare Tuesday makeup game (a weather
+  postponement has happened at least once in NFL history) that the old
+  weekday enumeration would have silently excluded. The reason this
+  window exists at all: the deadline (below) is "before kickoff" of the
   *earliest selected* game, so an excluded early game's result can't leak
   information before picks are due.
-- **`'all_games'` rule: every game that week, no weekday filter.** Applies
-  to the season's final few weeks — `store.KNOWN_LATE_SEASON_WEEKS`, 16-18
-  as of the 2026 rules (see below). Their deadline is a single early
+- **`'all_games'` rule: every game that week, once no deadline is
+  configured yet** — applies to the season's final few weeks —
+  `store.KNOWN_LATE_SEASON_WEEKS`, 16-18 as of the 2026 rules (see below).
+  Once that week's deadline *is* configured (Settings tab), selection
+  switches to the same kind of real check as `'standard'`'s window: only
+  games kicking off at or after it. Their deadline is a single early
   cutoff *before all* of that week's kickoffs (see "Pick-submission
-  deadline" below), so the leak the weekday filter guards against for
-  `'standard'` weeks can't happen regardless of which weekday a game
-  falls on.
+  deadline" below), so in practice this ends up including every game
+  anyway — but it's now an actual comparison against the configured
+  deadline rather than an assumption that the deadline always predates
+  every kickoff that week.
 
 **Which weeks get the `'all_games'` rule changes year to year — confirmed
 against real bylaws documents twice, not assumed to carry forward.** An
