@@ -11,7 +11,7 @@ full game-selection rules and why they're shaped this way.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import nfl_data_py as nfl
@@ -109,48 +109,112 @@ def week_date_labels(schedule: pd.DataFrame) -> dict[int, str]:
     return labels
 
 
+def _week_sunday(week_games: pd.DataFrame) -> date | None:
+    """The calendar date of this NFL week's Sunday -- the anchor for
+    `select_games()`'s standard-week selection window.
+
+    Prefers a real Sunday game's own date when one exists (true for the
+    overwhelming majority of weeks); otherwise rolls any other game's date
+    to that week's Sunday, since an NFL week runs Thursday through the
+    following Monday/Tuesday with exactly one Sunday in between. `None` if
+    there are no games to anchor from (bye week / invalid week number).
+    """
+    if week_games.empty:
+        return None
+    gamedays = pd.to_datetime(week_games["gameday"]).dt.date
+    sunday_games = gamedays[week_games["weekday"] == "Sunday"]
+    if not sunday_games.empty:
+        return sunday_games.iloc[0]
+    reference = gamedays.iloc[0]
+    weekday_num = reference.weekday()  # Monday=0 ... Sunday=6
+    if weekday_num in (0, 1):  # Monday/Tuesday belong to the preceding Sunday
+        return reference - timedelta(days=weekday_num + 1)
+    return reference + timedelta(days=6 - weekday_num)
+
+
 def select_games(
     schedule: pd.DataFrame,
     year: int,
     week: int,
     selection_rule: str = "standard",
     sunday_afternoon_cutoff: str = SUNDAY_AFTERNOON_CUTOFF,
+    configured_deadline: datetime | None = None,
 ) -> pd.DataFrame:
     """Apply the Legion pool's game-selection rules (bylaws rule 14) for one
     week.
 
     `selection_rule` (from `store.season_week_rules` -- only weeks whose
-    rule differs from the default get a row there, e.g. weeks 17-18):
+    rule differs from the default get a row there, e.g. weeks 16-18):
 
-    - `'standard'` (the default): regular season only, Sunday-afternoon
-      (kickoff >= `sunday_afternoon_cutoff`) and Monday-night games. This
-      filter exists so the deadline (the earliest *selected* kickoff)
-      can't fall after an excluded early game (Thursday, an early-Sunday
-      international game) has already been decided, which would leak
-      information before picks are due.
-    - `'all_games'`: every game that week, no weekday filter. Used where
-      the deadline is a single early cutoff *before all* of that week's
-      kickoffs (see `week_deadline()`) rather than "before the earliest
-      selected kickoff" -- the leak `'standard'` guards against can't
-      happen regardless of weekday, so nothing needs excluding. Confirmed
-      against real 2025-season results: week 18's sheet included a
-      Saturday game (Jan 3) alongside the Sunday slate (Jan 4), which a
-      Sunday/Monday-only filter would have excluded.
+    - `'standard'` (the default): a game is selected if its kickoff falls
+      in the window from this week's Sunday at `sunday_afternoon_cutoff`
+      through the following Tuesday end-of-day. In practice that's
+      Sunday-afternoon and Monday-night games, but as a real datetime
+      comparison rather than a fixed weekday enumeration, it also catches
+      a rare Tuesday makeup game (a weather postponement has happened at
+      least once in NFL history) that a Monday/Sunday-only check would
+      silently miss. This window exists so the deadline (the earliest
+      *selected* kickoff) can't fall after an excluded early game
+      (Thursday, an early-Sunday international game) has already been
+      decided, which would leak information before picks are due.
+    - `'all_games'`: every game that week, if `configured_deadline` isn't
+      known yet -- there's nothing yet to compare kickoffs against, so
+      `'standard'`'s no-leak concern can't be evaluated either way. Once a
+      deadline is configured, only games kicking off at or after it count,
+      on the same reasoning as `'standard'`'s window, rather than assuming
+      the override always predates every kickoff that week. Used where the
+      deadline is a single early cutoff *before all* of that week's
+      kickoffs (see `week_deadline()`). Confirmed against real 2025-season
+      results: week 18's sheet included a Saturday game (Jan 3) alongside
+      the Sunday slate (Jan 4), which a Sunday/Monday-only filter would
+      have excluded.
+
+    A game whose `gametime` isn't finalized yet in the schedule data is
+    never a crash, but the two rules resolve "unknown" oppositely,
+    matching what each one's own no-leak guarantee actually needs:
+    `'standard'` excludes it (an unverifiable window match defaults to
+    "don't leak, don't include"), while `'all_games'` includes it (its
+    deadline is documented to predate every real kickoff that week
+    regardless, so an unknown time isn't evidence for dropping a real game
+    off the sheet).
     """
     week_games = schedule[
         (schedule["season"] == year)
         & (schedule["game_type"] == "REG")
         & (schedule["week"] == week)
     ]
+    def _kickoffs() -> pd.Series:
+        # A per-game unknown kickoff (nfl_data_py has no guarantee every
+        # game's gametime is finalized yet -- most likely for a
+        # late-season, flex-scheduling-eligible game) must not crash the
+        # whole week's comparison -- _try_kickoff_datetime returns None
+        # for that game instead of raising.
+        return pd.Series(
+            [_try_kickoff_datetime(row["gameday"], row["gametime"]) for _, row in week_games.iterrows()],
+            index=week_games.index,
+        )
 
     if selection_rule == "all_games":
-        selected = week_games
+        if configured_deadline is None:
+            selected = week_games
+        else:
+            kickoffs = _kickoffs()
+            # An unknown kickoff is presumed to belong, not excluded: this
+            # rule's own deadline is documented to predate every real
+            # kickoff that week (see docs/confidence-pool-web-app.md), so
+            # "we don't know the exact time yet" is not evidence a game
+            # should be dropped from the sheet -- only a *known* kickoff
+            # before the deadline is.
+            selected = week_games[kickoffs.isna() | (kickoffs >= configured_deadline)]
     else:
-        is_monday = week_games["weekday"] == "Monday"
-        is_sunday_afternoon = (week_games["weekday"] == "Sunday") & (
-            week_games["gametime"] >= sunday_afternoon_cutoff
-        )
-        selected = week_games[is_monday | is_sunday_afternoon]
+        sunday = _week_sunday(week_games)
+        if sunday is None:
+            selected = week_games
+        else:
+            window_start = kickoff_datetime(str(sunday), sunday_afternoon_cutoff)
+            window_end = kickoff_datetime(str(sunday + timedelta(days=2)), "23:59")
+            kickoffs = _kickoffs()
+            selected = week_games[(kickoffs >= window_start) & (kickoffs <= window_end)]
 
     return selected[GAME_COLUMNS].reset_index(drop=True)
 
@@ -260,12 +324,35 @@ def games_with_included_flags(
 
 
 def kickoff_datetime(gameday: str, gametime: str) -> datetime:
-    """Combine a schedule row's date/time strings into an ET-aware datetime."""
+    """Combine a schedule row's date/time strings into an ET-aware datetime.
+
+    Raises if `gametime` isn't a parseable "HH:MM" string -- nfl_data_py
+    doesn't guarantee one is set yet for a game whose kickoff hasn't been
+    finalized (most often a late-season, flex-scheduling-eligible game).
+    Callers comparing kickoffs across a whole week, where one game's
+    unknown time shouldn't crash the rest, should use
+    `_try_kickoff_datetime` instead.
+    """
     return datetime.combine(
         pd.to_datetime(gameday).date(),
         datetime.strptime(gametime, "%H:%M").time(),
         tzinfo=ET,
     )
+
+
+def _try_kickoff_datetime(gameday: str, gametime: str | None) -> datetime | None:
+    """`kickoff_datetime`, tolerant of a not-yet-finalized `gametime` --
+    `None` instead of raising, so one game's unknown kickoff doesn't crash
+    a comparison across its whole week. A `None` result means
+    "kickoff unknown," never "kicks off at the start of time": it compares
+    as `False` against any window/deadline check (a `None`/`NaT` value is
+    never `>=` or `<=` anything), so it naturally excludes itself from a
+    selection window rather than falsely matching one.
+    """
+    try:
+        return kickoff_datetime(gameday, gametime)
+    except (TypeError, ValueError):
+        return None
 
 
 def week_deadline(
@@ -281,17 +368,27 @@ def week_deadline(
     earliest kickoff among the selected games -- picks are due "before
     kick-off". The caller decides whether a configured override applies
     (by looking up `season_week_rules` for this week), not this function.
-    """
-    kickoffs = [
-        kickoff_datetime(row["gameday"], row["gametime"]) for _, row in games.iterrows()
-    ]
-    if not kickoffs:
-        raise ValueError("Cannot compute a deadline with no selected games")
-    earliest_kickoff = min(kickoffs)
 
+    Never parses a kickoff when `configured_deadline` already answers the
+    question -- `games` can still include a game whose kickoff
+    isn't finalized yet (`select_games`'s `'all_games'` rule lets one
+    through deliberately, see its docstring), and that game's unknown
+    gametime has no bearing on an already-known configured deadline. When
+    no override is given, a game with an unknown kickoff is excluded from
+    the earliest-kickoff computation rather than crashing it.
+    """
     if configured_deadline is not None:
         return configured_deadline
-    return earliest_kickoff
+
+    kickoffs = [
+        _try_kickoff_datetime(row["gameday"], row["gametime"]) for _, row in games.iterrows()
+    ]
+    known_kickoffs = [k for k in kickoffs if k is not None]
+    if not known_kickoffs:
+        raise ValueError(
+            "Cannot compute a deadline: no selected games have a known kickoff time yet"
+        )
+    return min(known_kickoffs)
 
 
 def is_locked(now: datetime, deadline: datetime) -> bool:
@@ -313,13 +410,19 @@ def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
     that week's immutable `'first'` snapshot (see `store.save_week`).
     Comparing whole calendar days, not exact hours, since "Thursday" vs.
     "the following Wednesday" is the distinction that actually matters here.
+
+    A game with an unfinalized kickoff is excluded from the
+    earliest-kickoff computation rather than crashing it; `False` if that
+    leaves no known kickoff to compare against, same as the "no games at
+    all" case -- there's nothing yet to call a first look at.
     """
     kickoffs = [
-        kickoff_datetime(row["gameday"], row["gametime"]) for _, row in games.iterrows()
+        _try_kickoff_datetime(row["gameday"], row["gametime"]) for _, row in games.iterrows()
     ]
-    if not kickoffs:
+    known_kickoffs = [k for k in kickoffs if k is not None]
+    if not known_kickoffs:
         return False
-    earliest_kickoff = min(kickoffs)
+    earliest_kickoff = min(known_kickoffs)
     return (earliest_kickoff.date() - now.date()).days <= FIRST_LOOK_WINDOW_DAYS
 
 
@@ -364,7 +467,10 @@ def resolve_week_lock(
     computed result rather than refusing to lock at all: there's no better
     data to fall back to, and leaving the week unresolved forever would be
     worse than locking with a caveat. This can't happen on the preferred,
-    prior-snapshot path above, since that path never recomputes odds.
+    prior-snapshot path above, since that path never recomputes odds. An
+    included game with an unfinalized kickoff is treated as "not
+    yet started" for this warning rather than crashing on it -- there's no
+    way to confirm it started without a known kickoff time.
 
     The returned `generated_at` is what the caller should persist as this
     save's timestamp -- the *reused* snapshot's own original `captured_at`
@@ -399,7 +505,8 @@ def resolve_week_lock(
     started = [
         (row["away_team"], row["home_team"])
         for _, row in included_games.iterrows()
-        if kickoff_datetime(row["gameday"], row["gametime"]) <= now
+        if (kickoff := _try_kickoff_datetime(row["gameday"], row["gametime"])) is not None
+        and kickoff <= now
     ]
     warning = None
     if started:

@@ -81,15 +81,15 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
     cutoff = season_row.get("sunday_afternoon_cutoff", pc.SUNDAY_AFTERNOON_CUTOFF)
     week_rule = store.get_week_rule(conn, season, week)
     selection_rule = week_rule["selection_rule"] if week_rule else "standard"
+    configured_deadline = None
+    if week_rule and week_rule.get("deadline_override"):
+        configured_deadline = datetime.fromisoformat(week_rule["deadline_override"])
 
-    auto_games = pc.select_games(schedule, season, week, selection_rule, cutoff)
+    auto_games = pc.select_games(schedule, season, week, selection_rule, cutoff, configured_deadline)
     if auto_games.empty:
         st.warning(f"No games matched the pool's selection rules for week {week}.")
         return
 
-    configured_deadline = None
-    if week_rule and week_rule.get("deadline_override"):
-        configured_deadline = datetime.fromisoformat(week_rule["deadline_override"])
     deadline = pc.week_deadline(auto_games, configured_deadline)
 
     saved_games, saved_picks, status = store.load_week(conn, season, week)
