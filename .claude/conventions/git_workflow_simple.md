@@ -89,6 +89,31 @@ use `- [ ]` checkboxes, not plain bullets.
   currently support branch-scoped push restrictions in `settings.json`, so this is a
   manual discipline check — run `git branch` before pushing.
 
+### Post-merge cleanup
+
+Deleting a merged branch is a normal, low-risk part of finishing the merge — not a
+separate cleanup pass to defer or wait to be asked for. Do it immediately after every
+merge, remote and local both:
+
+- **Remote**: delete the head branch as part of the merge itself —
+  `gh pr merge --squash --delete-branch`, or the "Delete branch" button GitHub's web UI
+  offers right after a merge. Don't assume GitHub does this automatically: check the
+  repo's own "Automatically delete head branches" setting
+  (`gh api repos/<owner>/<repo> --jq '.delete_branch_on_merge'`) rather than assuming —
+  when it's `false`, a merged branch lingers on the remote until someone explicitly
+  deletes it.
+- **Local**: switch back to `main`, pull the merge down, and delete the local feature
+  branch — `git checkout main && git pull && git branch -d feature/<name>`. Expect a
+  warning (not an error) from `-d` on a squash-merged branch, since the local branch's
+  commits never literally landed in `main`'s history — `-d` still confirms the *branch
+  name* was merged remotely and deletes it; this is normal for this repo's squash-merge
+  strategy, not a sign something went wrong.
+
+Periodically sweep for branches left over from before this convention was followed
+(or merged outside this workflow): `git fetch origin --prune`, then check each
+remaining local/remote `feature/*` branch against `gh pr list --state merged` before
+deleting anything with the same commands above.
+
 ## Versioning
 
 If the project uses version numbers, tag each release on `main` as `v{version}`
