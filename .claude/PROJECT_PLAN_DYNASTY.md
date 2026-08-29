@@ -67,8 +67,6 @@ foundational item rather than the immediate next feature):
 
 ## Current branch — fix before merge
 
-`feature/dynasty-plan-reprioritize` (PR #60), reviewed 2026-08-28.
-
 Findings from reviewing the *active* branch's own not-yet-merged work —
 kept separate from the thematic backlog below so "fix this before the PR
 merges" is never mixed in with "someday" work. Ephemeral by design: cleared
@@ -77,11 +75,7 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty right now — the `bonus_rec_te` fallback's presence-vs-usability gap
-found in this review is fixed (`isinstance(..., (int, float))` instead of
-`in`/`not in`), with a covering test added; see `valuation_principles.md`'s
-"A presence check on a key is not a validity check on its value" rule for
-the durable lesson.
+Empty right now — no branch currently under review.
 
 ## Now — blocking
 
