@@ -457,20 +457,27 @@ def resolve_week_lock(
     Only computes a fresh snapshot from `auto_games` if nothing was ever
     generated for the week. If odds are still pending for a selected game
     and there's no prior snapshot to fall back to, returns `locked=False`
-    with an explanatory `warning` instead of locking nothing silently.
+    with an explanatory `warning` instead of locking nothing silently --
+    that warning also names any included game that's already kicked off,
+    even though it's the *pending-odds* game(s) blocking the lock, not
+    that one: if the pending game's odds never post (its own moneyline may
+    simply never appear once a different game in the same slate has
+    already started), the week could otherwise stay unlocked indefinitely
+    with a message that never hints at the more consequential problem.
 
-    If that fresh computation happens after kickoff for one of the
-    included games -- the app was never opened for this week until well
-    after its deadline, possibly after games have already started or
-    finished -- `warning` flags which games, since their moneylines
-    may no longer reflect the original pregame line. Still locks in the
-    computed result rather than refusing to lock at all: there's no better
-    data to fall back to, and leaving the week unresolved forever would be
-    worse than locking with a caveat. This can't happen on the preferred,
-    prior-snapshot path above, since that path never recomputes odds. An
-    included game with an unfinalized kickoff is treated as "not
-    yet started" for this warning rather than crashing on it -- there's no
-    way to confirm it started without a known kickoff time.
+    If that fresh computation succeeds (every included game has odds) but
+    happens after kickoff for one of the included games -- the app was
+    never opened for this week until well after its deadline, possibly
+    after games have already started or finished -- `warning` flags which
+    games, since their moneylines may no longer reflect the original
+    pregame line. Still locks in the computed result rather than refusing
+    to lock at all: there's no better data to fall back to, and leaving
+    the week unresolved forever would be worse than locking with a
+    caveat. This can't happen on the preferred, prior-snapshot path
+    above, since that path never recomputes odds. An included game with
+    an unfinalized kickoff is treated as "not yet started" for both of
+    these warnings rather than crashing on it -- there's no way to
+    confirm it started without a known kickoff time.
 
     The returned `generated_at` is what the caller should persist as this
     save's timestamp -- the *reused* snapshot's own original `captured_at`
@@ -487,7 +494,16 @@ def resolve_week_lock(
         )
 
     games_all = games_with_included_flags(auto_games, included)
-    ranked, pending = rank_games(games_all[games_all["included"]])
+    included_games = games_all[games_all["included"]]
+    started = [
+        (row["away_team"], row["home_team"])
+        for _, row in included_games.iterrows()
+        if (kickoff := _try_kickoff_datetime(row["gameday"], row["gametime"])) is not None
+        and kickoff <= now
+    ]
+    started_matchups = ", ".join(f"{away} @ {home}" for away, home in started)
+
+    ranked, pending = rank_games(included_games)
     if not pending.empty:
         missing = ", ".join(
             f"{r['away_team']} @ {r['home_team']}" for _, r in pending.iterrows()
@@ -496,25 +512,23 @@ def resolve_week_lock(
             f"Pick deadline has passed, but odds aren't posted yet for: {missing}. "
             "Picks have not been locked -- reload once odds are posted."
         )
+        if started:
+            warning += (
+                f" Kickoff has already passed for: {started_matchups} -- if its "
+                "odds never post, this week will need manual review rather than "
+                "waiting indefinitely for a reload to unblock it."
+            )
         return LockOutcome(
             locked=False, games=pd.DataFrame(), picks=pd.DataFrame(), warning=warning,
             generated_at=None,
         )
 
-    included_games = games_all[games_all["included"]]
-    started = [
-        (row["away_team"], row["home_team"])
-        for _, row in included_games.iterrows()
-        if (kickoff := _try_kickoff_datetime(row["gameday"], row["gametime"])) is not None
-        and kickoff <= now
-    ]
     warning = None
     if started:
-        matchups = ", ".join(f"{away} @ {home}" for away, home in started)
         warning = (
             "No picks were ever generated for this week before the deadline, "
-            f"and kickoff has already passed for: {matchups}. Locked using "
-            "odds computed just now -- these may no longer reflect the "
+            f"and kickoff has already passed for: {started_matchups}. Locked "
+            "using odds computed just now -- these may no longer reflect the "
             "original pregame line."
         )
     return LockOutcome(locked=True, games=games_all, picks=ranked, warning=warning, generated_at=now)
