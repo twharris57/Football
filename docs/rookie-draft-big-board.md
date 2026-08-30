@@ -155,6 +155,27 @@ doesn't get a bucket match simply falls back to the flat `position_average`
 `scripts/derive_position_multipliers.py` prints the resolved rookie bucket
 ratios for direct inspection.
 
+**Checked whether a continuous score (regression over the bucket metric)
+would meaningfully improve on the binary median split, 2026-08-30**: no —
+the bucket metric itself has weak-to-negligible correlation with the real
+ratio at every position (QB +0.12, RB +0.18, WR -0.23, TE -0.00, on 77-203
+combine-matched historical player-seasons), and a simple linear regression
+on that same metric barely beats the current two-bucket-mean prediction
+(0.0-2.1% lower MSE, worst position first: TE -0.0%, RB +0.0%, QB +0.1%,
+WR +2.1%). The two-bucket split is already capturing nearly all the
+explainable variance a continuous model could — the underlying combine
+signal is just weak, not under-modeled by a binary split. A regression-
+based continuous score (feature selection, real overfitting risk against
+a sample this size) isn't worth the added complexity for a gain this
+small. Not picked up; revisit only if a richer feature set becomes
+available — college target share, yards per route run, and draft capital
+are all more predictive of rookie fantasy outcomes than combine testing
+alone, so a future college-stats pipeline is a more promising path to a
+worthwhile continuous score than adding more combine-only features to
+this one. The weak correlation found here is a property of 40-yd-dash/
+weight alone as predictors, not necessarily of a continuous approach in
+general.
+
 ## Ranking: marginal lineup value, not raw trade value
 
 The draft plan does **not** rank candidates by `adj_value`. It ranks by how

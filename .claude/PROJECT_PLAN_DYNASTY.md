@@ -364,51 +364,6 @@ cutoff.
   (per-player recompute) has landed, this multiplier is a last-resort
   fallback only — worth a proper look if it still seems to matter enough to
   justify the automation.
-- [ ] **VA-4: Post-draft valuation retrospective** (assistant valuation review,
-  2026-07-31) — once the live draft itself is done and there's no
-  time-pressure to protect, revisit a few statistically-motivated
-  refinements that are real improvements but not worth the added
-  complexity mid-draft:
-  - ~~Shrinkage instead of a hard `QUALIFYING_VOLUME` cutoff.~~ **Shipped
-    2026-08-30**: `player_scoring._shrunk_ratio()` blends a player's own
-    ratio toward `position_average` by volume (`weight = volume / (volume
-    + QUALIFYING_VOLUME[position])`, same shape as `power_timeline.py`'s
-    `_shrunk_win_pct()`), replacing the old 0%-below/100%-at-or-above
-    cutoff. Also widened `per_player` to sum a player's *entire* lookback
-    window, not just seasons individually clearing the old bar — a player
-    with steady sub-bar volume across 3 seasons previously got zero
-    individual credit at all. Verified against real cached data before
-    shipping: `position_average` unchanged (still the same qualifying-only
-    pool), 460 more players now carry a shrunk individual ratio instead of
-    the flat fallback, no ratio landed outside `MULTIPLIER_BOUNDS`, and the
-    biggest deltas among already-qualifying players were modest (~0.05-0.12).
-  - **Continuous rookie play-style scoring instead of a binary
-    median-split bucket.** `_derive_rookie_buckets()` currently splits
-    each position into exactly two buckets off one metric (e.g. QB 40-yd
-    dash). A regression-based continuous score over multiple combine
-    metrics would resolve more nuance than a single median split can.
-  - ~~Document and, if it ever looks systematically off, revisit the
-    linearity assumption in `adj_value = value * multiplier`.~~ **Checked
-    against real data, 2026-08-30**: does the scoring-correction ratio
-    itself vary systematically by value tier (a checkable proxy for the
-    unverifiable "does market value scale linearly with points"
-    question)? Split 3 seasons (2022-2024) of qualifying-volume
-    player-seasons into terciles by real-league points scored — the ratio
-    is essentially flat at every position (largest tier-to-tier spread
-    under 2%, QB/RB/WR/TE all included). Full numbers and interpretation
-    in `docs/rookie-draft-big-board.md`'s "Modeling assumption" section.
-    Doesn't prove the market-value side of the assumption, but
-    substantially de-risks it in practice — closed unless a later re-run
-    of the same check stops looking flat.
-
-  **If college stats are ever pulled in** (user-flagged 2026-07-31) — the
-  shrinkage and continuous-bucketing refinements above are exactly where
-  that data would earn its keep: college target share, yards per route
-  run, and draft capital are all more predictive of rookie fantasy
-  outcomes than combine testing alone, and would slot into the same
-  `_derive_rookie_buckets`/multiplier machinery as additional features
-  rather than requiring a new pipeline.
-
 - [ ] **VA-5: `win_pct` doesn't credit a tie as half a win** (assistant
   valuation review, 2026-08-02) — `team_power_timeline_scores()` computes
   `wins / games_played` where `games_played = wins + losses + ties`; a
