@@ -380,14 +380,19 @@ cutoff.
     each position into exactly two buckets off one metric (e.g. QB 40-yd
     dash). A regression-based continuous score over multiple combine
     metrics would resolve more nuance than a single median split can.
-  - **Document (done) and, if it ever looks systematically off, revisit
-    the linearity assumption in `adj_value = value * multiplier`.**
-    Applying a points-derived ratio multiplicatively to a market value
-    assumes value scales linearly with points under the counterfactual
-    scoring rule — a reasonable first-order approximation, but real
-    dynasty value is plausibly convex near the top of a position and
-    flatter near replacement. Caveat added to `docs/rookie-draft-big-board.md`
-    as part of this review.
+  - ~~Document and, if it ever looks systematically off, revisit the
+    linearity assumption in `adj_value = value * multiplier`.~~ **Checked
+    against real data, 2026-08-30**: does the scoring-correction ratio
+    itself vary systematically by value tier (a checkable proxy for the
+    unverifiable "does market value scale linearly with points"
+    question)? Split 3 seasons (2022-2024) of qualifying-volume
+    player-seasons into terciles by real-league points scored — the ratio
+    is essentially flat at every position (largest tier-to-tier spread
+    under 2%, QB/RB/WR/TE all included). Full numbers and interpretation
+    in `docs/rookie-draft-big-board.md`'s "Modeling assumption" section.
+    Doesn't prove the market-value side of the assumption, but
+    substantially de-risks it in practice — closed unless a later re-run
+    of the same check stops looking flat.
 
   **If college stats are ever pulled in** (user-flagged 2026-07-31) — the
   shrinkage and continuous-bucketing refinements above are exactly where

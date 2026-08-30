@@ -68,10 +68,32 @@ scoring rule. That's a reasonable first-order approximation — it's what most
 scoring-format converters do — but real dynasty value is plausibly convex
 near the top of a position (scarcity premium) and flatter near replacement,
 so a flat ratio could over-correct elite players and under-correct
-replacement-level ones at the same position. Not something this project can
-verify directly any more than `BASELINE_SCORING` itself can (see below);
-revisit if `adj_value` ever looks systematically off at one end of a
-position's range rather than uniformly.
+replacement-level ones at the same position. Whether *market value itself*
+responds linearly to a points change isn't directly verifiable (no ground
+truth for that relationship, any more than `BASELINE_SCORING` itself has
+one — see below), but the more tractable proxy question is checkable: does
+the *scoring-correction ratio itself* (`real_points / baseline_points`, the
+thing being multiplied) vary systematically with a player's value tier? If
+it did, a flat ratio would compound the convexity risk; if it's essentially
+flat across tiers, a uniform multiplier can't meaningfully distort relative
+standing within a position regardless of how value itself truly responds to
+points.
+
+**Checked against real data, 2026-08-30** (3 lookback seasons, 2022-2024;
+per-player-season ratios split into terciles by real-league points scored,
+same qualifying-volume bars as `QUALIFYING_VOLUME`): the ratio is
+essentially flat across tiers at every position — QB 1.39/1.38/1.41
+(low/mid/high tier, n=108, corr with points = 0.20), RB 1.17/1.17/1.17
+(n=141, corr = 0.03), WR 1.15/1.15/1.16 (n=263, corr = 0.25), TE
+1.33/1.32/1.32 (n=135, corr = -0.10) — every position's tier-to-tier spread
+is under 2%. This doesn't prove market value itself scales linearly with
+points, but it substantially de-risks the concern in practice: the
+multiplier applied is nearly the same number regardless of where a player
+sits in their position's range, so the flat-ratio approximation isn't
+compounding whatever non-linearity exists in the market's own response to
+points. Revisit if `adj_value` ever looks systematically off at one end of
+a position's range, or if this same per-tier ratio check, re-run on a later
+season, stops looking flat.
 
 An earlier version of this correction used one flat multiplier per position
 covering only the two largest scoring gaps (6pt passing TDs, TE premium);
