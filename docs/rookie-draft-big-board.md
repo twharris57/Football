@@ -251,8 +251,10 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
     the same as an old franchise cornerstone toward "how win-now is this
     roster."
   - **Actual record** — two separate fields, deliberately not one: `win_pct`
-    is the real `wins / (wins + losses + ties)` from Sleeper's standings,
-    exactly what the "Win %" display prints; `win_pct_shrunk`
+    is the real `(wins + 0.5 * ties) / (wins + losses + ties)` from Sleeper's
+    standings — a tie earns standard half-win credit rather than scoring
+    identically to a loss — exactly what the "Win %" display prints;
+    `win_pct_shrunk`
     is what actually feeds the z-scoring, blended toward a neutral `0.5`
     early in the season (`_shrunk_win_pct()`, weight `games_played /
     (games_played + WIN_PCT_SHRINKAGE_K)`) so a 1-0/0-1 start doesn't swing
