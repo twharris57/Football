@@ -23,6 +23,7 @@ files are marked and eventually removed.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any
 
@@ -42,6 +43,16 @@ AMBIGUOUS = "AMBIGUOUS"
 # any reasonable post-draft review window before a file is considered
 # orphaned.
 ORPHAN_AGE_DAYS = 90
+
+# Minimum time an `.orphaned`-marked file must sit before
+# _delete_orphaned_snapshots() will actually remove it - a real wall-clock
+# safety margin, not just "survived one call to reconcile_snapshot()."
+# streamlit_app.py's Refresh button busts gather_state's cache on every
+# click with a fresh token and no debounce, so two clicks seconds apart
+# would otherwise mark-then-permanently-delete a file with no realistic
+# chance for a human to notice and undo a wrongly-marked one first. 24
+# hours comfortably spans that, while staying small next to ORPHAN_AGE_DAYS.
+ORPHAN_DELETE_COOLDOWN_HOURS = 24
 
 SCHEMA_VERSION = 1
 # 0 -> 1: adopting explicit schema_version stamping via snapshot_io.py -
@@ -64,12 +75,15 @@ def _mark_orphaned_snapshots(current_draft_id: str) -> None:
     A soft, reversible marking step, not deletion itself - actual removal
     is `_delete_orphaned_snapshots()`'s job, called before this one on
     every `reconcile_snapshot()` call so a file marked orphaned in this
-    call is never also deleted in the same call; it survives to be picked
-    up by a later refresh's delete pass instead, preserving at least one
-    full refresh cycle of visibility between marking and permanent
-    removal. A `.orphaned` file no longer matches the glob below, so a
-    later mark sweep leaves it alone rather than re-processing it every
-    refresh.
+    call is never also deleted in the same call. Stamps the renamed file's
+    mtime to "now" (a rename alone doesn't reliably update mtime across
+    platforms) so `_delete_orphaned_snapshots()`'s own cooldown check has a
+    real "when was this marked" signal to read - a call-count guarantee
+    alone ("survived one prior call") isn't a real time buffer, since nothing
+    stops two calls from happening seconds apart (see
+    ORPHAN_DELETE_COOLDOWN_HOURS). A `.orphaned` file no longer matches the
+    glob below, so a later mark sweep leaves it alone rather than
+    re-processing it every refresh.
     """
     if not CACHE_DIR.exists():
         return
@@ -82,24 +96,33 @@ def _mark_orphaned_snapshots(current_draft_id: str) -> None:
             continue
         marked_path = path.with_name(path.name + ".orphaned")
         path.rename(marked_path)
+        now = time.time()
+        os.utime(marked_path, (now, now))
         logger.info("Marked orphaned draft snapshot for future cleanup: %s -> %s", path.name, marked_path.name)
 
 
 def _delete_orphaned_snapshots() -> None:
-    """Permanently delete every `.orphaned`-marked snapshot file already on disk.
+    """Permanently delete every `.orphaned`-marked snapshot file that has
+    sat marked for at least ORPHAN_DELETE_COOLDOWN_HOURS.
 
     Phase 2 of the two-phase orphan cleanup (see `_mark_orphaned_snapshots`)
     - added once Phase 1's marking step was confirmed correct against real
     production data, rather than assumed correct from launch. Called
     before `_mark_orphaned_snapshots` in `reconcile_snapshot()`, not after,
-    so this only ever deletes a file that was already `.orphaned` coming
-    into the current refresh - never one this same call is about to mark -
-    which is what gives a human at least one full refresh cycle to notice
-    and rename a wrongly-marked file back before it's gone for good.
+    so this never deletes a file this same call is about to mark. The
+    cooldown check (against the mtime `_mark_orphaned_snapshots()` stamps
+    at mark time) is what actually gives a human a real wall-clock window
+    to notice and rename a wrongly-marked file back before it's gone for
+    good - being called on a separate `reconcile_snapshot()` invocation
+    alone doesn't guarantee that, since streamlit_app.py's Refresh button
+    can trigger back-to-back calls seconds apart.
     """
     if not CACHE_DIR.exists():
         return
+    cutoff = time.time() - ORPHAN_DELETE_COOLDOWN_HOURS * 3600
     for path in CACHE_DIR.glob("draft_snapshots_*.json.orphaned"):
+        if path.stat().st_mtime >= cutoff:
+            continue
         path.unlink()
         logger.info("Deleted orphaned draft snapshot: %s", path.name)
 

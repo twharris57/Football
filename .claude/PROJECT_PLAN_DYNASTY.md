@@ -65,7 +65,16 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty right now — cleared after PR #62 merged.
+Empty right now — the one finding from reviewing PR #66
+(`feature/dl7-dl8-table-and-orphan-cleanup`, 2026-08-29: DL-8 Phase 2's
+"one full refresh cycle of visibility" safety claim was call-count-based,
+not wall-clock - two back-to-back Refresh clicks with no debounce could
+mark-then-permanently-delete a file with no realistic chance for a human
+to notice) was fixed directly on the branch: `_delete_orphaned_snapshots()`
+now requires an `ORPHAN_DELETE_COOLDOWN_HOURS` (24h) cooldown since the
+file was actually marked (`_mark_orphaned_snapshots()` now stamps the
+`.orphaned` file's mtime at mark time so the cooldown has something real
+to read), not just "survived one prior call."
 
 ## Now — blocking
 

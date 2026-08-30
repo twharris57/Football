@@ -46,15 +46,19 @@ old/missing stamp once the current code has read it.
 
 `draft_snapshots.py` files specifically are also swept for orphans as a
 side effect of every `reconcile_snapshot()` call, in two phases. First,
-any file already carrying an `.orphaned` suffix from an earlier call is
-deleted outright. Then, any remaining `draft_snapshots_*.json` file older
-than `ORPHAN_AGE_DAYS` and not the draft currently being reconciled gets
-renamed with an `.orphaned` suffix (a draft's own file stops being written
-to once the draft ends, so its mtime is a reasonable proxy for "this draft
-is over"). Running the delete pass before the mark pass means a file
-marked orphaned on one call is never also deleted on that same call — it
-always survives at least one full refresh cycle as a soft, reversible,
-visibly-inspectable marker before permanent removal on a later one.
+any file already carrying an `.orphaned` suffix, and marked at least
+`ORPHAN_DELETE_COOLDOWN_HOURS` (24) ago, is deleted outright. Then, any
+remaining `draft_snapshots_*.json` file older than `ORPHAN_AGE_DAYS` and
+not the draft currently being reconciled gets renamed with an `.orphaned`
+suffix (a draft's own file stops being written to once the draft ends, so
+its mtime is a reasonable proxy for "this draft is over") and its mtime
+restamped to the marking time. Running the delete pass before the mark
+pass means a file marked orphaned on one call is never also deleted on
+that same call - but that alone is only a call-count guarantee, not a real
+wall-clock one, since the app's Refresh button can trigger two calls
+seconds apart with no debounce. The cooldown on the delete pass is what
+gives a wrongly-marked file a genuine window (24h, not "however long until
+the next click") to be noticed and renamed back before it's gone for good.
 
 ## The conceptual split: import vs. cached-derived vs. cheap-derived vs. on-demand
 
