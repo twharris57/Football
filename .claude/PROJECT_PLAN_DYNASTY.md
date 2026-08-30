@@ -397,16 +397,6 @@ cutoff.
   `_derive_rookie_buckets`/multiplier machinery as additional features
   rather than requiring a new pipeline.
 
-- [ ] **VA-5: `win_pct` doesn't credit a tie as half a win** (assistant
-  valuation review, 2026-08-02) — `team_power_timeline_scores()` computes
-  `wins / games_played` where `games_played = wins + losses + ties`; a
-  tie counts toward the denominator but contributes nothing to the
-  numerator, so it's scored identically to a loss instead of the
-  standard 0.5-win credit. Pre-existing (not introduced by RT-1's
-  shrinkage work, which wraps this same formula unchanged), and Sleeper
-  ties are rare enough in a points-based scoring format that this hasn't
-  mattered in practice — low priority, but a real accuracy gap if it
-  ever comes up. Fix: give `wins + 0.5 * ties` credit in the numerator.
 ## Code quality, tests & UX polish
 
 - [ ] **CQ-5: Represent draft-pick identity as structured fields at ingestion, not a

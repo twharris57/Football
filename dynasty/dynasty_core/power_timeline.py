@@ -50,10 +50,12 @@ PHASE_THRESHOLDS = (-0.3, 0.3)
 WIN_PCT_SHRINKAGE_K = 4
 
 
-def _shrunk_win_pct(wins: int, games_played: int, k: int = WIN_PCT_SHRINKAGE_K) -> float:
+def _shrunk_win_pct(wins: float, games_played: int, k: int = WIN_PCT_SHRINKAGE_K) -> float:
     """Blend actual win_pct toward neutral 0.5, weighted by how many games have resolved.
 
-    Reduces to the existing zero-games neutral 0.5 default exactly when
+    `wins` is the tie-credited win count (`wins + 0.5 * ties`, see
+    `team_power_timeline_scores()`), not necessarily an integer. Reduces to
+    the existing zero-games neutral 0.5 default exactly when
     games_played == 0. Weight on the real record grows as
     games_played / (games_played + k), so early results count
     proportionally to how much they've actually resolved instead of
@@ -105,16 +107,20 @@ def team_power_timeline_scores(
         settings = roster.get("settings") or {}
         wins, losses, ties = settings.get("wins", 0), settings.get("losses", 0), settings.get("ties", 0)
         games_played = wins + losses + ties
+        # Standard 0.5-win credit for a tie - it counts toward games_played
+        # (the denominator) but, uncredited, would otherwise score
+        # identically to a loss in the numerator.
+        effective_wins = wins + 0.5 * ties
         rows.append(
             {
                 "roster_id": roster["roster_id"],
                 "aggregate_vor": strength["vor"].sum(),
                 "weighted_age": _weighted_average_age(roster, players, fc_by_sleeper_id),
                 # Raw record for display - never fed to the z-scoring below.
-                "win_pct": wins / games_played if games_played > 0 else 0.5,
+                "win_pct": effective_wins / games_played if games_played > 0 else 0.5,
                 # Small-sample-shrunk record for power_score's z-scoring only
                 # - must never be printed as-is next to a "Win %" label.
-                "win_pct_shrunk": _shrunk_win_pct(wins, games_played),
+                "win_pct_shrunk": _shrunk_win_pct(effective_wins, games_played),
                 # Exposed so a UI can tell "this team's win_pct is a real
                 # record" from "nobody's played yet, this is the neutral
                 # default" - the z-scored win_pct alone can't distinguish
