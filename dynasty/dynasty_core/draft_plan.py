@@ -12,16 +12,25 @@ from .handcuffs import handcuff_targets as handcuff_targets_for
 from .lineup import assign_starters, player_value_rows
 from .marginal_value import rank_by_marginal_value
 from .picks import DraftPickSlot, own_draft_picks
-from .roster_needs import need_positions, roster_needs_summary
+from .roster_needs import phase_aware_need_positions
 
 MAX_DISPLAYED_ALTERNATES = 2
 
 
 def hypothetical_needs_and_handcuffs(
-    player_ids: list[str], players: dict[str, dict], handcuffs: dict[str, str]
+    player_ids: list[str],
+    players: dict[str, dict],
+    handcuffs: dict[str, str],
+    fc_by_sleeper_id: dict[str, dict],
+    replacement_level: dict[str, float],
+    roster_positions: list[str],
+    phase: str,
 ) -> tuple[frozenset[str], dict[str, str]]:
-    """Recompute need_positions and handcuff targets for a hypothetical (simulated) roster."""
-    needs = need_positions(roster_needs_summary({"players": player_ids}, players))
+    """Recompute the rebuild-phase-aware need_positions and handcuff targets
+    for a hypothetical (simulated) roster - see `phase_aware_need_positions()`."""
+    needs = phase_aware_need_positions(
+        {"players": player_ids}, players, fc_by_sleeper_id, replacement_level, roster_positions, phase
+    )
     return needs, handcuff_targets_for(player_ids, players, handcuffs)
 
 
@@ -63,8 +72,16 @@ def multi_round_plan(
     handcuffs: dict[str, str],
     real_picks_by_overall: dict[int, str],
     draft_snapshot: dict[str, Any],
+    replacement_level: dict[str, float] | None = None,
+    phase: str = "rebuilding",
 ) -> dict[str, Any]:
     """Plan for every pick the user owns this draft — what to pick and drop, and why.
+
+    `replacement_level`/`phase` (the user's own rebuild-vs-contend phase from
+    `team_power_timeline_scores()`) feed each round's `hypothetical_needs_and_handcuffs()`
+    call so its "also a flagged need" reasoning stays phase-aware the same
+    way `team_roster_analysis()`'s own `need` flag is - both default to the
+    original young-core-only behavior for a caller without a real phase handy.
 
     Ranks candidates by season-average marginal starting-lineup value
     (`rank_by_marginal_value`), not raw trade value. Rounds already played
@@ -98,6 +115,7 @@ def multi_round_plan(
     docs/rookie-draft-big-board.md's "Draft plan" section.
     """
     own_picks = own_draft_picks(ownership, user_roster_id)
+    replacement_level = replacement_level or {}
 
     available_ids = set(available.keys())
     hypothetical_ids = list(user_roster.get("players") or [])
@@ -122,7 +140,9 @@ def multi_round_plan(
     for pick in own_picks:
         is_completed = pick.overall_pick < current_pick_no
         real_pick_id = real_picks_by_overall.get(pick.overall_pick)
-        needs, handcuff_targets = hypothetical_needs_and_handcuffs(hypothetical_ids, players, handcuffs)
+        needs, handcuff_targets = hypothetical_needs_and_handcuffs(
+            hypothetical_ids, players, handcuffs, fc_by_sleeper_id, replacement_level, league["roster_positions"], phase
+        )
         # Snapshot the roster as it stands entering this round, so a UI can
         # later look up best_position_relevant_drop() on demand for any
         # candidate from this specific round's context, not just whichever

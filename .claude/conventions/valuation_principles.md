@@ -79,6 +79,37 @@ simplification's error rate is still acceptable for that specific use.
 the new feature's own docstring rather than assuming the original
 docstring's caveat still covers it.
 
+**Extension — the same shape applies to a display-calibrated threshold,
+not just a dedicated-slot-only count (`RT-4`/`RT-30`, PR #67, 2026-08-29
+review).** `team_power_timeline_scores()`'s `phase` label
+(`power_timeline.py`) was built, and explicitly documented, as a
+display-only bucketing of the continuous `power_score` — its own
+`PHASE_THRESHOLDS` comment says the cutoffs are "a judgment call to
+revisit by feel... The continuous score itself, not this label, is what
+anything downstream... should actually reason about." That caveat held
+exactly as long as every consumer of `phase` was a UI label a human read
+and cross-checked against the raw score shown next to it. PR #67 made
+`phase` the actual switch behind three pieces of recommendation text —
+`need_positions`, `roster_value_analysis`'s drop-candidate `note`, and the
+draft plan's "flagged need" reasoning — without revisiting whether a
+threshold tuned for "looks about right as a three-way label" is also
+tight enough to gate a real behavior change at the boundary. Tracked as
+`RT-30`. Same underlying pattern as the dedicated-slot-only case above,
+one layer more abstract: there it was an already-accepted *counting*
+shortcut; here it's an already-accepted *display-calibration* shortcut —
+both were fine specifically because nothing downstream acted on them
+directly, and both stopped being fine the moment something did.
+
+**The rule, extended**: this applies to any threshold, cutoff, or bucketing
+constant whose own comment or docstring says (explicitly or implicitly)
+"good enough for a label a human reads" — not just counting
+simplifications. Before a new feature makes such a value the actual
+branch condition for a recommendation, re-read that value's own
+justification for why it was deemed acceptable in the first place; if the
+justification was "it's just for display" or "a human sanity-checks it,"
+that justification no longer holds for the new use and needs its own
+re-evaluation, not a silent carry-over.
+
 ## Treat external IDs as opaque keys, not ranges
 
 Sleeper's `roster_id`, `player_id`/`sleeper_id`, and similar identifiers

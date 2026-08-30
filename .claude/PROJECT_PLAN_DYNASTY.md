@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-29`, `VA-8`, `CQ-11`, `DL-9`.
+below): `NB-2`, `RT-30`, `VA-8`, `CQ-11`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -52,8 +52,9 @@ Empty right now (user-set 2026-08-28 order — `RT-5`/`CQ-10` shipped
 2026-08-29, `RT-28` shipped 2026-08-29) — next priority not yet set.
 
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `RT-4` — infer the rebuild-vs-contend phase shift from the existing
-  power/timeline read instead of a manually-set phase.
+
+Empty right now — `RT-4` shipped 2026-08-29 (PR #67), `DL-7`/`DL-8`
+shipped 2026-08-29 (PR #66).
 
 ## Current branch — fix before merge
 
@@ -65,16 +66,14 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty right now — the one finding from reviewing PR #66
-(`feature/dl7-dl8-table-and-orphan-cleanup`, 2026-08-29: DL-8 Phase 2's
-"one full refresh cycle of visibility" safety claim was call-count-based,
-not wall-clock - two back-to-back Refresh clicks with no debounce could
-mark-then-permanently-delete a file with no realistic chance for a human
-to notice) was fixed directly on the branch: `_delete_orphaned_snapshots()`
-now requires an `ORPHAN_DELETE_COOLDOWN_HOURS` (24h) cooldown since the
-file was actually marked (`_mark_orphaned_snapshots()` now stamps the
-`.orphaned` file's mtime at mark time so the cooldown has something real
-to read), not just "survived one prior call."
+Empty right now — cleared after PR #66 and PR #67 both merged
+(2026-08-29/30). PR #67's finding (stale "phase is display-only" comments
+in `power_timeline.py`/`roster_tab.py`) and PR #66's finding (DL-8 Phase
+2's orphan-delete safety window being call-count-based rather than
+wall-clock) were both fixed directly on their branches before merge; PR
+#67's deferred methodology question (whether `PHASE_THRESHOLDS`'
+calibration still holds up now that something acts on it) lives on as
+`RT-30` below.
 
 ## Now — blocking
 
@@ -122,20 +121,54 @@ Deliberately out of v1, not forgotten:
   `need` is specifically "fewer than `YOUNG_CORE_NEED_THRESHOLD` young
   players at this position" (`docs/rookie-draft-big-board.md`'s "two
   different signals" section), a rebuild-*timeline* question, not a
-  general "does this team want more here" signal. Every other place this
-  project uses `need_positions()` applies it to the *caller's own* roster
-  to bias the caller's own draft/trade choices toward their own rebuild
-  plan (`RT-4` is the open item tracking that this flag should evolve with
-  rebuild phase at all). `find_trade_offers()` is the first place it's
-  applied to someone *else's* roster to guess what they'd want — a
+  general "does this team want more here" signal. `find_trade_offers()` is
+  the first place `need_positions()` gets applied to someone *else's*
+  roster to guess what they'd want, rather than the caller's own — a
   win-now partner might not care about "young core" at this position at
   all, or might specifically want to trade youth away for a proven
-  veteran, the opposite of what the flag implies. Low severity since it's
-  explicitly a ranking tiebreaker only (already noted in the function's
-  own docstring, never the accept/reject gate), but worth either a doc
-  caveat that this tiebreaker assumes every partner is need-reading the
-  same way a rebuilding team would, or reconsidering what "need" should
-  mean when read on someone else's roster.
+  veteran, the opposite of what the flag implies. The "need" flag itself
+  is now phase-aware everywhere else it's read on a team's *own* roster
+  (young-core while that team is rebuilding, VOR-based `weak` otherwise —
+  see `roster_needs.py`'s `phase_aware_need_positions()`) — but
+  `find_trade_offers()`'s tiebreaker was deliberately left calling the
+  young-core-only `roster_needs_summary()` directly rather than converted,
+  since a partner's own phase alone still might not answer this item's
+  real question (a partner not running *any* rebuild strategy could
+  contending-read as "roster-hole" and still not mean what a trade
+  tiebreaker needs it to). Concrete next step if picked up: thread the
+  partner's own `team_power_timeline` phase into `find_trade_offers()` and
+  call `phase_aware_need_positions()` instead — low severity either way,
+  since this is explicitly a ranking tiebreaker only (already noted in the
+  function's own docstring, never the accept/reject gate).
+- [ ] **RT-30: `PHASE_THRESHOLDS`' "revisit by feel" calibration now gates
+  real recommendations, not just a display label — worth re-checking it's
+  still an acceptable cutoff for that** (assistant valuation review,
+  2026-08-29, PR #67) — `power_timeline.py`'s own comment on
+  `PHASE_THRESHOLDS = (-0.3, 0.3)` says it was chosen "by feel" for a
+  *display-only* phase label, explicitly stating downstream consumers
+  should reason about the continuous `power_score` instead. PR #67 made
+  `phase` itself decision-relevant for the first time: `need_positions`,
+  `roster_value_analysis`'s drop-candidate `note`, and the draft plan's
+  "flagged need" reasoning all now switch behavior at this exact boundary.
+  This is the same shape as `valuation_principles.md`'s "dedicated-slot-only
+  simplifications are fine for signals, not for action recommendations"
+  rule, one level up: an already-accepted simplification tuned for a
+  *display* bar (three-way visual bucketing, tolerant of imprecise
+  boundaries since a user just reads a label) is now the actual switch
+  behind three separate pieces of recommendation text. Nothing confirms
+  the ±0.3 z-score cutoffs are still well-calibrated for that heavier use — a
+  team sitting just inside one bucket by a hair (plausible in a 10-12 team
+  league, where `power_score`'s std is well under 1 after averaging three
+  z-scored components) gets a different "need"/"hold" read than an
+  otherwise-identical team just across the line, with no hysteresis or
+  buffer around the boundary. Concrete next step if picked up: either
+  validate the current thresholds hold up under this use (e.g. check how
+  often real teams sit within a small margin of ±0.3 across a season), or
+  add a buffer band immediately around each threshold where `need`/`note`
+  keep the *previous* phase's reading rather than flipping on a marginal
+  crossing — low severity since `power_score` is shown alongside `phase`
+  in the Roster tab (see PR #67's fix-before-merge item on the same
+  branch), so a user reviewing a borderline case isn't flying fully blind.
 - [ ] **RT-23: Suggested Trades - optional position-scope filter** (user-flagged
   2026-08-08, noted future option, not v1 scope, while building `RT-15`) —
   besides the single-target filter, also let the user scope leaguewide
@@ -145,43 +178,6 @@ Deliberately out of v1, not forgotten:
   now that leaguewide scanning itself is built and the section's filter UI
   exists to extend (see `docs/rookie-draft-big-board.md`'s "Suggested
   Trades" section).
-- [ ] **RT-4: Make "need"/strategy phase-aware — a static rule today, should
-  evolve by rebuild year** (user-flagged 2026-07-29, longer term). Right
-  now `roster_needs_summary`'s `need` flag is one fixed rule for all
-  time (fewer than `YOUNG_CORE_NEED_THRESHOLD` players at a position with
-  `<= YOUNG_CORE_MAX_YOE` years of experience), and the rebuild strategy
-  described in `CLAUDE.md` ("accumulate young talent... competitive
-  within ~2-3 years") is a static description, not something the code
-  actually tracks a position in. The user's stated framework: year 1 was
-  about accumulating rookies (this project's whole existing purpose);
-  year 2 should shift toward smart trades, continuing to find promising
-  talent opportunistically — not just rookies, but free agents with a
-  sudden uptick in opportunity/fortune (this is exactly what the in-season
-  pickup monitor now surfaces via the Summary tab's "Pickup alerts") — and
-  dropping deadweight with limited
-  future payoff (already partly modeled by `roster_value_analysis`'s
-  `LOW_VALUE_AGING_AGE` cutoff, but not tied to a rebuild-year concept
-  either). Would need an explicit "what phase of the rebuild are we in"
-  input (probably just a manually-set year/phase, not inferred) that
-  shifts behavior across `need`, drop-candidate, and free-agent-flagging
-  logic, rather than one flat rule doing double duty for every year.
-  Related to but distinct from the positional-value work above — that's
-  about *which position* is weak; this is about *what kind of move* the
-  team should even be looking for at this point in the rebuild.
-  **Refined 2026-08-06** (user-flagged, future consideration, not an
-  immediate concern): the trigger for a phase change is probably
-  performance-tier, not just elapsed time — `need`'s young-core framing
-  is well-suited to a bottom-of-standings rebuild, but if the team moves
-  into mid/upper-table performance, "need" should mean something
-  different (roster-hole-driven, not youth-accumulation-driven), and nothing
-  today would notice that shift happened. Worth checking before assuming
-  this needs a manually-set phase input at all: `team_power_timeline_scores()`
-  already computes a continuous rebuild-vs-contend read (`power_score`,
-  split into `quality_score`/`timeline_score`) for every team, every
-  refresh — a real candidate for *inferring* the phase transition directly
-  rather than asking the user to track and set it by hand. Doesn't change
-  the scope of the work itself, just a candidate input worth evaluating
-  when this is actually picked up.
 - [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
   (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
   unconfirmed) — a rare, explicitly user-triggered lookup (not a
