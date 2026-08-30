@@ -67,16 +67,18 @@ def _render_needs(analysis: dict) -> None:
     with st.expander("How this works"):
         st.caption(
             "Two different questions about each position, side by side:\n"
-            "- **Need** — rebuild-timeline framing: fewer than 2 players at this position have "
-            "2 years of NFL experience or less. Answers \"are we still accumulating enough young "
-            "talent here.\"\n"
-            "- **Weak** — trade-strategy framing: this position's actual starters (top players by "
-            "value, up to this league's dedicated slot count) are worth less than **VOR** "
-            "(value-over-replacement) — the value of the last startable-tier player still "
-            "rostered *anywhere* in the league at that position. A position can have plenty of "
-            "bodies (no Need flag) and still be Weak if none of them clear what's freely "
-            "available elsewhere — or vice versa, thin in bodies but strong if the few players "
-            "there are excellent.\n"
+            "- **Need** — while this team is rebuilding: fewer than 2 players at this position "
+            "have 2 years of NFL experience or less (\"are we still accumulating enough young "
+            "talent here\"). Once the team's timeline shifts past a bottom-of-standings rebuild "
+            "(see Team timeline above), Need switches to mean the same thing as Weak instead - a "
+            "roster-hole question, not a youth-accumulation one.\n"
+            "- **Weak** — trade-strategy framing, always computed this way regardless of phase: "
+            "this position's actual starters (top players by value, up to this league's dedicated "
+            "slot count) are worth less than **VOR** (value-over-replacement) — the value of the "
+            "last startable-tier player still rostered *anywhere* in the league at that position. "
+            "A position can have plenty of bodies (no Need flag while rebuilding) and still be "
+            "Weak if none of them clear what's freely available elsewhere — or vice versa, thin "
+            "in bodies but strong if the few players there are excellent.\n"
             "- VOR compares against the whole league, not the rest of *your* roster — one elite "
             "player elsewhere can't make another position look artificially weak by comparison."
         )
@@ -109,8 +111,11 @@ def _render_value_analysis(analysis: dict) -> None:
             "Sorted lowest Adj. Value first (same real-scoring-corrected value as the big "
             "board).\n"
             "- **Note** — weighs age against a position-aware aging cutoff (RBs decline earlier "
-            "than QBs/TEs): low value + young is still a rebuild asset worth holding; low value "
-            "+ aging is a real drop candidate.\n"
+            "than QBs/TEs): low value + young is a rebuild asset worth holding *while this team "
+            "is rebuilding* (see Team timeline above); low value + aging is a real drop candidate "
+            "regardless of phase. Once the team isn't framing itself as a rebuild anymore, a low "
+            "value + young player loses that automatic hold and gets the same monitor/drop read "
+            "as anyone else.\n"
             "- **Status** — 🆕 rookie, 🏥 injury, 🌱 taxi squad, 🩹 IR/reserve; a player can show "
             "more than one at once. Hover an icon for the specific detail (e.g. the real injury "
             "status)."
@@ -369,7 +374,9 @@ def render_roster_tab(state: dict) -> None:
     # Reuse the already-computed bundle for your own team (free); any other
     # team's analysis is computed fresh here on selection - team_roster_analysis
     # is the exact same per-roster logic gather_state already ran for you,
-    # just pointed at a different team's roster dict.
+    # just pointed at a different team's roster dict. Passing that team's own
+    # phase (not the viewer's) so their Need flag reflects their own
+    # rebuild-vs-contend read, not whoever happens to be looking.
     if selected_roster_id == user_roster_id:
         analysis = state
     else:
@@ -383,6 +390,7 @@ def render_roster_tab(state: dict) -> None:
             state["replacement_level"],
             state["available_free_agents"],
             state["projections"],
+            phase=str(state["team_power_timeline"].loc[selected_roster_id, "phase"]),
         )
 
     # Split into subtabs - a Roster visit used to render all nine sections

@@ -15,7 +15,12 @@ def roster_needs_summary(roster: dict, players: dict[str, dict]) -> pd.DataFrame
 
     `need` flags a position where fewer than YOUNG_CORE_NEED_THRESHOLD players
     have YOUNG_CORE_MAX_YOE years of experience or less — a rough signal for
-    where a rebuild still needs young talent, not a full needs model.
+    where a rebuild still needs young talent, not a full needs model. This is
+    the young-core-only reading; a caller that knows the team's current
+    rebuild-vs-contend phase should prefer `_need_from_phase()`/
+    `phase_aware_need_positions()` below instead, which only fall back to
+    this flag while phase == "rebuilding" - a mid/upper-table team's "need"
+    is a roster-hole question, not a youth-accumulation one.
     """
     rows = [
         {"pos": info.get("position"), "age": info.get("age"), "years_exp": info.get("years_exp")}
@@ -41,6 +46,52 @@ def need_positions(roster_needs: pd.DataFrame) -> frozenset[str]:
     if roster_needs.empty:
         return frozenset()
     return frozenset(roster_needs.index[roster_needs["need"]])
+
+
+def _need_from_phase(young_core: pd.Series, weak: pd.Series, phase: str) -> pd.Series:
+    """The rebuild-phase-aware "need" flag itself: young-core accumulation
+    while the team is genuinely rebuilding, VOR-based `weak` (a roster-hole
+    question) once it isn't. A binary switch, not a three-way blend -
+    "treading_water" and "contending" (the other two labels
+    `team_power_timeline_scores()` can produce) both get the roster-hole
+    reading, matching how a rebuild is usually framed as "bottom-of-standings"
+    vs. "mid/upper-table," not three distinct strategies.
+
+    The single source of truth for this switch - both `team_roster_analysis()`
+    (which already has `young_core`/`weak` joined for its own display columns)
+    and `phase_aware_need_positions()` below (for a caller with no such table
+    to reuse) apply it the same way, so the two can never quietly disagree on
+    what "need" means for a given phase.
+    """
+    return young_core < YOUNG_CORE_NEED_THRESHOLD if phase == "rebuilding" else weak
+
+
+def phase_aware_need_positions(
+    roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    replacement_level: dict[str, float],
+    roster_positions: list[str],
+    phase: str,
+) -> frozenset[str]:
+    """`need_positions()`, but with `_need_from_phase()`'s phase-aware switch
+    applied first, for a caller that doesn't already have
+    `roster_needs_summary()`/`positional_strength_summary()` joined together
+    for another reason the way `team_roster_analysis()`'s own real-roster
+    bundle does (that function applies `_need_from_phase()` directly to its
+    already-joined columns instead of calling this). Only computes
+    `positional_strength_summary()` at all when `phase != "rebuilding"` -
+    the young-core-only reading never needs it.
+    """
+    roster_needs = roster_needs_summary(roster, players)
+    if roster_needs.empty:
+        return frozenset()
+    weak = pd.Series(True, index=roster_needs.index)
+    if phase != "rebuilding":
+        strength = positional_strength_summary(roster, players, fc_by_sleeper_id, replacement_level, roster_positions)
+        weak = strength["weak"].reindex(roster_needs.index).fillna(True)
+    roster_needs = roster_needs.assign(need=_need_from_phase(roster_needs["young_core"], weak, phase))
+    return need_positions(roster_needs)
 
 
 def _position_starter_demand(position: str, roster_positions: list[str]) -> int:

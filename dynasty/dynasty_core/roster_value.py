@@ -60,7 +60,11 @@ def player_status_flags(player_id: str, info: dict, taxi_ids: set[str], reserve_
 
 
 def roster_value_analysis(
-    roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], byes: dict[str, int] | None = None
+    roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int] | None = None,
+    phase: str = "rebuilding",
 ) -> pd.DataFrame:
     """Rank the roster by dynasty value (lowest `adj_value` first) to surface drop candidates.
 
@@ -72,7 +76,12 @@ def roster_value_analysis(
     `note` distinguishes aging players (real drop candidates) from young
     ones (rebuild upside, hold) rather than treating "low value" as "drop"
     outright — the aging cutoff is position-aware (`LOW_VALUE_AGING_AGE`),
-    since RBs decline earlier than QBs/TEs in dynasty value.
+    since RBs decline earlier than QBs/TEs in dynasty value. The young-hold
+    exception itself only applies while `phase == "rebuilding"` (the
+    default, for a caller without a real phase handy) - a low-value young
+    player isn't automatically protected as rebuild upside once the team
+    isn't framing itself that way, and falls through to the same
+    aging-or-monitor read everyone else gets.
     """
     byes = byes or {}
     taxi_ids = set(roster.get("taxi") or [])
@@ -109,7 +118,7 @@ def roster_value_analysis(
     def note(low_value: bool, age: float | None, position: str | None) -> str:
         if not low_value:
             return ""
-        if age is not None and age < LOW_VALUE_YOUNG_AGE:
+        if phase == "rebuilding" and age is not None and age < LOW_VALUE_YOUNG_AGE:
             return "Low value, young — rebuild upside, hold"
         aging_age = LOW_VALUE_AGING_AGE.get(position, DEFAULT_LOW_VALUE_AGING_AGE) if position else DEFAULT_LOW_VALUE_AGING_AGE
         if age is not None and age >= aging_age:

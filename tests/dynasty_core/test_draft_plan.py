@@ -66,6 +66,66 @@ class TestMultiRoundPlan:
         # them - no new/worse gap alerts expected.
         assert plan["weekly_gap_alerts"].empty
 
+    def test_flagged_need_reason_follows_weak_once_not_rebuilding(self):
+        # Existing roster has 2 young (years_exp <= 2) but low-value RBs -
+        # young-core count (2) already meets YOUNG_CORE_NEED_THRESHOLD (no
+        # need while rebuilding), but RB is well below replacement_level
+        # (weak - a need once the team isn't framing itself as a rebuild).
+        league = {"roster_positions": ["RB", "BN"], "settings": {"taxi_slots": 0}}
+        players = {
+            "rb_a": make_player("RB", full_name="RB A"),
+            "rb_b": make_player("RB", full_name="RB B"),
+            "good_rb": make_player("RB", full_name="Good RB"),
+        }
+        # years_exp <= YOUNG_CORE_MAX_YOE for both existing RBs, so young_core
+        # (2) already meets YOUNG_CORE_NEED_THRESHOLD (2) - not a young-core
+        # need while rebuilding.
+        players["rb_a"]["years_exp"] = 1
+        players["rb_b"]["years_exp"] = 1
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("rb_a", 5, position="RB"), fc_entry("rb_b", 5, position="RB"), fc_entry("good_rb", 100, position="RB")]
+        )
+        user_roster = {"players": ["rb_a", "rb_b"], "taxi": [], "reserve": []}
+        ownership = [dc.DraftPickSlot(round=1, overall_pick=1, original_roster_id=1, owner_roster_id=1)]
+        available = {"good_rb": players["good_rb"]}
+        replacement_level = {"QB": 0.0, "RB": 200.0, "WR": 0.0, "TE": 0.0}
+
+        rebuilding_plan = dc.multi_round_plan(
+            ownership=ownership,
+            user_roster_id=1,
+            current_pick_no=1,
+            available=available,
+            players=players,
+            fc_by_sleeper_id=fc_by_id,
+            user_roster=user_roster,
+            league=league,
+            byes={},
+            handcuffs={},
+            real_picks_by_overall={},
+            draft_snapshot=EMPTY_SNAPSHOT,
+            replacement_level=replacement_level,
+            phase="rebuilding",
+        )
+        contending_plan = dc.multi_round_plan(
+            ownership=ownership,
+            user_roster_id=1,
+            current_pick_no=1,
+            available=available,
+            players=players,
+            fc_by_sleeper_id=fc_by_id,
+            user_roster=user_roster,
+            league=league,
+            byes={},
+            handcuffs={},
+            real_picks_by_overall={},
+            draft_snapshot=EMPTY_SNAPSHOT,
+            replacement_level=replacement_level,
+            phase="contending",
+        )
+
+        assert "flagged need" not in rebuilding_plan["rounds"].iloc[0]["reason"]
+        assert "also a flagged need at RB" in contending_plan["rounds"].iloc[0]["reason"]
+
     def test_all_candidates_by_pick_includes_every_evaluated_option(self):
         # rank_by_marginal_value already scores every candidate before
         # picking a winner - all_candidates_by_pick should expose all of

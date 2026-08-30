@@ -60,3 +60,54 @@ class TestTeamRosterAnalysis:
         assert not needs.loc["QB", "weak"]
         assert needs.loc["WR", "vor"] == pytest.approx(150.0)  # 200 adj_value - 50 replacement
         assert not needs.loc["WR", "weak"]
+
+    def test_need_flag_is_phase_aware(self):
+        # A roster with a weak (vor <= 0) but not young-core-thin RB room -
+        # rebuilding and contending should disagree on whether RB is a need.
+        league = {
+            "roster_positions": ["QB", "RB", "BN"],
+            "settings": {"taxi_slots": 0, "reserve_slots": 0},
+            "scoring_settings": {},
+        }
+        players = {
+            "rb1": {"position": "RB", "team": "AAA", "full_name": "RB One", "age": 24, "years_exp": 1},
+            "rb2": {"position": "RB", "team": "AAA", "full_name": "RB Two", "age": 25, "years_exp": 1},
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("rb1", 30), fc_entry("rb2", 20)])
+        roster = {"players": ["rb1", "rb2"], "taxi": [], "reserve": []}
+        # Both RBs are well below this - RB is "weak" - but 2 players at
+        # <= YOUNG_CORE_MAX_YOE already meets YOUNG_CORE_NEED_THRESHOLD, so
+        # it's not a young-core need.
+        replacement_level = {"QB": 0.0, "RB": 200.0, "WR": 0.0, "TE": 0.0}
+
+        rebuilding = dc.team_roster_analysis(
+            roster, players, fc_by_id, {}, league, {}, replacement_level, {}, phase="rebuilding"
+        )
+        contending = dc.team_roster_analysis(
+            roster, players, fc_by_id, {}, league, {}, replacement_level, {}, phase="contending"
+        )
+
+        assert not rebuilding["roster_needs"].loc["RB", "need"]
+        assert "RB" not in rebuilding["need_positions"]
+        assert contending["roster_needs"].loc["RB", "need"]
+        assert "RB" in contending["need_positions"]
+        # weak/vor themselves never depend on phase - only which one "need" reads.
+        assert rebuilding["roster_needs"].loc["RB", "weak"] == contending["roster_needs"].loc["RB", "weak"]
+
+    def test_phase_defaults_to_rebuilding(self):
+        league = {
+            "roster_positions": ["RB", "BN"],
+            "settings": {"taxi_slots": 0, "reserve_slots": 0},
+            "scoring_settings": {},
+        }
+        players = {"rb1": {"position": "RB", "team": "AAA", "full_name": "RB One", "age": 24, "years_exp": 1}}
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("rb1", 10)])
+        roster = {"players": ["rb1"], "taxi": [], "reserve": []}
+        replacement_level = {"QB": 0.0, "RB": 200.0, "WR": 0.0, "TE": 0.0}
+
+        with_no_phase_arg = dc.team_roster_analysis(roster, players, fc_by_id, {}, league, {}, replacement_level, {})
+        explicit_rebuilding = dc.team_roster_analysis(
+            roster, players, fc_by_id, {}, league, {}, replacement_level, {}, phase="rebuilding"
+        )
+
+        assert with_no_phase_arg["roster_needs"].loc["RB", "need"] == explicit_rebuilding["roster_needs"].loc["RB", "need"]

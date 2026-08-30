@@ -98,8 +98,10 @@ from .power_timeline import (
 )
 from .roster_needs import (
     YOUNG_CORE_MAX_YOE,
+    _need_from_phase,
     _position_starter_demand,
     need_positions,
+    phase_aware_need_positions,
     position_replacement_levels,
     positional_strength_summary,
     roster_needs_summary,
@@ -181,6 +183,7 @@ __all__ = [
     "DraftPickSlot",
     "_future_pick_owners",
     "_max_affordable_target_value",
+    "_need_from_phase",
     "_position_starter_demand",
     "_resolve_multiplier",
     "_shrunk_win_pct",
@@ -216,6 +219,7 @@ __all__ = [
     "nearest_comparable_bids",
     "need_positions",
     "own_draft_picks",
+    "phase_aware_need_positions",
     "pick_trade_values",
     "picks_until_turn",
     "player_status_details",
