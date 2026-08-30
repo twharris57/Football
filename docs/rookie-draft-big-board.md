@@ -24,27 +24,37 @@ interception is returned for a touchdown (`pass_int_td`), a TE reception
 premium, and first-down/long-play bonuses.
 
 `player_scoring.py` corrects for all of it, per player, wherever real NFL
-history exists: for anyone with a qualifying season in the last 3 years, it
+history exists: for anyone with any real volume in the last 3 seasons, it
 recomputes that player's own points under this league's exact
 `scoring_settings` (using raw weekly stats, plus play-by-play data for the
 yardage-gated long-play bonuses and the pick-six penalty, neither of which
 weekly aggregates capture) and divides by their points under FantasyCalc's
 assumed baseline model (an explicit, documented assumption — FantasyCalc
-doesn't publish its own formula). Below the qualifying bar, a rookie with a
-matched combine profile gets that position's play-style-bucket average (see
-below); everyone else below the bar falls back to the flat position
-average computed from that same pooled sample — `POSITION_VALUE_MULTIPLIER`
-is a last-resort constant, used only if this whole enrichment fails for a
-refresh. Results are cached to disk (no TTL — the underlying seasons are
-historical and don't change on a clock) and recomputed only on a "force
-full refresh."
+doesn't publish its own formula). That own-ratio is then shrunk toward the
+position average by volume (`_shrunk_ratio()`, weight `volume / (volume +
+QUALIFYING_VOLUME[position])` — same shape as the power/timeline read's
+`_shrunk_win_pct()`): a player at today's old "meaningful starter" bar gets
+their own signal at half weight, well below it leans mostly on the position
+average, well above it mostly trusts its own number, with no hard cutoff
+between the two. A player with no real NFL history at all (a rookie) gets a
+matched combine profile's play-style-bucket average instead (see below);
+everyone else with neither falls back to the flat position average —
+`POSITION_VALUE_MULTIPLIER` is a last-resort constant, used only if this
+whole enrichment fails for a refresh. Results are cached to disk (no TTL —
+the underlying seasons are historical and don't change on a clock) and
+recomputed only on a "force full refresh."
 
-`_sane_ratio()` guards every computed ratio: a near-zero/negative pooled
-`baseline_points` or a result outside `MULTIPLIER_BOUNDS` (`[0.5, 2.0]`)
-falls back further up the chain instead of being used directly — real
-observed ratios land in `[1.08, 1.61]`, so this is a defensive floor
-against a bad data pull, not a normal code path. Covered by
-`tests/test_player_scoring.py` (`TestSaneRatio`).
+`_sane_ratio()` guards every computed ratio (a player's own, and the
+position average it's shrunk toward) before it's used: a near-zero/negative
+pooled `baseline_points` or a result outside `MULTIPLIER_BOUNDS`
+(`[0.5, 2.0]`) falls back further up the chain instead of being used
+directly — real observed ratios land in `[1.08, 1.61]`, so this is a
+defensive floor against a bad data pull, not a normal code path. A player
+whose own ratio fails this check falls back to the position average
+unshrunk (not blended with an untrustworthy number); if the position
+average itself fails it, that position's `per_player` entries are skipped
+entirely for the refresh, same as an empty qualifying pool. Covered by
+`tests/test_player_scoring.py` (`TestSaneRatio`, `TestShrunkRatio`).
 
 **The correction never lowers value for RB/WR/TE** — every scoring-rule
 difference this league adds for those positions is strictly additive, so

@@ -173,6 +173,31 @@ class TestPickSixPenaltyPoints:
         assert penalty.empty
 
 
+class TestShrunkRatio:
+    """A player's own ratio should blend toward the position average by
+    volume, replacing the old all-or-nothing QUALIFYING_VOLUME cutoff with
+    a smooth ramp - same shape as power_timeline.py's _shrunk_win_pct()."""
+
+    def test_at_k_volume_own_ratio_gets_exactly_half_weight(self):
+        # k = 200 (QB's QUALIFYING_VOLUME) - at volume == k, weight = 200/400 = 0.5.
+        result = ps._shrunk_ratio(own_ratio=1.6, position_average=1.2, volume=200, k=200)
+
+        assert result == pytest.approx((1.6 + 1.2) / 2)
+
+    def test_thin_volume_leans_mostly_on_position_average(self):
+        result = ps._shrunk_ratio(own_ratio=1.6, position_average=1.2, volume=1, k=200)
+
+        assert result == pytest.approx(1.2, abs=0.01)
+
+    def test_deep_volume_mostly_trusts_its_own_ratio(self):
+        result = ps._shrunk_ratio(own_ratio=1.6, position_average=1.2, volume=10_000, k=200)
+
+        assert result == pytest.approx(1.6, abs=0.01)
+
+    def test_zero_volume_is_exactly_the_position_average(self):
+        assert ps._shrunk_ratio(own_ratio=1.6, position_average=1.2, volume=0, k=200) == pytest.approx(1.2)
+
+
 class TestBucketMetric:
     """_bucket_metric's direction must match BUCKET_LABELS' (low, high) ordering."""
 

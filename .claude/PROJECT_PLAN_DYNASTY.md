@@ -369,12 +369,19 @@ cutoff.
   time-pressure to protect, revisit a few statistically-motivated
   refinements that are real improvements but not worth the added
   complexity mid-draft:
-  - **Shrinkage instead of a hard `QUALIFYING_VOLUME` cutoff.** A player
-    just below the volume bar gets 0% weight on their own signal; a
-    player just above it gets 100% — a discontinuity. An empirical-Bayes/
-    shrinkage blend toward the position average, weighted by sample size,
-    would be smoother and more defensible, at real added complexity cost
-    for a personal tool.
+  - ~~Shrinkage instead of a hard `QUALIFYING_VOLUME` cutoff.~~ **Shipped
+    2026-08-30**: `player_scoring._shrunk_ratio()` blends a player's own
+    ratio toward `position_average` by volume (`weight = volume / (volume
+    + QUALIFYING_VOLUME[position])`, same shape as `power_timeline.py`'s
+    `_shrunk_win_pct()`), replacing the old 0%-below/100%-at-or-above
+    cutoff. Also widened `per_player` to sum a player's *entire* lookback
+    window, not just seasons individually clearing the old bar — a player
+    with steady sub-bar volume across 3 seasons previously got zero
+    individual credit at all. Verified against real cached data before
+    shipping: `position_average` unchanged (still the same qualifying-only
+    pool), 460 more players now carry a shrunk individual ratio instead of
+    the flat fallback, no ratio landed outside `MULTIPLIER_BOUNDS`, and the
+    biggest deltas among already-qualifying players were modest (~0.05-0.12).
   - **Continuous rookie play-style scoring instead of a binary
     median-split bucket.** `_derive_rookie_buckets()` currently splits
     each position into exactly two buckets off one metric (e.g. QB 40-yd

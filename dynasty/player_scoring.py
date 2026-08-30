@@ -1,10 +1,12 @@
 """Per-player real-scoring recompute: a personalized FantasyCalc correction ratio.
 
-For every player with enough real NFL volume to trust it, computes their
-own points under this league's actual `scoring_settings` divided by their
-points under FantasyCalc's assumed baseline model (`BASELINE_SCORING`).
-Players below the qualifying bar fall back to a position-average ratio.
-See docs/rookie-draft-big-board.md's "Valuation" section for the full
+For every player with any real NFL volume, computes their own points under
+this league's actual `scoring_settings` divided by their points under
+FantasyCalc's assumed baseline model (`BASELINE_SCORING`), then shrinks
+that ratio toward the position average by volume (`_shrunk_ratio()`) - a
+thin sample leans heavily on the position average, a deep one mostly
+trusts its own signal, with no hard cutoff between the two. See
+docs/rookie-draft-big-board.md's "Valuation" section for the full
 methodology and rationale.
 
 Deliberately independent of dynasty_core (no import of it): those modules
@@ -29,10 +31,14 @@ MULTIPLIERS_CACHE_PATH = CACHE_DIR / "scoring_multipliers.json"
 
 LOOKBACK_SEASONS = 3
 
-# Minimum season volume to trust a player's own recomputed ratio rather than
-# falling back to the position average - same spirit as step E's QB/TE bars
-# (a "meaningful starter" season), extended here to RB/WR since first-down
-# and long-play bonuses apply to them too, not just QB/TE.
+# Two roles: (1) the volume bar `position_average` itself pools from - only
+# "meaningful starter" seasons count toward that anchor, same spirit as
+# step E's original QB/TE bars, extended here to RB/WR since first-down and
+# long-play bonuses apply to them too; (2) each position's shrinkage
+# constant k for _shrunk_ratio() below - at this many career (lookback-
+# window) volume units, a player's own ratio gets exactly half weight
+# against position_average, the same shape as power_timeline.py's
+# WIN_PCT_SHRINKAGE_K/_shrunk_win_pct().
 QUALIFYING_VOLUME: dict[str, tuple[str, int]] = {
     "QB": ("attempts", 200),
     "RB": ("carries", 100),
@@ -61,6 +67,19 @@ def _sane_ratio(real_points: float, baseline_points: float) -> float | None:
     if not (MULTIPLIER_BOUNDS[0] <= ratio <= MULTIPLIER_BOUNDS[1]):
         return None
     return ratio
+
+
+def _shrunk_ratio(own_ratio: float, position_average: float, volume: float, k: int) -> float:
+    """Blend a player's own sane ratio toward the position average, weighted by volume.
+
+    Replaces the old hard `QUALIFYING_VOLUME` cutoff (0% weight on a
+    player's own signal below the bar, 100% at/above it) with a smooth
+    ramp - a player sitting exactly at `k` (today's old bar) gets their own
+    ratio at half weight, not an all-or-nothing flip. Same shape as
+    `power_timeline.py`'s `_shrunk_win_pct()`.
+    """
+    weight = volume / (volume + k)
+    return weight * own_ratio + (1 - weight) * position_average
 
 
 # Valuation step A: rookies have no real NFL history, so they always fall
@@ -462,17 +481,28 @@ def _derive_multipliers(scoring_settings: dict[str, float], current_season: str)
         if qualifying.empty:
             continue
         pos_ratio = _sane_ratio(qualifying["real_points"].sum(), qualifying["baseline_points"].sum())
-        if pos_ratio is not None:
-            position_average[position] = pos_ratio
+        if pos_ratio is None:
+            # No trustworthy anchor to shrink toward this position - skip
+            # per_player too rather than using an unblended, unshrunk ratio.
+            continue
+        position_average[position] = pos_ratio
 
-        for player_id, group in qualifying.groupby("player_id"):
-            ratio = _sane_ratio(group["real_points"].sum(), group["baseline_points"].sum())
-            if ratio is None:
+        # Every player at this position with any real volume in the
+        # lookback window, not just those clearing the old per-season
+        # qualifying bar - _shrunk_ratio() lets a thin sample contribute
+        # partial signal instead of being discarded outright, and
+        # _sane_ratio() below still rejects a player whose own summed
+        # ratio isn't trustworthy at all (e.g. too little baseline_points).
+        position_rows = season_totals[season_totals["position"] == position]
+        for player_id, group in position_rows.groupby("player_id"):
+            own_ratio = _sane_ratio(group["real_points"].sum(), group["baseline_points"].sum())
+            if own_ratio is None:
                 continue
             sleeper_id = gsis_to_sleeper.get(player_id)
             if sleeper_id is None:
                 continue
-            per_player[sleeper_id] = ratio
+            total_volume = group[volume_col].sum()
+            per_player[sleeper_id] = _shrunk_ratio(own_ratio, pos_ratio, total_volume, min_volume)
 
     rookie_bucket = _derive_rookie_buckets(season_totals, current_season)
 
