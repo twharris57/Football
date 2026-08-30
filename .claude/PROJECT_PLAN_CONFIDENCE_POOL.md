@@ -29,36 +29,6 @@ Empty right now — nothing blocking.
 
 ## Backlog
 
-- [ ] **CP-1: Enter the real 2026 late-season deadlines into the live
-  deployment's Settings tab.** Confirmed against the actual 2026 Legion
-  Football Pool Rules document (2026-08-27) — note this is now **three**
-  weeks, not two: the 2026 rules added week 16 alongside 17-18 (rule 2:
-  "EXCEPT WEEKS 16, 17 & 18"; rule 14 lists all three explicit dates).
-  Values to enter via Settings once deployed:
-  - Week 16: Saturday Dec 26, 2026, before 1:00 PM ET
-  - Week 17: Saturday Jan 2, 2027, before 4:30 PM ET
-  - Week 18: Saturday Jan 9, 2027, before 4:30 PM ET
-
-  (Rule 14's closing line says "these final two weeks", which conflicts
-  with the three weeks/three dates listed earlier in the same rule —
-  treating the three explicit dates as authoritative, not the summary
-  phrase, which reads as leftover wording from a prior year's version of
-  this document.) `store.set_late_season_deadline()` and the Settings tab
-  now accept week 16 (previously hard-blocked -- see
-  `confidence_pool_principles.md`'s newest rule). **Narrowed 2026-08-27
-  (usability pass):** these three values are now the Settings tab's
-  default for an unconfigured week 16-18 in the 2026 season
-  (`settings_tab.KNOWN_2026_LATE_SEASON_DEADLINES`) — a real visit still
-  needs to happen once deployed (each week's "Save" button still has to
-  be clicked to actually persist a `season_week_rules` row), but it's a
-  review-and-confirm, not data entry from scratch.
-- [ ] **CP-2: Verify the NAS offsite backup actually covers
-  `confidence_pool_data` (the SQLite pick-history volume).** Docker named
-  volumes are durable across container restarts but live under Docker's
-  own data root, which may or may not be in scope for whatever backup job
-  covers the NAS's shared folders. If it isn't, switch to a bind-mounted
-  path under a folder the backup already covers. This is a NAS/`../nas-configs`
-  configuration question, not resolvable from this repo alone.
 - [ ] **CP-3: Season-long cumulative standings across all of a season's
   scored weeks.** **Narrowed 2026-08-27 (Phase 3a):** this item originally
   covered both per-week scoring and season-long totals; per-week scoring
