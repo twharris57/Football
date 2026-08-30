@@ -169,6 +169,30 @@ Deliberately out of v1, not forgotten:
   crossing — low severity since `power_score` is shown alongside `phase`
   in the Roster tab (see PR #67's fix-before-merge item on the same
   branch), so a user reviewing a borderline case isn't flying fully blind.
+
+  **Checked against real live data, 2026-08-30** (this league,
+  `DEFAULT_LEAGUE_ID`, 12 teams): the concern is real, not hypothetical —
+  6 of 12 teams currently sit within 0.2 of a `±0.3` boundary, 2 within
+  0.1, against a league-wide `power_score` std of ~0.50. But this
+  snapshot is itself incomplete: it's preseason, `games_played == 0`
+  league-wide, so `win_pct_shrunk` is the identical neutral `0.5` for
+  every team and contributes zero spread to `power_score` right now —
+  once real records diverge, `power_score` will move more from week to
+  week than today's number shows, if anything making a boundary flip more
+  likely mid-season, not less. Given that, neither fix (validate the
+  threshold / add a hysteresis buffer) is well-informed by a preseason-only
+  read — user decision (2026-08-30): leave `PHASE_THRESHOLDS` and behavior
+  unchanged for now, and re-run this same check (`team_power_timeline_scores()`'s
+  `power_score` distribution vs. the ±0.3 boundary) once real win/loss
+  records exist league-wide (a few weeks into the season, once
+  `games_played > 0` for every team) before deciding between the two
+  fixes with a representative sample. If a hysteresis buffer is the
+  eventual choice, note it would add a new persisted-state layer (a
+  per-team last-effective-phase cache, following `draft_snapshots.py`'s
+  load/write pattern) to a module currently designed as "recomputed fresh
+  every call... never cached" — a real architecture decision, not just a
+  constant tweak, worth weighing against the cheaper "just widen the
+  thresholds" alternative once real data is in hand.
 - [ ] **RT-23: Suggested Trades - optional position-scope filter** (user-flagged
   2026-08-08, noted future option, not v1 scope, while building `RT-15`) —
   besides the single-target filter, also let the user scope leaguewide
