@@ -94,6 +94,22 @@ class TestTeamPowerTimelineScores:
         assert scores.loc[1, "games_played"] == 0
         assert scores.loc[2, "games_played"] == 0
 
+    def test_a_tie_earns_half_win_credit_not_a_full_loss(self):
+        # A 1-1-1 record (1 win, 1 loss, 1 tie) should read as 50%, not the
+        # 33% it would read as if the tie contributed zero to the numerator
+        # while still counting toward games_played in the denominator.
+        league = {"roster_positions": ["WR", "BN"]}
+        players = {"a_wr": make_player("WR", full_name="A WR")}
+        players["a_wr"]["age"] = 25
+        fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("a_wr", 500)])
+        rosters = [{"roster_id": 1, "players": ["a_wr"], "settings": {"wins": 1, "losses": 1, "ties": 1}}]
+        replacement_level = {"WR": 0.0, "QB": 0.0, "RB": 0.0, "TE": 0.0}
+
+        scores = dc.team_power_timeline_scores(rosters, players, fc_by_id, replacement_level, league)
+
+        assert scores.loc[1, "games_played"] == 3
+        assert scores.loc[1, "win_pct"] == pytest.approx(0.5)
+
     def test_early_record_is_shrunk_toward_neutral(self):
         # Three identical rosters differing only in record: 0 games, a 1-0
         # start, and a settled 10-0 finish. Without shrinkage, 1-0 and 10-0
