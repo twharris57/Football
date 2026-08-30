@@ -31,14 +31,16 @@ MULTIPLIERS_CACHE_PATH = CACHE_DIR / "scoring_multipliers.json"
 
 LOOKBACK_SEASONS = 3
 
-# Two roles: (1) the volume bar `position_average` itself pools from - only
-# "meaningful starter" seasons count toward that anchor, same spirit as
-# step E's original QB/TE bars, extended here to RB/WR since first-down and
-# long-play bonuses apply to them too; (2) each position's shrinkage
-# constant k for _shrunk_ratio() below - at this many career (lookback-
-# window) volume units, a player's own ratio gets exactly half weight
-# against position_average, the same shape as power_timeline.py's
-# WIN_PCT_SHRINKAGE_K/_shrunk_win_pct().
+# Two roles, on two different scales: (1) the *single-season* volume bar
+# `position_average` itself pools from - only "meaningful starter" seasons
+# count toward that anchor, same spirit as step E's original QB/TE bars,
+# extended here to RB/WR since first-down and long-play bonuses apply to
+# them too; (2) the basis for each position's shrinkage constant k, used
+# below scaled by LOOKBACK_SEASONS - at that many *lookback-window* (career)
+# volume units, a player's own ratio gets exactly half weight against
+# position_average, the same shape as power_timeline.py's
+# WIN_PCT_SHRINKAGE_K/_shrunk_win_pct(). Using this bar unscaled as k would
+# silently reuse a single-season number against a multi-season sum (VA-9).
 QUALIFYING_VOLUME: dict[str, tuple[str, int]] = {
     "QB": ("attempts", 200),
     "RB": ("carries", 100),
@@ -494,6 +496,12 @@ def _derive_multipliers(scoring_settings: dict[str, float], current_season: str)
         # _sane_ratio() below still rejects a player whose own summed
         # ratio isn't trustworthy at all (e.g. too little baseline_points).
         position_rows = season_totals[season_totals["position"] == position]
+        # min_volume is a *single-season* qualifying bar, but total_volume
+        # below is summed across the whole LOOKBACK_SEASONS window - scale
+        # the bar the same way so k means "one lookback-window's worth of
+        # qualifying-level play," not "one season's worth" (see VA-9,
+        # valuation_principles.md's shrinkage-constant-scaling rule).
+        shrinkage_k = min_volume * LOOKBACK_SEASONS
         for player_id, group in position_rows.groupby("player_id"):
             own_ratio = _sane_ratio(group["real_points"].sum(), group["baseline_points"].sum())
             if own_ratio is None:
@@ -502,7 +510,7 @@ def _derive_multipliers(scoring_settings: dict[str, float], current_season: str)
             if sleeper_id is None:
                 continue
             total_volume = group[volume_col].sum()
-            per_player[sleeper_id] = _shrunk_ratio(own_ratio, pos_ratio, total_volume, min_volume)
+            per_player[sleeper_id] = _shrunk_ratio(own_ratio, pos_ratio, total_volume, shrinkage_k)
 
     rookie_bucket = _derive_rookie_buckets(season_totals, current_season)
 

@@ -32,11 +32,14 @@ weekly aggregates capture) and divides by their points under FantasyCalc's
 assumed baseline model (an explicit, documented assumption — FantasyCalc
 doesn't publish its own formula). That own-ratio is then shrunk toward the
 position average by volume (`_shrunk_ratio()`, weight `volume / (volume +
-QUALIFYING_VOLUME[position])` — same shape as the power/timeline read's
-`_shrunk_win_pct()`): a player at today's old "meaningful starter" bar gets
-their own signal at half weight, well below it leans mostly on the position
-average, well above it mostly trusts its own number, with no hard cutoff
-between the two. A player with no real NFL history at all (a rookie) gets a
+k)` where `k = QUALIFYING_VOLUME[position] * LOOKBACK_SEASONS` — same shape
+as the power/timeline read's `_shrunk_win_pct()`, with the single-season
+qualifying bar scaled up to the multi-season window `volume` is actually
+summed over): a player whose lookback-window volume matches "meaningful
+starter" *every* season in the window gets their own signal at half
+weight, well below it leans mostly on the position average, well above it
+mostly trusts its own number, with no hard cutoff between the two. A
+player with no real NFL history at all (a rookie) gets a
 matched combine profile's play-style-bucket average instead (see below);
 everyone else with neither falls back to the flat position average —
 `POSITION_VALUE_MULTIPLIER` is a last-resort constant, used only if this
@@ -103,7 +106,9 @@ sits in their position's range, so the flat-ratio approximation isn't
 compounding whatever non-linearity exists in the market's own response to
 points. Revisit if `adj_value` ever looks systematically off at one end of
 a position's range, or if this same per-tier ratio check, re-run on a later
-season, stops looking flat.
+season, stops looking flat — re-run it via
+`scripts/check_scoring_correction_assumptions.py` rather than
+reconstructing the query by hand.
 
 An earlier version of this correction used one flat multiplier per position
 covering only the two largest scoring gaps (6pt passing TDs, TE premium);
@@ -174,7 +179,9 @@ alone, so a future college-stats pipeline is a more promising path to a
 worthwhile continuous score than adding more combine-only features to
 this one. The weak correlation found here is a property of 40-yd-dash/
 weight alone as predictors, not necessarily of a continuous approach in
-general.
+general. Re-run via `scripts/check_scoring_correction_assumptions.py`
+(same script as the linearity check above) rather than reconstructing the
+query by hand.
 
 ## Ranking: marginal lineup value, not raw trade value
 
