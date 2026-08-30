@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-30`, `VA-8`, `CQ-11`, `DL-9`.
+below): `NB-2`, `RT-30`, `VA-9`, `CQ-12`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -364,38 +364,6 @@ cutoff.
   (per-player recompute) has landed, this multiplier is a last-resort
   fallback only — worth a proper look if it still seems to matter enough to
   justify the automation.
-- [ ] **VA-4: Post-draft valuation retrospective** (assistant valuation review,
-  2026-07-31) — once the live draft itself is done and there's no
-  time-pressure to protect, revisit a few statistically-motivated
-  refinements that are real improvements but not worth the added
-  complexity mid-draft:
-  - **Shrinkage instead of a hard `QUALIFYING_VOLUME` cutoff.** A player
-    just below the volume bar gets 0% weight on their own signal; a
-    player just above it gets 100% — a discontinuity. An empirical-Bayes/
-    shrinkage blend toward the position average, weighted by sample size,
-    would be smoother and more defensible, at real added complexity cost
-    for a personal tool.
-  - **Continuous rookie play-style scoring instead of a binary
-    median-split bucket.** `_derive_rookie_buckets()` currently splits
-    each position into exactly two buckets off one metric (e.g. QB 40-yd
-    dash). A regression-based continuous score over multiple combine
-    metrics would resolve more nuance than a single median split can.
-  - **Document (done) and, if it ever looks systematically off, revisit
-    the linearity assumption in `adj_value = value * multiplier`.**
-    Applying a points-derived ratio multiplicatively to a market value
-    assumes value scales linearly with points under the counterfactual
-    scoring rule — a reasonable first-order approximation, but real
-    dynasty value is plausibly convex near the top of a position and
-    flatter near replacement. Caveat added to `docs/rookie-draft-big-board.md`
-    as part of this review.
-
-  **If college stats are ever pulled in** (user-flagged 2026-07-31) — the
-  shrinkage and continuous-bucketing refinements above are exactly where
-  that data would earn its keep: college target share, yards per route
-  run, and draft capital are all more predictive of rookie fantasy
-  outcomes than combine testing alone, and would slot into the same
-  `_derive_rookie_buckets`/multiplier machinery as additional features
-  rather than requiring a new pipeline.
 
 ## Code quality, tests & UX polish
 

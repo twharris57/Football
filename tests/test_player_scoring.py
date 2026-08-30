@@ -173,6 +173,109 @@ class TestPickSixPenaltyPoints:
         assert penalty.empty
 
 
+class TestShrunkRatio:
+    """A player's own ratio should blend toward the position average by
+    volume, replacing the old all-or-nothing QUALIFYING_VOLUME cutoff with
+    a smooth ramp - same shape as power_timeline.py's _shrunk_win_pct()."""
+
+    def test_at_k_volume_own_ratio_gets_exactly_half_weight(self):
+        # k = 200 (QB's QUALIFYING_VOLUME) - at volume == k, weight = 200/400 = 0.5.
+        result = ps._shrunk_ratio(own_ratio=1.6, position_average=1.2, volume=200, k=200)
+
+        assert result == pytest.approx((1.6 + 1.2) / 2)
+
+    def test_thin_volume_leans_mostly_on_position_average(self):
+        result = ps._shrunk_ratio(own_ratio=1.6, position_average=1.2, volume=1, k=200)
+
+        assert result == pytest.approx(1.2, abs=0.01)
+
+    def test_deep_volume_mostly_trusts_its_own_ratio(self):
+        result = ps._shrunk_ratio(own_ratio=1.6, position_average=1.2, volume=10_000, k=200)
+
+        assert result == pytest.approx(1.6, abs=0.01)
+
+    def test_zero_volume_is_exactly_the_position_average(self):
+        assert ps._shrunk_ratio(own_ratio=1.6, position_average=1.2, volume=0, k=200) == pytest.approx(1.2)
+
+
+class TestDeriveMultipliersShrinkageK:
+    """_derive_multipliers must scale QUALIFYING_VOLUME's single-season bar by
+    LOOKBACK_SEASONS before using it as _shrunk_ratio()'s k - k weights a
+    player's *lookback-window* (multi-season) volume, not a single season's,
+    so using the bar unscaled would give a thin-career player far more
+    trust than the bar was ever calibrated to justify (VA-9)."""
+
+    def _weekly_row(self, player_id: str, season: int, position: str, carries: int, rushing_yards: float,
+                     rushing_tds: int, rushing_first_downs: int) -> dict:
+        return {
+            "player_id": player_id,
+            "player_name": player_id,
+            "season": season,
+            "position": position,
+            "attempts": 0,
+            "carries": carries,
+            "targets": 0,
+            "receptions": 0,
+            "passing_yards": 0,
+            "passing_tds": 0,
+            "interceptions": 0,
+            "passing_2pt_conversions": 0,
+            "rushing_yards": rushing_yards,
+            "rushing_tds": rushing_tds,
+            "rushing_first_downs": rushing_first_downs,
+            "rushing_2pt_conversions": 0,
+            "receiving_yards": 0,
+            "receiving_tds": 0,
+            "receiving_first_downs": 0,
+            "receiving_2pt_conversions": 0,
+            "rushing_fumbles_lost": 0,
+            "receiving_fumbles_lost": 0,
+            "sack_fumbles_lost": 0,
+        }
+
+    def test_shrinkage_k_is_qualifying_volume_scaled_by_lookback_seasons(self, monkeypatch):
+        # One qualifying RB season (carries >= 100) anchors position_average.
+        # One thin RB spread 34 carries/season across 3 seasons (102 total -
+        # barely over the single-season bar, nowhere near it per season).
+        weekly = pd.DataFrame(
+            [
+                self._weekly_row("qual1", 2023, "RB", carries=200, rushing_yards=800, rushing_tds=8,
+                                  rushing_first_downs=40),
+                self._weekly_row("thin1", 2023, "RB", carries=34, rushing_yards=150, rushing_tds=1,
+                                  rushing_first_downs=8),
+                self._weekly_row("thin1", 2024, "RB", carries=34, rushing_yards=150, rushing_tds=1,
+                                  rushing_first_downs=8),
+                self._weekly_row("thin1", 2025, "RB", carries=34, rushing_yards=150, rushing_tds=1,
+                                  rushing_first_downs=8),
+            ]
+        )
+        monkeypatch.setattr(ps, "_recent_complete_seasons_weekly_data", lambda *a, **k: weekly)
+        monkeypatch.setattr(ps, "_pbp_data_for_seasons", lambda seasons: pd.DataFrame())
+        monkeypatch.setattr(ps, "_combine_data", lambda years: pd.DataFrame())
+        monkeypatch.setattr(ps, "gsis_to_sleeper_crosswalk", lambda: {"qual1": "1001", "thin1": "2002"})
+
+        real_shrunk_ratio = ps._shrunk_ratio
+        calls: list[tuple] = []
+
+        def spy(own_ratio, position_average, volume, k):
+            calls.append((own_ratio, position_average, volume, k))
+            return real_shrunk_ratio(own_ratio, position_average, volume, k)
+
+        monkeypatch.setattr(ps, "_shrunk_ratio", spy)
+
+        scoring_settings = {"rush_yd": 0.1, "rush_td": 6.0, "rush_fd": 0.5}
+        result = ps._derive_multipliers(scoring_settings, current_season="2025")
+
+        rb_min_volume = ps.QUALIFYING_VOLUME["RB"][1]
+        expected_k = rb_min_volume * ps.LOOKBACK_SEASONS
+        thin_calls = [c for c in calls if c[2] == pytest.approx(102)]
+        assert len(thin_calls) == 1
+        assert thin_calls[0][3] == expected_k
+        assert thin_calls[0][3] != rb_min_volume
+
+        assert "2002" in result["per_player"]
+
+
 class TestBucketMetric:
     """_bucket_metric's direction must match BUCKET_LABELS' (low, high) ordering."""
 
