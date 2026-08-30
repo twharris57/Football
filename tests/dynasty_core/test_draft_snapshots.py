@@ -7,7 +7,14 @@ import os
 import time
 
 from dynasty_core import draft_snapshots as ds
-from dynasty_core.draft_snapshots import AMBIGUOUS, _mark_orphaned_snapshots, _reconcile, _snapshot_path, reconcile_snapshot
+from dynasty_core.draft_snapshots import (
+    AMBIGUOUS,
+    _delete_orphaned_snapshots,
+    _mark_orphaned_snapshots,
+    _reconcile,
+    _snapshot_path,
+    reconcile_snapshot,
+)
 from dynasty_core.picks import DraftPickSlot
 
 EMPTY_SNAPSHOT = {"confirmed_through_pick": 0, "confirmed_roster": None, "confirmed_drops": {}}
@@ -139,6 +146,11 @@ def _age_file(path, days: float) -> None:
     os.utime(path, (old_time, old_time))
 
 
+def _age_file_hours(path, hours: float) -> None:
+    old_time = time.time() - hours * 3600
+    os.utime(path, (old_time, old_time))
+
+
 class TestMarkOrphanedSnapshots:
     def test_marks_an_old_file_from_a_different_draft(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
@@ -204,3 +216,92 @@ class TestMarkOrphanedSnapshots:
 
         assert not old_path.exists()
         assert (tmp_path / "draft_snapshots_old_draft.json.orphaned").exists()
+
+    def test_marking_stamps_the_orphaned_files_mtime_to_now(self, tmp_path, monkeypatch):
+        # _delete_orphaned_snapshots()'s cooldown reads this mtime as "when
+        # was this marked" - if marking didn't restamp it, an old
+        # snapshot's already-90-day-stale mtime would let it slip past the
+        # cooldown immediately, defeating the whole point of the cooldown.
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        old_path = _snapshot_path("old_draft")
+        old_path.write_text("{}", encoding="utf-8")
+        _age_file(old_path, ds.ORPHAN_AGE_DAYS + 1)
+
+        _mark_orphaned_snapshots("current_draft")
+
+        marked_path = tmp_path / "draft_snapshots_old_draft.json.orphaned"
+        assert time.time() - marked_path.stat().st_mtime < 5
+
+
+class TestDeleteOrphanedSnapshots:
+    def test_deletes_an_orphaned_file_past_the_cooldown(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        orphaned_path = tmp_path / "draft_snapshots_old_draft.json.orphaned"
+        orphaned_path.write_text("{}", encoding="utf-8")
+        _age_file_hours(orphaned_path, ds.ORPHAN_DELETE_COOLDOWN_HOURS + 1)
+
+        _delete_orphaned_snapshots()
+
+        assert not orphaned_path.exists()
+
+    def test_leaves_a_freshly_marked_file_alone(self, tmp_path, monkeypatch):
+        # A file that was *just* marked (mtime ~= now) must survive - the
+        # cooldown is what gives a human a real window to notice and
+        # rename a wrongly-marked file back, not just "one prior call."
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        orphaned_path = tmp_path / "draft_snapshots_old_draft.json.orphaned"
+        orphaned_path.write_text("{}", encoding="utf-8")
+
+        _delete_orphaned_snapshots()
+
+        assert orphaned_path.exists()
+
+    def test_leaves_a_not_yet_orphaned_file_alone(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        active_path = _snapshot_path("current_draft")
+        active_path.write_text("{}", encoding="utf-8")
+
+        _delete_orphaned_snapshots()
+
+        assert active_path.exists()
+
+    def test_does_nothing_when_cache_dir_does_not_exist(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path / "does_not_exist")
+
+        _delete_orphaned_snapshots()  # must not raise
+
+    def test_a_file_marked_orphaned_this_call_is_not_deleted_by_a_later_call_within_the_cooldown(
+        self, tmp_path, monkeypatch
+    ):
+        # Two reconcile_snapshot() calls seconds apart (e.g. two quick
+        # Refresh-button clicks - streamlit_app.py's cache-busting token
+        # has no debounce) must not be enough to delete a just-marked file.
+        # "Survived one prior call" alone isn't a real time buffer; the
+        # cooldown is.
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        old_path = _snapshot_path("old_draft")
+        old_path.write_text("{}", encoding="utf-8")
+        _age_file(old_path, ds.ORPHAN_AGE_DAYS + 1)
+        orphaned_path = tmp_path / "draft_snapshots_old_draft.json.orphaned"
+
+        reconcile_snapshot(
+            "current_draft", own_picks(1), current_pick_no=2, current_roster_ids=["a"], real_picks_by_overall={}
+        )
+        assert orphaned_path.exists()  # marked, not deleted, on this call
+
+        reconcile_snapshot(
+            "current_draft", own_picks(1), current_pick_no=2, current_roster_ids=["a"], real_picks_by_overall={}
+        )
+        assert orphaned_path.exists()  # still not deleted - cooldown hasn't elapsed
+
+    def test_a_marked_file_is_deleted_by_a_later_call_once_the_cooldown_has_elapsed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
+        orphaned_path = tmp_path / "draft_snapshots_old_draft.json.orphaned"
+        orphaned_path.write_text("{}", encoding="utf-8")
+        _age_file_hours(orphaned_path, ds.ORPHAN_DELETE_COOLDOWN_HOURS + 1)
+
+        reconcile_snapshot(
+            "current_draft", own_picks(1), current_pick_no=2, current_roster_ids=["a"], real_picks_by_overall={}
+        )
+
+        assert not orphaned_path.exists()

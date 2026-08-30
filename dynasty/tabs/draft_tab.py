@@ -38,9 +38,10 @@ def render_draft_tab(state: dict) -> None:
             "The whole rookie class — drafted players stay listed instead of disappearing.\n"
             "- **Rank** — value order across the whole class, drafted and undrafted together.\n"
             "- **Drafted Round / Drafted By** — blank if still undrafted.\n"
-            "- **Value** — FantasyCalc's raw number.\n"
-            "- **Adj. Value** — applies this league's real-scoring correction (see the Draft Plan "
-            "tab) and is what determines sort order and Rank.\n"
+            "- **Adj. Value** — FantasyCalc's market value, corrected for this league's real "
+            "scoring rules (see the Draft Plan tab's methodology); determines sort order and "
+            "Rank. The only value column shown here — see the Glossary for how it relates to "
+            "FantasyCalc's raw number.\n"
             "- **Tier** — FantasyCalc's own global tier across *all* players, not rookie-specific "
             "and not adjusted; gaps in the sequence are veterans/other rookies not shown here.\n"
             "- **Fits Need** — flags a currently-thin position on your roster.\n"
@@ -64,7 +65,6 @@ def render_draft_tab(state: dict) -> None:
             ("team", "Team"),
             ("college", "College"),
             ("age", "Age"),
-            ("value", "Value"),
             ("adj_value", "Adj. Value"),
         )
         for tier in sorted(board["tier"].unique()):

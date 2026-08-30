@@ -52,11 +52,9 @@ Empty right now (user-set 2026-08-28 order — `RT-5`/`CQ-10` shipped
 2026-08-29, `RT-28` shipped 2026-08-29) — next priority not yet set.
 
 **Nice to have (no deadline, worth doing when there's room):**
-- [ ] `DL-7` — table column overflow on the rookie big board (downgraded
-  after live phone testing showed it's manageable today).
-- [ ] `DL-8` — Phase 2 (actual deletion of `.orphaned`-marked snapshot
-  files), gated on confirming Phase 1's marking step has run correctly
-  against real data at least once.
+
+Empty right now — `RT-4` shipped 2026-08-29 (PR #67), `DL-7`/`DL-8`
+shipped 2026-08-29 (PR #66).
 
 ## Current branch — fix before merge
 
@@ -68,11 +66,12 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty right now — the one finding from reviewing PR #67
-(`feature/rt4-phase-aware-need`, 2026-08-29: stale "phase is display-only"
-comments in `power_timeline.py`/`roster_tab.py` left over from before that
-branch made `phase` decision-relevant) was fixed directly on the branch.
-The deferred methodology question it raised (whether `PHASE_THRESHOLDS`'
+Empty right now — cleared after PR #66 and PR #67 both merged
+(2026-08-29/30). PR #67's finding (stale "phase is display-only" comments
+in `power_timeline.py`/`roster_tab.py`) and PR #66's finding (DL-8 Phase
+2's orphan-delete safety window being call-count-based rather than
+wall-clock) were both fixed directly on their branches before merge; PR
+#67's deferred methodology question (whether `PHASE_THRESHOLDS`'
 calibration still holds up now that something acts on it) lives on as
 `RT-30` below.
 
@@ -473,40 +472,6 @@ assumption changes.
   Worth a pass to find which of those definitions are genuinely
   reusable/cross-cutting (glossary-appropriate) vs. section-specific
   walkthroughs that belong where they are.
-- [ ] **DL-7: Table columns overflow the viewport, forcing horizontal
-  scroll** (user-flagged 2026-08-06, then downgraded same day after
-  testing live on a phone: "wasn't too bad even there — easy to pull to
-  the side and see what's hidden") — every table renders through one
-  shared `show_df()`/`cols()` path (`tabs/components.py`), so a fix
-  applies everywhere at once if it's ever worth doing. Currently a Draft
-  Board-only concern in practice — the rookie big board is the one table
-  wide enough to matter (11 columns: Rank, Player, Position, Fits Need,
-  Handcuff To, Drafted Round, Drafted By, Team, College, Age, Value, Adj.
-  Value), and `st.dataframe(..., width="stretch")` doesn't prevent that
-  from needing its own internal horizontal scroll. If it's ever worth
-  revisiting: a smaller default column set with the rest on demand (a
-  details expander/modal, a column-visibility toggle), or collapsing
-  related columns (Value + Adj. Value into one, raw number as a hover
-  detail — the pattern the Trade Evaluator's `lineup_delta`/
-  `lineup_delta_after_drops` already uses).
-- [ ] **DL-8: Actually delete orphaned, `.orphaned`-marked
-  `draft_snapshots_{draft_id}.json` files** (deferred from `RT-20`,
-  2026-08-06; Phase 1 shipped 2026-08-17) — two-phase by deliberate
-  choice, not deletion logic that just happened to land half-built.
-  **Phase 1 (done):** `draft_snapshots.py`'s `_mark_orphaned_snapshots`,
-  called as a side effect of every `reconcile_snapshot()` call, renames
-  (never deletes) any `draft_snapshots_*.json` file older than
-  `ORPHAN_AGE_DAYS` (90) that isn't the draft currently being reconciled,
-  appending `.orphaned` — a soft, reversible, visibly-inspectable marker
-  instead of automated deletion on a hot path an active draft depends on.
-  Verified against a copy of this repo's own real `.cache/` file: the
-  current draft's file is left untouched, an aged copy gets marked
-  correctly, content otherwise fully preserved either way.
-  **Phase 2 (this item, still open):** actually delete `.orphaned` files
-  — user-requested as an explicit second step, gated on confirming Phase 1
-  has run correctly against real data in practice (the NAS deployment, a
-  real refresh cycle) at least once, not assumed correct from launch.
-  Revisit once that confirmation has happened.
 - [ ] **DL-9: Non-fantasy-position filtering happens per-consumer, not once
   at ingest** (user-flagged 2026-08-08, verified during the RT-15 planning
   pass) — `sleeper_api.get_players()` caches Sleeper's full ~14MB/~10k-player
