@@ -600,6 +600,44 @@ that searches in more than one direction (varying side A while B is fixed,
 then varying B while A is fixed) generally needs the anchor computed
 per-direction, not once up front.
 
+## A shrinkage half-weight constant must be calibrated to the actual quantity it weights, not borrowed from a differently-scoped threshold
+
+`player_scoring._shrunk_ratio()` (`VA-9`, 2026-08-30 review) replaces the
+old hard `QUALIFYING_VOLUME` cutoff with a smooth shrinkage blend toward
+`position_average` — the right shape, and explicitly modeled on
+`power_timeline.py`'s `_shrunk_win_pct()`/`WIN_PCT_SHRINKAGE_K`. But it
+reuses `QUALIFYING_VOLUME`'s existing bar (calibrated as a *single-season*
+"meaningful starter" volume, used elsewhere purely to filter which
+player-seasons pool into `position_average`) as the shrinkage constant `k`
+against a *different* quantity: a player's volume summed across the whole
+`LOOKBACK_SEASONS` window. `WIN_PCT_SHRINKAGE_K`, the precedent being
+followed, was chosen directly for the one quantity it shrinks (games
+played) and says so in its own comment ("a judgment call... not derived");
+`QUALIFYING_VOLUME`'s bar was never evaluated against the aggregate
+quantity it got reused for here — it was carried over because the
+*formula shape* matched a proven precedent, not because the *number* was
+re-examined for its new job. The practical effect: a player whose combined
+3-year volume barely reaches one season's qualifying bar (previously
+excluded entirely from `per_player` — 0% own weight, 100% position
+average) now gets 50% weight on an own-ratio computed from what is,
+relative to the window it's drawn from, a thin and noise-prone sample.
+
+**The rule**: when reusing an existing shrinkage/tolerance/threshold
+constant for a new formula because the *shape* of the blend matches a
+proven precedent (see this file's own "fixed-anchor tolerance formula"
+rule directly above — same failure mode, one layer more abstract), check
+separately whether the *number itself* is still right for the new
+quantity being weighted — especially when the new use sums or aggregates
+over a wider window (multiple seasons, a longer lookback, a broader pool)
+than the constant was originally measured against. A constant's proven
+calibration for "how much of quantity X earns full trust" doesn't
+transfer for free to "how much of `N` units of X, aggregated" — the scale
+changed even though the shape of the formula didn't. Prefer either an
+independently re-derived constant for the new quantity, or an explicit,
+documented scaling (e.g., multiply by the number of seasons being
+aggregated) — not a bare reuse of the old number with only an analogy to
+justify it.
+
 ## A displayed number and the filter gating its display must round on the same basis
 
 `state.py`'s pickup-alert filter (`VA-6`, 2026-08-19 review) tests

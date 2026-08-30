@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-30`, `VA-8`, `CQ-11`, `DL-9`.
+below): `NB-2`, `RT-30`, `VA-9`, `CQ-12`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -374,6 +374,47 @@ cutoff.
   ties are rare enough in a points-based scoring format that this hasn't
   mattered in practice — low priority, but a real accuracy gap if it
   ever comes up. Fix: give `wins + 0.5 * ties` credit in the numerator.
+- [ ] **VA-9: `_shrunk_ratio()`'s shrinkage constant `k` borrows
+  `QUALIFYING_VOLUME`'s single-season bar for a multi-season aggregate
+  quantity, without independently checking whether that magnitude is
+  still the right half-weight point** (assistant valuation review,
+  2026-08-30, PR #70) — `QUALIFYING_VOLUME[position][1]` (e.g. QB
+  `attempts: 200`) was originally calibrated as a *single-season*
+  "meaningful starter" bar, gating which player-*seasons* pool into
+  `position_average`. The shrinkage fix reuses the exact same number as
+  `_shrunk_ratio()`'s `k` — the volume at which a player's *3-season
+  combined* volume earns their own ratio exactly half weight against
+  `position_average`. The two quantities it's asked to do double duty for
+  (a per-season pooling filter vs. a lookback-aggregate shrinkage
+  midpoint) are on different scales by construction (one is a single
+  season, the other sums up to `LOOKBACK_SEASONS = 3` of them), and
+  nothing checks whether the same number is well-calibrated for both —
+  unlike `power_timeline.py`'s `WIN_PCT_SHRINKAGE_K`, cited as the "same
+  shape" precedent, which was chosen directly for the one quantity it
+  shrinks (games played), not inherited from an unrelated bar. Concretely:
+  a thin-career player whose combined 3-year volume merely equals one
+  qualifying *season's* worth (e.g., a QB with 200 total attempts spread
+  as garbage-time mop-up across 3 years) now gets 50% weight on an
+  own-ratio computed from what is, relative to the window it's drawn from,
+  a small and noise-prone sample — previously such a player had no
+  qualifying season at all and got 0% own weight, 100% position average.
+  Bounded by `_sane_ratio()`'s `[0.5, 2.0]` clamp, and `adj_value` already
+  keeps the raw FantasyCalc value visible alongside the corrected one, so
+  this isn't a silent corruption — but the exact size of the correction
+  for every non-starter, non-rookie player (a large share of a dynasty
+  roster under this project's rebuild strategy) now rests on an unverified
+  assumption, feeding straight into `sellable_players`/`free_agent_board`/
+  waiver-bid guidance for exactly the depth-tier players those features
+  evaluate. Notably, this same PR *did* verify its other new statistical
+  assumption (the linearity/tercile check) against real data before
+  trusting it — this one wasn't given the same scrutiny. Concrete next
+  step if picked up: either re-derive `k` empirically per position (check
+  at what combined lookback-volume the per-player ratio's variance
+  actually stabilizes near the position average) or scale
+  `QUALIFYING_VOLUME`'s bar by `LOOKBACK_SEASONS` before using it as `k`,
+  and document the reasoning either way instead of assuming the transfer
+  is free. See `valuation_principles.md`'s new section on this.
+
 ## Code quality, tests & UX polish
 
 - [ ] **CQ-5: Represent draft-pick identity as structured fields at ingestion, not a
@@ -422,6 +463,20 @@ cutoff.
   the fix might need to flow through AgentConfig rather than a direct
   edit here; confirm which before implementing. Deliberately deferred to
   its own branch, not bundled into unrelated work.
+- [ ] **CQ-12: VA-4's tercile/regression verification checks aren't
+  preserved as a script, so the doc's own "revisit by re-running this
+  check" instruction isn't actually actionable** (assistant valuation
+  review, 2026-08-30, PR #70) — `docs/rookie-draft-big-board.md` now
+  documents two ad hoc analyses (the per-tier scoring-ratio check, the
+  bucket-metric-vs-continuous-score regression check) with instructions to
+  re-run them if a later season's data looks different, but neither
+  analysis's code was committed anywhere (no equivalent of
+  `scripts/derive_position_multipliers.py` for either). Anyone acting on
+  the "revisit" instruction later has to reconstruct the query from
+  scratch rather than re-run a known-good script. Low priority — these are
+  one-off methodology checks, not a live code path — but worth a small
+  script under `dynasty/scripts/` next time either is revisited, so the
+  doc's own future-facing instruction is actually cheap to follow.
 
 ## Deferred / low priority
 
