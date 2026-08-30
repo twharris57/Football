@@ -316,6 +316,17 @@ def gather_state(
         pickup_alerts = build_pickup_alerts(pickup_changes, ranked, players)
 
     replacement_level = position_replacement_levels(rosters, players, fc_by_sleeper_id, league["roster_positions"])
+
+    # Computed here (moved up from after leaguewide_trade_candidates below)
+    # since the user's own team_roster_analysis() call, right after this,
+    # needs this team's own phase for its rebuild-phase-aware `need` flag -
+    # z-scoring needs every team's row together regardless of when in the
+    # function this runs, so there's no cost to computing it slightly
+    # earlier. Cheap for the whole league in one pass (no new API calls,
+    # just positional_strength_summary reused per roster).
+    power_timeline = team_power_timeline_scores(rosters, players, fc_by_sleeper_id, replacement_level, league)
+    user_phase = str(power_timeline.loc[user_roster_id, "phase"])
+
     user_analysis = team_roster_analysis(
         user_roster,
         players,
@@ -326,6 +337,7 @@ def gather_state(
         replacement_level,
         available_free_agents,
         projections,
+        phase=user_phase,
     )
 
     # Leaguewide "worth pursuing" pre-rank for Suggested Trades - Stage 1
@@ -347,12 +359,6 @@ def gather_state(
         user_analysis["sellable_players"],
         pick_values,
     )
-
-    # Cheap for the whole league in one pass (no new API calls, just
-    # positional_strength_summary reused per roster) - computed here once
-    # rather than on demand per team, unlike team_roster_analysis, since
-    # every team's row is needed together for the z-scoring itself.
-    power_timeline = team_power_timeline_scores(rosters, players, fc_by_sleeper_id, replacement_level, league)
 
     recent_rows = []
     for pick in sorted(draft_picks, key=lambda p: p["pick_no"])[-5:]:
@@ -469,6 +475,8 @@ def gather_state(
             handcuffs,
             real_picks_by_overall,
             draft_snapshot,
+            replacement_level=replacement_level,
+            phase=user_phase,
         ),
         "team_names": team_names,
         "data_warnings": data_warnings,

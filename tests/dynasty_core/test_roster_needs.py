@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 import dynasty_core as dc
@@ -123,3 +124,68 @@ class TestPositionalStrengthSummary:
         # Both QBs count: 300 + 100 = 400, not just the top one (300).
         assert summary.loc["QB", "starter_value"] == pytest.approx(400.0)
         assert summary.loc["QB", "vor"] == pytest.approx(300.0)  # 400 - (50 * 2)
+
+
+class TestNeedFromPhase:
+    """The rebuild-phase-aware "need" switch: young-core count while
+    rebuilding, the VOR-based "weak" read otherwise - binary, not a
+    three-way blend across the three phase labels."""
+
+    def test_rebuilding_uses_young_core_threshold(self):
+        young_core = pd.Series([0, 3], index=["QB", "WR"])
+        weak = pd.Series([True, False], index=["QB", "WR"])
+
+        result = dc._need_from_phase(young_core, weak, "rebuilding")
+
+        # YOUNG_CORE_NEED_THRESHOLD is 2 - 0 < 2 is a need, 3 < 2 is not.
+        assert list(result) == [True, False]
+
+    def test_treading_water_uses_weak_not_young_core(self):
+        young_core = pd.Series([0, 3], index=["QB", "WR"])
+        weak = pd.Series([False, True], index=["QB", "WR"])
+
+        result = dc._need_from_phase(young_core, weak, "treading_water")
+
+        assert list(result) == [False, True]
+
+    def test_contending_uses_weak_not_young_core(self):
+        young_core = pd.Series([0], index=["QB"])
+        weak = pd.Series([True], index=["QB"])
+
+        result = dc._need_from_phase(young_core, weak, "contending")
+
+        assert list(result) == [True]
+
+
+class TestPhaseAwareNeedPositions:
+    """phase_aware_need_positions should switch which signal drives "need"
+    exactly like _need_from_phase, for a caller with no pre-joined table."""
+
+    def test_rebuilding_and_contending_can_disagree_on_the_same_roster(self):
+        league_roster_positions = ["WR", "BN"]
+        players = {
+            "wr1": {"position": "WR", "team": "AAA", "full_name": "WR One", "age": 22, "years_exp": 1},
+            "wr2": {"position": "WR", "team": "AAA", "full_name": "WR Two", "age": 23, "years_exp": 1},
+        }
+        fc_by_id = dc.fc_value_by_sleeper_id(
+            [fc_entry("wr1", 50, position="WR"), fc_entry("wr2", 30, position="WR")]
+        )
+        roster = {"players": ["wr1", "wr2"]}
+        # Both WRs are far below this - the position is "weak", even though
+        # it's not short on young bodies (2 players <= YOUNG_CORE_MAX_YOE
+        # already meets YOUNG_CORE_NEED_THRESHOLD).
+        replacement_level = {"WR": 200.0}
+
+        rebuilding_needs = dc.phase_aware_need_positions(
+            roster, players, fc_by_id, replacement_level, league_roster_positions, "rebuilding"
+        )
+        contending_needs = dc.phase_aware_need_positions(
+            roster, players, fc_by_id, replacement_level, league_roster_positions, "contending"
+        )
+
+        assert "WR" not in rebuilding_needs
+        assert "WR" in contending_needs
+
+    def test_empty_roster_has_no_needs_regardless_of_phase(self):
+        assert dc.phase_aware_need_positions({"players": []}, {}, {}, {}, ["WR"], "rebuilding") == frozenset()
+        assert dc.phase_aware_need_positions({"players": []}, {}, {}, {}, ["WR"], "contending") == frozenset()

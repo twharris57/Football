@@ -216,6 +216,24 @@ eligibility model is deferred (see `.claude/PROJECT_PLAN_DYNASTY.md`).
   same simplification `roster_weekly_gaps` makes). See
   `.claude/conventions/valuation_principles.md`'s "superflex inflates QB
   value" rule for why.
+
+  **`need` itself is phase-aware**, not one fixed rule for all time: while
+  a team's rebuild-vs-contend phase (see "Team timeline" below) is
+  `"rebuilding"`, `need` keeps the young-core-timeline reading above.
+  Otherwise (`treading_water` or `contending`), `need` switches to mean the
+  same thing as `weak` instead — once a team isn't framing itself as a
+  bottom-of-standings rebuild anymore, "need" is a roster-hole question,
+  not a youth-accumulation one. `_need_from_phase()` (`roster_needs.py`) is
+  the single switch both `team_roster_analysis()` (which already has both
+  columns joined for its own display) and `phase_aware_need_positions()`
+  (for a caller with no such table, e.g. the draft plan's hypothetical
+  rosters) apply, so the two can't quietly disagree. The same binary
+  phase read also gates `roster_value_analysis()`'s drop-candidate `note`:
+  the "low value, young → hold" exception only fires while rebuilding.
+  A third piece of this same idea — opportunistic free-agent flagging
+  shifting by phase — is treated as already covered by the in-season
+  Pickup Alerts feature (Summary tab), not a gap needing separate
+  phase-conditional logic here.
 - **Team timeline / power-timeline read** (`team_power_timeline_scores()`)
   — every team's rebuild-vs-contend read, not just the user's own, as a
   *continuous* score rather than a fixed two- or three-point label — display

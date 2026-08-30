@@ -30,12 +30,15 @@ def _weighted_average_age(roster: dict, players: dict[str, dict], fc_by_sleeper_
     return weighted_sum / total_weight if total_weight > 0 else None
 
 
-# z-score cutoffs on the continuous power_score for the display-only phase
-# label - a judgment call to revisit by feel (see valuation_principles.md),
-# not a derived constant. The continuous score itself, not this label, is
-# what anything downstream (trade targets, power-timeline-read consumers)
-# should actually reason about - see PROJECT_PLAN_DYNASTY.md's "consider a
-# continuous score, not just discrete phase labels" note.
+# z-score cutoffs on the continuous power_score for the phase label - a
+# judgment call to revisit by feel (see valuation_principles.md), not a
+# derived constant. Originally display-only, tolerant of an imprecise
+# boundary since a human just read the label - roster_needs.py's
+# phase-aware need/note switch and the draft plan's "flagged need"
+# reasoning now branch on this same boundary too, so its calibration has
+# real behavioral stakes, not just a label choice. See
+# PROJECT_PLAN_DYNASTY.md's RT-30 for the open question of whether it
+# still holds up under that heavier use.
 PHASE_THRESHOLDS = (-0.3, 0.3)
 
 # Games worth of shrinkage weight toward a neutral 0.5 prior - a judgment
