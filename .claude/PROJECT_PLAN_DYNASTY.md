@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-29`, `VA-8`, `CQ-11`, `DL-9`.
+below): `NB-2`, `RT-30`, `VA-8`, `CQ-11`, `DL-9`.
 
 ## Short list — actively prioritized right now
 
@@ -68,7 +68,30 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-Empty right now — cleared after PR #62 merged.
+**`feature/rt4-phase-aware-need` / PR #67 (assistant valuation review,
+2026-08-29):**
+
+- [ ] Two pieces of existing text now contradict what this branch actually
+  does with `phase`, and both need updating in the same PR that made the
+  claim false:
+  - `dynasty_core/power_timeline.py`'s `PHASE_THRESHOLDS` comment states
+    "the display-only phase label... The continuous score itself, not this
+    label, is what anything downstream ... should actually reason about."
+    This branch is the first thing to violate that on purpose —
+    `need_positions`, `roster_value_analysis`'s drop-candidate `note`, and
+    the draft plan's "also a flagged need" reasoning all now branch on the
+    discrete `phase` bucket, not `power_score`. Update the comment to
+    reflect that `phase` is no longer display-only, and that its
+    "judgment call, revisit by feel" calibration (`PHASE_THRESHOLDS =
+    (-0.3, 0.3)`) now has real behavioral stakes, not just a label choice.
+  - `tabs/roster_tab.py`'s `_render_team_timeline()` "How this works"
+    caption tells the user "Phase — a display label bucketed from the
+    score...; the score itself is the real signal" — the same claim, now
+    equally false for anyone reading the Roster tab's Needs/Value
+    Analysis/Draft Plan sections right below it. See `RT-30` below for the
+    deferred methodology question this raises (whether the threshold
+    itself still holds up under this new use); this item is just the
+    doc/comment fix.
 
 ## Now — blocking
 
@@ -135,6 +158,35 @@ Deliberately out of v1, not forgotten:
   call `phase_aware_need_positions()` instead — low severity either way,
   since this is explicitly a ranking tiebreaker only (already noted in the
   function's own docstring, never the accept/reject gate).
+- [ ] **RT-30: `PHASE_THRESHOLDS`' "revisit by feel" calibration now gates
+  real recommendations, not just a display label — worth re-checking it's
+  still an acceptable cutoff for that** (assistant valuation review,
+  2026-08-29, PR #67) — `power_timeline.py`'s own comment on
+  `PHASE_THRESHOLDS = (-0.3, 0.3)` says it was chosen "by feel" for a
+  *display-only* phase label, explicitly stating downstream consumers
+  should reason about the continuous `power_score` instead. PR #67 made
+  `phase` itself decision-relevant for the first time: `need_positions`,
+  `roster_value_analysis`'s drop-candidate `note`, and the draft plan's
+  "flagged need" reasoning all now switch behavior at this exact boundary.
+  This is the same shape as `valuation_principles.md`'s "dedicated-slot-only
+  simplifications are fine for signals, not for action recommendations"
+  rule, one level up: an already-accepted simplification tuned for a
+  *display* bar (three-way visual bucketing, tolerant of imprecise
+  boundaries since a user just reads a label) is now the actual switch
+  behind three separate pieces of recommendation text. Nothing confirms
+  the ±0.3 z-score cutoffs are still well-calibrated for that heavier use — a
+  team sitting just inside one bucket by a hair (plausible in a 10-12 team
+  league, where `power_score`'s std is well under 1 after averaging three
+  z-scored components) gets a different "need"/"hold" read than an
+  otherwise-identical team just across the line, with no hysteresis or
+  buffer around the boundary. Concrete next step if picked up: either
+  validate the current thresholds hold up under this use (e.g. check how
+  often real teams sit within a small margin of ±0.3 across a season), or
+  add a buffer band immediately around each threshold where `need`/`note`
+  keep the *previous* phase's reading rather than flipping on a marginal
+  crossing — low severity since `power_score` is shown alongside `phase`
+  in the Roster tab (see PR #67's fix-before-merge item on the same
+  branch), so a user reviewing a borderline case isn't flying fully blind.
 - [ ] **RT-23: Suggested Trades - optional position-scope filter** (user-flagged
   2026-08-08, noted future option, not v1 scope, while building `RT-15`) —
   besides the single-target filter, also let the user scope leaguewide
