@@ -68,30 +68,13 @@ description is the historical record). A finding that gets explicitly
 deferred rather than fixed moves down into the appropriate thematic section
 below as a normal backlog item, same as any other deferred work.
 
-**`feature/rt4-phase-aware-need` / PR #67 (assistant valuation review,
-2026-08-29):**
-
-- [ ] Two pieces of existing text now contradict what this branch actually
-  does with `phase`, and both need updating in the same PR that made the
-  claim false:
-  - `dynasty_core/power_timeline.py`'s `PHASE_THRESHOLDS` comment states
-    "the display-only phase label... The continuous score itself, not this
-    label, is what anything downstream ... should actually reason about."
-    This branch is the first thing to violate that on purpose —
-    `need_positions`, `roster_value_analysis`'s drop-candidate `note`, and
-    the draft plan's "also a flagged need" reasoning all now branch on the
-    discrete `phase` bucket, not `power_score`. Update the comment to
-    reflect that `phase` is no longer display-only, and that its
-    "judgment call, revisit by feel" calibration (`PHASE_THRESHOLDS =
-    (-0.3, 0.3)`) now has real behavioral stakes, not just a label choice.
-  - `tabs/roster_tab.py`'s `_render_team_timeline()` "How this works"
-    caption tells the user "Phase — a display label bucketed from the
-    score...; the score itself is the real signal" — the same claim, now
-    equally false for anyone reading the Roster tab's Needs/Value
-    Analysis/Draft Plan sections right below it. See `RT-30` below for the
-    deferred methodology question this raises (whether the threshold
-    itself still holds up under this new use); this item is just the
-    doc/comment fix.
+Empty right now — the one finding from reviewing PR #67
+(`feature/rt4-phase-aware-need`, 2026-08-29: stale "phase is display-only"
+comments in `power_timeline.py`/`roster_tab.py` left over from before that
+branch made `phase` decision-relevant) was fixed directly on the branch.
+The deferred methodology question it raised (whether `PHASE_THRESHOLDS`'
+calibration still holds up now that something acts on it) lives on as
+`RT-30` below.
 
 ## Now — blocking
 
