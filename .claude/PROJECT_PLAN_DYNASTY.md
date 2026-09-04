@@ -12,7 +12,7 @@ write-up here — this file is only what's left to do.
 **Item IDs**: every open item carries a permanent `<SECTION>-<n>` tag in its
 own heading (`NB` = Now — blocking, `RT` = Roster & trade tooling, `VA` =
 Valuation & data accuracy, `CQ` = Code quality/tests/UX, `DL` = Deferred/low
-priority) — e.g. `RT-3`. Assigned once, in document order, and never reused
+priority, `SC` = Automated daily scout) — e.g. `RT-3`. Assigned once, in document order, and never reused
 or renumbered, even after the item it names is completed and its entry
 deleted — matching how `VA`'s items were already informally lettered A-E
 before this convention was written down (`A`/`B`/`E` are done and gone; `D`
@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-30`, `VA-9`, `CQ-12`, `DL-9`.
+below): `NB-2`, `RT-30`, `VA-9`, `CQ-12`, `DL-9`, `SC-12`.
 
 ## Short list — actively prioritized right now
 
@@ -48,8 +48,38 @@ it's stopped being a "short" list — thin it back out to what's actually
 active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
-Empty right now (user-set 2026-08-28 order — `RT-5`/`CQ-10` shipped
-2026-08-29, `RT-28` shipped 2026-08-29) — next priority not yet set.
+**Initial-release build order** (user-set 2026-09-03; see "Automated
+daily scout" below for each item's full description) — ordered so each
+step only depends on ones before it:
+
+1. `SC-12` — POC: confirm a `/schedule` cloud routine can actually push a
+   phone notification. Cheap and independent of everything else; the
+   whole feature is worthless if this doesn't pan out, so prove it first.
+2. `SC-1` — headless `gather_state()` entrypoint.
+3. `SC-2` — SQLite store + templated finding schema, with a real
+   backup-covered volume mount.
+4. `SC-11` — API endpoints so the cloud routine can actually reach `SC-2`'s
+   store, plus a live reachability check.
+5. `SC-8` — templated-storage-plus-double-check prompt-injection defense
+   (needed before `SC-3` writes anything real to the store).
+6. `SC-3` — Claude Scout research pass, bounded scope.
+7. `SC-4` — dedup log, extended to trades/scout findings.
+8. `RT-21` — transaction log (needed by `SC-7`; can build in parallel with
+   `SC-3`/`SC-4`/`SC-5` as long as it lands before `SC-7`).
+9. `SC-5` — materiality thresholds, quant/qual signals kept distinct.
+10. `SC-7` — self-reflection pass, opens a GitHub issue on a miss.
+11. `SC-6` — the nightly cloud routine that ties it all together.
+
+Target: once `SC-1`–`SC-8`, `SC-11`, `SC-12` land, schedule the routine
+for 8pm local (user-confirmed 2026-09-03), running a fixed in-season
+cadence.
+
+**Explicitly not required for initial release** (both still tracked
+below, neither blocks the list above): `SC-9` (season-aware
+ramp-up/throttle — needed before next year's rookie draft, not before
+first ship) and `SC-10` (docs get written incrementally alongside each
+item above; only the *final consolidated* pass waits until everything's
+in).
 
 **Nice to have (no deadline, worth doing when there's room):**
 
@@ -78,6 +108,290 @@ calibration still holds up now that something acts on it) lives on as
 ## Now — blocking
 
 Empty right now — nothing blocking.
+
+## Automated daily scout
+
+Motivation (user-flagged 2026-09-03): keeping up with the NFL closely
+enough to catch every real dynasty opportunity — a depth-chart bump, an
+IR move that opens a value-add free agent, a trade window worth acting on
+— takes being fully engaged daily, which isn't realistic every day. This
+feature closes that gap: the app checks every day on its own and only
+interrupts the user when something is actually worth acting on.
+
+**Architecture (user-clarified 2026-09-03).** Two distinct scheduled
+components, not one monolithic job:
+- **Claude Scout** (`SC-3`) runs routine research queries (news, injury
+  detail, depth-chart/trade-buzz context beyond Sleeper's structured
+  fields — this is the "Claude Scout" `RT-6` speculated about, now
+  confirmed and generalized from a single-player on-demand lookup to a
+  scheduled pass) and writes templated findings into a persisted store
+  (`SC-2`). Deliberately *not* a blind sweep of the entire player
+  universe — see `SC-3`'s own entry below for the bounded-scope design
+  (user-directed 2026-09-03).
+- **The nightly `/schedule` cloud routine** (`SC-6`) is the reviewer: it
+  runs the deterministic Sleeper/FantasyCalc-based checks (pickup alerts,
+  suggested trades) directly, reads whatever Scout has stored since the
+  last check via `SC-11`'s API, runs self-reflection (`SC-7`), and pushes
+  a phone notification only when something clears the materiality bar
+  (`SC-5`) and isn't already-reported (`SC-4`). A quiet night — nothing
+  new, or nothing beyond what was already surfaced the day before — stays
+  silent.
+
+Cross-checked against the sibling `Finance-Dashboards` repo's "Claude
+scout" (2026-09-03) on the assumption it might be a directly portable
+pattern — it isn't: that repo uses APScheduler inside a long-running
+Docker container, calling the raw Anthropic API directly, writing to a
+DuckDB health table, and surfacing results passively as a UI status badge
+(no push notifications, no Claude Code cloud routine at all). Its de-dup
+pattern (a persisted per-day status log checked before acting, distinct
+"checked/found nothing" vs. "failed" states, already-reported content fed
+back into the prompt so it isn't re-flagged) is the one piece directly
+worth reusing — see `SC-4`/`SC-6` below — but the scheduling/execution
+model itself is being designed fresh for this repo.
+
+**Persistence and reachability (user-decided 2026-09-03).** SQLite is
+the confirmed store — already proven in-repo via `confidence_pool/store.py`,
+and the natural fit for `SC-7`'s historical querying. It lives with the
+NAS-deployed app, not inside the cloud routine's own ephemeral checkout
+(a `/schedule` routine has no access to the NAS filesystem), so two
+things have to be true for this to actually work, filed as their own
+items below rather than left implicit: the on-disk file needs a real
+volume mount so it's covered by the NAS's existing backup scripts the
+same way `docker-compose.deploy.yml`'s `confidence_pool_data` volume
+already is (`SC-2`), and the cloud routine needs a network path — read
+and write — to reach it, since direct file access isn't an option
+(`SC-11`). `SC-2` and `SC-11` are a matched pair; neither is complete
+without the other.
+
+Existing work this depends on or should be prioritized alongside (all
+added to the short list above, 2026-09-03):
+- **`RT-21`** (transaction log) — promoted from "revisit next year" to a
+  real dependency; see its own entry above for why.
+- **`RT-9`/`RT-19`/`RT-20`** (already shipped) — `pickup_snapshots.py`'s
+  load/diff/persist shape (via `snapshot_io.py`'s shared shell) is the
+  direct template `SC-4` extends; no new persistence design needed there,
+  just more categories.
+- **`RT-6`** — see its own entry above; effectively superseded in scope by
+  `SC-3` for the routine case, kept open only for the narrower on-demand
+  single-player trigger.
+- **`RT-10`/`RT-28`** (FAAB comparable-sample thinness) — `SC-5`'s
+  materiality gate needs to inherit this low-confidence-on-thin-sample
+  caveat explicitly for any FAAB-bid-guidance finding, not treat it as
+  just another threshold.
+
+- [ ] **SC-1: Headless entrypoint for `gather_state()` outside Streamlit**
+  — `gather_state()` is currently only ever called from
+  `streamlit_app.py`'s cached `load_state()`. Add a plain script (e.g.
+  `dynasty/scripts/daily_check.py`) that calls it directly (league ID
+  from existing env/config, no `st.*` dependency) and returns a
+  structured result. The foundation both `SC-3` and `SC-6` build on. Add
+  pytest coverage alongside — nothing about this entrypoint needs a
+  Streamlit workaround, so it should be as testable as everything else in
+  `dynasty_core/`.
+- [ ] **SC-2: Persistent research store for Claude Scout findings —
+  SQLite, confirmed (user-decided 2026-09-03)** — a place for `SC-3`'s
+  research output to land so `SC-6` can review it without re-running the
+  research itself, and for `SC-4`/`SC-7` to query historically. Settled:
+  SQLite, following `confidence_pool/store.py`'s already-established
+  pattern in this same repo (versioned migrations under `db_schema/`) —
+  this is dynasty's first real persistence beyond file-cached snapshots,
+  so it's the migration-runner *shape* that gets reused, not shared code,
+  per `CLAUDE.md`'s Architecture section (`dynasty`/`confidence_pool`
+  still share none). Two things this item has to land together, not
+  defer to later cleanup:
+  - **A templated finding schema, not free text** — fixed columns
+    (player_id, category, one-line summary, source, confidence,
+    observed_at) rather than a blob of raw scraped text. This is also
+    half of `SC-8`'s prompt-injection defense, not a separate concern
+    from it — the schema itself is what keeps a later consumer (`SC-6`, a
+    notification) from ever rendering or reasoning over raw untrusted
+    text.
+  - **A real volume mount for the SQLite file**, wired into the NAS's
+    existing backup coverage the same way `docker-compose.deploy.yml`'s
+    `confidence_pool_data` volume already is — needs to happen when the
+    store is built, not retrofitted after data already exists in an
+    unmounted container layer.
+  Reachability from the cloud routine is `SC-11`, not this item — see the
+  "Persistence and reachability" note above for why they're split. Needs
+  pytest coverage on the schema/migrations and read/write paths, the same
+  shape as `tests/confidence_pool/`'s store round-trip tests.
+- [ ] **SC-3: Claude Scout — routine research pass, bounded scope (not a
+  full free-agent-pool sweep, user-directed 2026-09-03)** (name and
+  concept confirmed user 2026-09-03; generalizes `RT-6`) — runs on a
+  schedule (own cadence, see `SC-9`), but deliberately does not research
+  every free agent every night — that's unbounded cost for very little
+  marginal signal on most nights, the general principle behind this
+  design applying beyond just this one item. Two-tier scope instead:
+  1. A cheap, bounded daily survey for notable events, built from
+     structured status/depth-chart/roster-move changes already
+     comparable via `pickup_snapshots.py`'s diff shape (and, once it
+     exists, `RT-21`'s transaction log) — not a fresh research query per
+     player.
+  2. A real research pass only on the subset that's actually earned
+     attention: players the notable-events survey flagged (or a relevant
+     subset of it), plus anyone already surfaced by the app's own
+     existing candidate-pool functions (`free_agent_board()`,
+     `leaguewide_trade_candidates()`, pickup alerts) — reusing those
+     rankings as the scope filter rather than re-deriving "worth a look"
+     from scratch, the same reuse discipline
+     `valuation_principles.md`'s "one valuation strategy, used everywhere"
+     rule already asks for elsewhere in this codebase.
+  Writes templated findings (`SC-2`'s schema) to the store rather than
+  returning them inline to one question. Needs `SC-8`'s
+  templated-storage-plus-double-check defense built in from the start —
+  this is the component that actually touches unstructured external
+  content, unlike the rest of the pipeline.
+- [ ] **SC-4: Persisted "already reported" dedup log, extended beyond
+  pickups** — `pickup_snapshots.py` already solves this for free-agent
+  availability changes; extend the same load/diff/persist shape to
+  `suggested_trades()`/`leaguewide_trade_candidates()` output (keyed by
+  candidate/pairing) and to `SC-3`'s scout findings (keyed by player +
+  category, using `SC-2`'s templated fields directly rather than parsing
+  free text), so something found once doesn't re-notify every night it
+  remains true — only when it's new or materially changed. Also the
+  natural place multi-signal convergence gets detected for `SC-5` below —
+  a second, independent signal landing on the same player is exactly the
+  kind of thing this log is positioned to notice. Needs pytest coverage
+  on the diff/dedup logic, mirroring `tests/dynasty_core/test_pickup_snapshots.py`'s
+  existing shape.
+- [ ] **SC-5: Materiality thresholds — quantitative and qualitative
+  signals kept distinct, convergence treated as a positive signal
+  (user-directed 2026-09-03)** — reuse existing, already-reviewed
+  acceptance gates for the deterministic signals rather than invent new
+  ones (`suggested_trades()`'s own tolerance-gated offer search; a
+  minimum `marginal_value` delta matching `free_agent_board()`'s `> 0`
+  convention), with the `RT-10`/`RT-28` FAAB caveat folded in explicitly
+  rather than silently inherited. `SC-3`'s scout findings are a
+  genuinely different kind of signal — qualitative, uncertain, sourced
+  from unstructured text — and must not be forced through the same
+  numeric bar or blended into one score with the quantitative side; per
+  this project's own "one valuation strategy, used everywhere" principle,
+  the fix isn't a second parallel *ranking* algorithm, it's keeping two
+  clearly-labeled *signal types* that both feed the same
+  worth-a-push decision explicitly rather than silently averaging into a
+  number that means neither thing. When independent signals — a
+  quantitative ranking and a scout finding, or two scout findings from
+  different angles — point at the same player and the same action
+  (add/drop/bid/trade), that convergence is itself worth surfacing with
+  more confidence, not a conflict to resolve down to one number.
+  Concretely: `SC-6`'s notification should be able to say "flagged by
+  both the marginal-value ranking *and* tonight's scout research" as its
+  own, higher-confidence category, distinct from either signal alone.
+- [ ] **SC-6: The nightly `/schedule` cloud routine** — orchestrates: run
+  `SC-1`'s script for the deterministic signals, read `SC-2` (via
+  `SC-11`'s API) for anything Scout found since the last check, apply
+  `SC-4`/`SC-5`, run `SC-7`'s self-reflection, push a phone notification
+  only if something clears the bar. Notification mechanism: the
+  `/schedule` cloud routine's own push-to-phone path — confirm this
+  actually works via `SC-12`'s proof-of-concept before building this item
+  out for real, since the whole feature's value depends on the
+  notification actually reaching the user, not just a desktop/terminal
+  one nobody's watching at 8pm. Needs an explicit "checked, found nothing
+  new" vs. "check failed" distinction in its own logic (mirroring
+  `Finance-Dashboards`' `ingest_health` status split) so a broken routine
+  doesn't read as a quiet night. Target cadence: daily 8pm local
+  in-season, per `SC-9`.
+- [ ] **SC-7: Self-reflection pass — did we miss something, and why,
+  files a GitHub issue on a miss (user-directed 2026-09-03)**
+  (user-flagged 2026-09-03, the core "close the gap" ask) — a second pass
+  in the same nightly routine that checks the scout's own recent output
+  against what actually happened, using `RT-21`'s transaction log plus
+  `pickup_snapshots.py`'s existing status/depth-chart diffs (example given
+  by the user: a rostered-elsewhere player goes on IR, freeing a
+  value-add free agent the scout should have flagged, and didn't). When a
+  miss is found: identify the likely root cause, propose a concrete fix,
+  and open a GitHub issue on this repo (`gh issue create`, tagged so it's
+  findable later) describing the miss and the proposed fix — never a
+  branch/commit/PR directly; the routine only ever proposes via an issue,
+  consistent with `git_workflow_simple.md`'s "no direct main commits,
+  nothing merges without explicit approval" — a human still decides
+  whether and how to act on it. Also push-notifies that an issue was
+  opened, with its own `SC-4`-style dedup keyed on the diagnosed gap so
+  the same miss doesn't get a new issue every night before it's
+  addressed. Genuinely new logic — no current code compares "what the
+  scout said" against "what actually happened" after the fact.
+- [ ] **SC-8: Prompt-injection defense — templated storage plus
+  on-demand double-checking (user-directed 2026-09-03)** —
+  Sleeper/FantasyCalc's structured API responses are low-risk, but `SC-3`'s
+  research pass (and any later `RT-6` on-demand fold-in) pulls in
+  less-structured content — news, injury reports, transaction notes.
+  Two-part defense: (1) `SC-2`'s templated finding schema is the primary
+  guard — the store never holds a raw untrusted blob a later consumer
+  (`SC-6`, a notification) could render or reason over as instructions,
+  only extracted fields; (2) when a finding looks borderline or
+  high-stakes, the scout runs a second, independent web search to
+  corroborate it before writing it to the store, rather than trusting a
+  single source outright — the same spirit as `Finance-Dashboards`'
+  `claude_scout.py` fenced/untrusted-content handling for its RSS
+  sources, adapted to a search-based source instead of a feed. Build
+  this in alongside `SC-3` rather than retrofitting after a real issue
+  surfaces.
+- [ ] **SC-9: Season-aware cadence — not required for initial release,
+  but needed before next year's rookie draft ramp-up (user-directed
+  2026-09-03: due before late summer 2027)** (user-flagged 2026-09-03) —
+  full daily-8pm cadence only applies in-season; off-season, both `SC-6`'s
+  nightly review and `SC-3`'s research pass should throttle back to
+  roughly once every few weeks, then ramp back up to full cadence once
+  the next rookie draft is scheduled — the ramp-up trigger needs to be as
+  real/live as the throttle-down one, not a manual flip the user has to
+  remember to make. Needs a live, not hardcoded, in-season/off-season
+  signal — check what Sleeper's `league` object actually exposes for this
+  (`status` — `pre_draft`/`drafting`/`in_season`/`complete` — is a
+  plausible candidate, alongside the `league["settings"]["leg"]`
+  current-week counter already used elsewhere per
+  `valuation_principles.md`'s "anchor on the live current week" rule)
+  rather than assuming, per this project's "document what you can't
+  verify" pattern; `confidence_pool/picks_core.py`'s own current-week
+  detection is a useful reference pattern to look at, though not shared
+  code (`dynasty`/`confidence_pool` share none, per `CLAUDE.md`'s
+  Architecture section — this would be independently derived). Default
+  design: keep one fixed cron (fires daily year-round) and gate real work
+  inside the routine/Scout logic based on the detected season state,
+  checking a persisted "last off-season run" timestamp — stored in
+  `SC-2`, reached the same way everything else is per `SC-11` — before
+  doing anything during the off-season window; simpler and more robust
+  than trying to reprogram the `/schedule` cron itself at season
+  boundaries. Revisit that choice only if the fixed-cron-plus-internal-gate
+  approach proves awkward in practice. Ship `SC-1`–`SC-8`/`SC-11`/`SC-12`
+  with a fixed in-season cadence first; build the ramp/throttle logic
+  once real season-transition data exists rather than guessing at it
+  ahead of time.
+- [ ] **SC-10: Documentation — written incrementally, final consolidated
+  pass once everything ships (user-directed 2026-09-03)** — write
+  `docs/dynasty-daily-scout.md` as each piece of this section lands,
+  mirroring how the rest of the app's docs already get written alongside
+  a feature rather than deferred entirely to the end. Once `SC-1` through
+  `SC-9`/`SC-11`/`SC-12` are built and proven out, do one final pass over
+  the whole doc for consistency and fold this section's intro/architecture
+  notes into it, rather than leaving the rationale only here.
+- [ ] **SC-11: API endpoints so the cloud routine can reach the
+  NAS-deployed store (user-directed 2026-09-03)** — `SC-3`/`SC-6` run as
+  `/schedule` cloud routines, a different execution environment than the
+  NAS-hosted Docker container `SC-2`'s SQLite store lives in; the cloud
+  routine has no direct filesystem access to it. Needs a small,
+  authenticated API surface on the deployed app (read findings, write
+  findings, mark reported, read/write dedup state — whatever
+  `SC-4`/`SC-6`/`SC-7` actually need) that the cloud routine calls over
+  the network instead. Build a reachability check alongside it — a real
+  test confirming a request from *outside* the NAS's own network can
+  actually hit the deployed service's endpoint — before anything else in
+  this section builds on the assumption that it can. Needs pytest
+  coverage for the endpoints' own request/response contract; the live
+  reachability check itself can't be a unit test by nature — document it
+  as a scripted check outside the pytest suite, the same role
+  `scripts/check_scoring_correction_assumptions.py` already plays for a
+  different live-data assumption.
+- [ ] **SC-12: Proof-of-concept — confirm a `/schedule` cloud routine can
+  actually push a phone notification (user-directed 2026-09-03)** — the
+  whole feature's value depends on a notification reliably reaching the
+  user's phone from an unattended nightly cloud routine, not a
+  desktop/terminal notification nobody's watching at 8pm. Before building
+  `SC-6` out for real: schedule a minimal `/schedule` routine that does
+  nothing but send one push notification, confirm it actually lands on
+  the phone, and note whatever setup that required (e.g. Remote Control
+  connectivity) so `SC-6`'s real implementation doesn't discover this gap
+  only after everything else is built. Cheap and independent of the rest
+  of the pipeline — do this first.
 
 ## Roster & trade tooling
 
@@ -221,6 +535,16 @@ Deliberately out of v1, not forgotten:
   free-agent evaluator (checking one waiver target) — not a general
   always-on feed, and not a replacement for the stats-based ranking
   anywhere in the pipeline.
+
+  **Name confirmed, scope generalized (user-clarified 2026-09-03):** "Claude
+  Scout" is the real name, and it's no longer only the on-demand, one-player
+  lookup described above — `SC-3` (see "Automated daily scout" section
+  below) builds it as a routine, scheduled research pass across the whole
+  relevant player pool, writing findings to a persisted store the nightly
+  `SC-6` routine reads. This item stays open specifically for the narrower
+  "check this one named player right now" on-demand trigger, which may end
+  up cheap to add on top of `SC-3`'s infrastructure once it exists rather
+  than needing its own separate design — revisit once `SC-3` ships.
 - [ ] **RT-7: Use `points_for`/point differential as a steadier alternative
   to win/loss in the power/timeline read** (deferred from the small-sample
   shrinkage work above, 2026-08-02) — shrinkage toward `0.5` (done, see
@@ -285,6 +609,18 @@ Deliberately out of v1, not forgotten:
   Revisit ahead of next year's rookie draft, with time to verify the
   unconfirmed assumptions above against a real draft in progress before
   committing to a design — not urgent mid-draft the way `RT-20` was.
+
+  **Promoted, 2026-09-03** — no longer just a next-draft revisit. `SC-7`'s
+  self-reflection pass (see "Automated daily scout" below) needs exactly
+  this endpoint: a reliable, timestamped, leaguewide record of what
+  actually happened (adds/drops/IR moves), independent of this app's own
+  refresh timing, to check the scout's prior output against. The
+  leaguewide-visibility angle above is also now directly useful beyond the
+  draft — it's what lets self-reflection notice a missed opportunity on
+  *any* team's move, not just the user's own roster. Added to the short
+  list alongside `SC-1`–`SC-6`; the unconfirmed assumptions above (cut
+  transaction `type`, `leg` bucketing beyond a single observed value)
+  still need live verification before implementation, same as before.
 - [ ] **RT-25: Extend FAAB bid guidance to prior seasons via
   `previous_league_id`** (deliberately deferred from `RT-10`, 2026-08-20)
   — a real `previous_league_id` chain exists for this league and could
