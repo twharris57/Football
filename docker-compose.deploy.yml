@@ -27,6 +27,18 @@ services:
       - confidence_pool_data:/app/confidence_pool_data
     restart: unless-stopped
 
+  scout-api:
+    # Proof-of-concept slice for the automated daily-scout's SC-11 API
+    # surface (.claude/PROJECT_PLAN_DYNASTY.md) - currently just /health
+    # and /ping, so no persisted volume yet (SC-2's store lands later).
+    image: ghcr.io/twharris57/football-scout-api:latest
+    pull_policy: always
+    ports:
+      - "${SCOUT_API_HOST_PORT:-8503}:8503"
+    environment:
+      - SCOUT_API_TOKEN=${SCOUT_API_TOKEN:?SCOUT_API_TOKEN must be set}
+    restart: unless-stopped
+
 volumes:
   nfl_data_cache:
   # Weekly picks/games history -- see docs/confidence-pool-web-app.md and

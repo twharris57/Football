@@ -87,24 +87,42 @@ else stays flat, on purpose.
   dashboard, 5 tabs, one module per non-trivial tab). Full methodology in
   `docs/rookie-draft-big-board.md`; web/Docker details in
   `docs/dynasty-draft-web-app.md`.
+- **Scout API** (`dynasty/scout_api/`): a separate, small FastAPI service
+  — its own Dockerfile, `VERSION`, minimal `requirements.txt`, and GHCR
+  image, deployed as a third container alongside the two Streamlit apps —
+  giving the automated daily-scout's `/schedule` cloud routine (see
+  `.claude/PROJECT_PLAN_DYNASTY.md`'s "Automated daily scout" section,
+  `SC-11`) an HTTP surface to reach on the NAS, since a cloud routine has
+  no access to local files or services. Currently a proof-of-concept
+  slice only — `/health` (unauthenticated liveness) and `/ping`
+  (authenticated via a shared-secret `X-Scout-Token` header, checked
+  against `SCOUT_API_TOKEN`) — proving the network path and auth work
+  end to end before any real findings-store endpoints (`SC-2`) are built
+  on top. Deliberately not part of `dynasty_core/` or `streamlit_app.py`
+  — a different deployable process with its own release cadence, not a
+  Streamlit page.
 - **Web + Docker**: `web_guidelines.md` applies to both Streamlit UIs
   (`dynasty/streamlit_app.py`/`dynasty/tabs/` and
   `confidence_pool/streamlit_app.py`/`confidence_pool/panels/`), and
   `docker_guidelines.md` applies to each app's own Dockerfile (root
   `Dockerfile` for dynasty, `confidence_pool/Dockerfile` for the
-  confidence pool, port 8501 vs. 8502) plus the shared compose setup
-  below. `python:3.12-slim` is used instead of the guideline's alpine
-  default for both — a deliberate exception, since `nfl_data_py`'s
-  `fastparquet`/`cramjam` dependency often lacks prebuilt musl wheels (same
-  call made in the sibling `Finance-Dashboards` project). GitHub Actions
-  (`.github/workflows/docker-publish.yml`) builds and pushes both images to
-  GHCR (`ghcr.io/twharris57/football-dynasty-draft`,
-  `ghcr.io/twharris57/football-confidence-pool`) on every push to `main`,
-  via a build matrix. `docker-compose.deploy.yml` is this repo's
-  deployment reference per `app_deployment_reference.md`, with one service
-  per app; the deployment repo that reads and adapts it is
-  `../nas-configs` (`football/football-compose.yaml`). Local dev
-  (`docker-compose.yml`) still builds both from source.
+  confidence pool, `dynasty/Dockerfile.scout-api` for the scout API —
+  ports 8501/8502/8503 respectively) plus the shared compose setup below.
+  `python:3.12-slim` is used instead of the guideline's alpine default
+  for all three — a deliberate exception for the two data-heavy apps,
+  since `nfl_data_py`'s `fastparquet`/`cramjam` dependency often lacks
+  prebuilt musl wheels (same call made in the sibling `Finance-Dashboards`
+  project); the scout API has no such dependency but stays on the same
+  base for consistency rather than reconciling two bases later. GitHub
+  Actions (`.github/workflows/docker-publish.yml`) builds and pushes all
+  three images to GHCR (`ghcr.io/twharris57/football-dynasty-draft`,
+  `ghcr.io/twharris57/football-confidence-pool`,
+  `ghcr.io/twharris57/football-scout-api`) on every push to `main`, via a
+  build matrix. `docker-compose.deploy.yml` is this repo's deployment
+  reference per `app_deployment_reference.md`, with one service per app;
+  the deployment repo that reads and adapts it is `../nas-configs`
+  (`football/football-compose.yaml`). Local dev (`docker-compose.yml`)
+  still builds all three from source.
 
 ## Key Constraints
 
@@ -156,16 +174,19 @@ dynasty/
   scripts/                 One-off/derivation scripts, e.g. derive_position_multipliers.py (rookie play-style bucket ratios)
   streamlit_app.py         Rookie draft big board web dashboard entry point (thin orchestrator)
   tabs/                    One module per Streamlit tab, plus components.py for shared display helpers
+  scout_api/                Separate FastAPI service (own Dockerfile/VERSION/requirements.txt) - the daily-scout's SC-11 API surface, PoC-only (/health, /ping) for now
+  Dockerfile.scout-api      Image for dynasty/scout_api/app.py (python:3.12-slim, non-root, port 8503)
 tests/
   dynasty_core/            pytest suite mirroring dynasty_core/'s submodules, plus helpers.py fixtures
   test_player_scoring.py
+  test_scout_api.py        pytest suite for dynasty/scout_api's endpoints (FastAPI TestClient, no real network)
   confidence_pool/         pytest suite for picks_core.py and store.py (synthetic schedule data, in-memory SQLite)
 Dockerfile               Image for dynasty/streamlit_app.py (python:3.12-slim, non-root, port 8501)
-docker-compose.yml       Local dev: builds both apps' images from source
+docker-compose.yml       Local dev: builds all three apps' images from source
 docker-compose.deploy.yml  Deployment reference, one service per app (pulls prebuilt GHCR images; ../nas-configs deploys the adapted copy)
 .env.example             Deployment reference env vars for docker-compose.deploy.yml (secrets left blank + a comment on source)
-.github/workflows/       CI: ci.yml runs pytest on every PR; docker-publish.yml builds+pushes both images to GHCR (matrix) on push to main
-requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, streamlit, ...) - shared by both apps
+.github/workflows/       CI: ci.yml runs pytest on every PR; docker-publish.yml builds+pushes all three images to GHCR (matrix) on push to main
+requirements.txt         Pinned dependencies (nfl_data_py, pandas, numpy, requests, streamlit, fastapi, ...) - shared by the two Streamlit apps and used to run scout_api's tests; scout_api's own Dockerfile installs from its own minimal dynasty/scout_api/requirements.txt instead
 .claude/                 Claude Code conventions, commands, and one PROJECT_PLAN_<SUBSYSTEM>.md per subsystem
 docs/                    Design docs for completed features, grouped by subsystem (see docs/README.md)
 ```
@@ -183,7 +204,9 @@ streamlit run confidence_pool/streamlit_app.py # confidence pool web app (port 8
 
 streamlit run dynasty/streamlit_app.py # dynasty rookie draft big board, web dashboard (port 8501)
 
-docker compose up --build      # local: build and run both apps in Docker
+SCOUT_API_TOKEN=<any-value> uvicorn scout_api.app:app --app-dir dynasty --port 8503 # scout API PoC (SC-11)
+
+docker compose up --build      # local: build and run all three apps in Docker
 
 pytest tests/ -v                # ranking/lineup/valuation logic (runs in CI on every PR)
 ```
@@ -197,10 +220,11 @@ bye-week handling, and `roster_weekly_gaps`, one file per `dynasty_core/` submod
 on-disk cache TTL behavior (`_session.get` monkeypatched, no real network
 calls); `tests/confidence_pool/` covers `picks_core.py`'s
 game-selection/ranking/deadline logic and `store.py`'s persistence
-round-trip and lock enforcement. All run against synthetic data or
-monkeypatched API boundaries — no real API calls. The legacy
-confidence-pool scripts still have none. See `testing.md` for general
-conventions.
+round-trip and lock enforcement; `tests/test_scout_api.py` covers
+`dynasty/scout_api`'s `/health`/`/ping` endpoints via FastAPI's
+`TestClient`. All run against synthetic data or monkeypatched API
+boundaries — no real API calls. The legacy confidence-pool scripts still
+have none. See `testing.md` for general conventions.
 
 ## Available Skills
 

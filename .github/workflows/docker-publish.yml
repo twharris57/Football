@@ -22,6 +22,9 @@ jobs:
           - image: twharris57/football-confidence-pool
             dockerfile: confidence_pool/Dockerfile
             version_file: confidence_pool/VERSION
+          - image: twharris57/football-scout-api
+            dockerfile: dynasty/Dockerfile.scout-api
+            version_file: dynasty/scout_api/VERSION
     steps:
       - uses: actions/checkout@v4
 
