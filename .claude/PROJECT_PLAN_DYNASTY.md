@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-30`, `VA-9`, `CQ-12`, `DL-9`, `SC-12`.
+below): `NB-2`, `RT-30`, `VA-9`, `CQ-12`, `DL-9`, `SC-14`.
 
 ## Short list — actively prioritized right now
 
@@ -52,14 +52,28 @@ too, per the convention above), don't let this become a history log.
 daily scout" below for each item's full description) — ordered so each
 step only depends on ones before it:
 
+0. **`SC-13`/`SC-14` — assumption validation, before any real build work**
+   (added 2026-09-03; see each item's own entry below). These aren't
+   ordinary backlog items — they're cheap checks that can invalidate or
+   reshape the architecture everything below assumes, so they come before
+   step 1, not folded into the numbered sequence:
+   - `SC-13` — confirm the Claude GitHub App actually has repo access
+     (clone *and* issue-write) for cloud routines against this repo.
+   - `SC-14` — confirm the cloud routine can reach the NAS-deployed store
+     from outside (spot-checked 2026-09-03, looks promising, needs a real
+     outside-in confirmation), and resolve where `SC-1`'s script actually
+     executes.
 1. `SC-12` — POC: confirm a `/schedule` cloud routine can actually push a
-   phone notification. Cheap and independent of everything else; the
-   whole feature is worthless if this doesn't pan out, so prove it first.
+   phone notification, and whether a run notifies automatically or only
+   when the agent sends one. Cheap and independent of everything else;
+   the whole feature is worthless if this doesn't pan out, so prove it
+   right after `SC-13`/`SC-14`.
 2. `SC-1` — headless `gather_state()` entrypoint.
 3. `SC-2` — SQLite store + templated finding schema, with a real
    backup-covered volume mount.
-4. `SC-11` — API endpoints so the cloud routine can actually reach `SC-2`'s
-   store, plus a live reachability check.
+4. `SC-11` — authenticated API endpoints so the cloud routine can
+   actually reach `SC-2`'s store, plus the real outside-in reachability
+   check `SC-14` only spot-checked.
 5. `SC-8` — templated-storage-plus-double-check prompt-injection defense
    (needed before `SC-3` writes anything real to the store).
 6. `SC-3` — Claude Scout research pass, bounded scope.
@@ -70,9 +84,9 @@ step only depends on ones before it:
 10. `SC-7` — self-reflection pass, opens a GitHub issue on a miss.
 11. `SC-6` — the nightly cloud routine that ties it all together.
 
-Target: once `SC-1`–`SC-8`, `SC-11`, `SC-12` land, schedule the routine
-for 8pm local (user-confirmed 2026-09-03), running a fixed in-season
-cadence.
+Target: once `SC-13`/`SC-14` (validated), `SC-1`–`SC-8`, `SC-11`, `SC-12`
+land, schedule the routine for 8pm local (user-confirmed 2026-09-03),
+running a fixed in-season cadence.
 
 **Explicitly not required for initial release** (both still tracked
 below, neither blocks the list above): `SC-9` (season-aware
@@ -149,19 +163,41 @@ back into the prompt so it isn't re-flagged) is the one piece directly
 worth reusing — see `SC-4`/`SC-6` below — but the scheduling/execution
 model itself is being designed fresh for this repo.
 
-**Persistence and reachability (user-decided 2026-09-03).** SQLite is
-the confirmed store — already proven in-repo via `confidence_pool/store.py`,
-and the natural fit for `SC-7`'s historical querying. It lives with the
-NAS-deployed app, not inside the cloud routine's own ephemeral checkout
-(a `/schedule` routine has no access to the NAS filesystem), so two
-things have to be true for this to actually work, filed as their own
-items below rather than left implicit: the on-disk file needs a real
-volume mount so it's covered by the NAS's existing backup scripts the
-same way `docker-compose.deploy.yml`'s `confidence_pool_data` volume
+**Persistence and reachability (user-decided 2026-09-03; spot-checked
+same day).** SQLite is the confirmed store — already proven in-repo via
+`confidence_pool/store.py`, and the natural fit for `SC-7`'s historical
+querying. It lives with the NAS-deployed app, not inside the cloud
+routine's own ephemeral checkout (a `/schedule` routine explicitly
+"cannot access local files, local services" per the schedule skill's own
+docs), so two things have to be true for this to actually work, filed as
+their own items below rather than left implicit: the on-disk file needs
+a real volume mount so it's covered by the NAS's existing backup scripts
+the same way `docker-compose.deploy.yml`'s `confidence_pool_data` volume
 already is (`SC-2`), and the cloud routine needs a network path — read
 and write — to reach it, since direct file access isn't an option
 (`SC-11`). `SC-2` and `SC-11` are a matched pair; neither is complete
-without the other.
+without the other. This whole premise was unconfirmed when first
+written — `nas-configs` (this repo's NAS deployment owner) has no reverse
+proxy, tunnel, or other public-exposure setup for any stack, which read
+as a real risk the NAS might not be reachable from outside at all. A
+same-day spot check resolved it more favorably than that read suggested:
+`twharris.synology.me` resolves to a real public IP against a public DNS
+resolver (not a LAN address), and both `:8501` (dynasty) and `:8502`
+(confidence-pool) return HTTP 200, consistent with port forwarding
+actually being configured rather than LAN-only access — and the user
+confirms routinely pulling both apps up on their phone while off-prem,
+which is direct, real-world confirmation of external reachability, not
+just a same-network artifact of the spot check. So the NAS being
+reachable at all is no longer the open question; what's left for `SC-14`
+is narrower and more mechanical — confirming a *cloud sandbox's* egress
+path specifically can reach it too (a different network path than a
+phone's, even if both ultimately hit the same forwarded port) and
+resolving where `SC-1`'s script actually executes. Also surfaced by the
+same spot check, not a new decision: both ports are currently plain HTTP
+with no TLS, and Streamlit has no built-in auth — fine for the existing
+read-only dashboards' current stakes, but `SC-11`'s API cannot piggyback
+on that same unauthenticated exposure and needs real auth added
+explicitly, which its own entry already anticipates.
 
 Existing work this depends on or should be prioritized alongside (all
 added to the short list above, 2026-09-03):
@@ -372,9 +408,13 @@ added to the short list above, 2026-09-03):
   authenticated API surface on the deployed app (read findings, write
   findings, mark reported, read/write dedup state — whatever
   `SC-4`/`SC-6`/`SC-7` actually need) that the cloud routine calls over
-  the network instead. Build a reachability check alongside it — a real
-  test confirming a request from *outside* the NAS's own network can
-  actually hit the deployed service's endpoint — before anything else in
+  the network instead. `SC-14` already spot-checked that the NAS is
+  reachable from outside at all (confirmed low-risk — see the
+  "Persistence and reachability" note above) and the user separately
+  confirms routinely using both apps off-prem from their phone, so this
+  item's own reachability check only needs to confirm the specific path
+  that matters here: a request *from the cloud routine's own sandbox*
+  actually hits the deployed service's endpoint — before anything else in
   this section builds on the assumption that it can. Needs pytest
   coverage for the endpoints' own request/response contract; the live
   reachability check itself can't be a unit test by nature — document it
@@ -382,16 +422,75 @@ added to the short list above, 2026-09-03):
   `scripts/check_scoring_correction_assumptions.py` already plays for a
   different live-data assumption.
 - [ ] **SC-12: Proof-of-concept — confirm a `/schedule` cloud routine can
-  actually push a phone notification (user-directed 2026-09-03)** — the
-  whole feature's value depends on a notification reliably reaching the
-  user's phone from an unattended nightly cloud routine, not a
-  desktop/terminal notification nobody's watching at 8pm. Before building
-  `SC-6` out for real: schedule a minimal `/schedule` routine that does
-  nothing but send one push notification, confirm it actually lands on
-  the phone, and note whatever setup that required (e.g. Remote Control
-  connectivity) so `SC-6`'s real implementation doesn't discover this gap
-  only after everything else is built. Cheap and independent of the rest
-  of the pipeline — do this first.
+  actually push a phone notification, and whether that happens
+  automatically or only when the agent sends one (user-directed
+  2026-09-03)** — the whole feature's value depends on a notification
+  reliably reaching the user's phone from an unattended nightly cloud
+  routine, not a desktop/terminal notification nobody's watching at 8pm.
+  Before building `SC-6` out for real: schedule a minimal `/schedule`
+  routine that does nothing but send one push notification, confirm it
+  actually lands on the phone, and note whatever setup that required
+  (e.g. Remote Control connectivity, or whatever "cowork tasks" turns out
+  to mean concretely — unconfirmed as of 2026-09-03) so `SC-6`'s real
+  implementation doesn't discover this gap only after everything else is
+  built. Also resolve a second, easy-to-miss question in the same test:
+  does a routine *run completing* generate a phone notification on its
+  own (via the platform's own task/run surfacing), independent of
+  anything the agent explicitly does? If so, `SC-6`'s entire "stay silent
+  on a quiet night" design (`SC-5`) needs to account for that — a
+  materiality gate that only decides whether to *push* is pointless if
+  every run notifies regardless of what it decided. Cheap and independent
+  of the rest of the pipeline — do this right after `SC-13`/`SC-14`.
+- [ ] **SC-13: Confirm the Claude GitHub App has repo access for cloud
+  routines — clone and issue-write both (user-directed 2026-09-03)** —
+  the `/schedule` skill's own setup check surfaced, unprompted, "Couldn't
+  verify GitHub access for twharris57/Football (the check failed in a way
+  that may be temporary) — if your routine needs this repo and this
+  persists, install the Claude GitHub App." This is a live, currently
+  unresolved gap, not a hypothetical: `SC-1` (clone the repo to run its
+  script), `SC-3`, and `SC-6` all need at least read/clone access, and
+  `SC-7` additionally needs write access to open issues (`gh issue
+  create`) — a different, higher permission level than clone-only, worth
+  confirming separately rather than assuming one implies the other.
+  Action: visit
+  https://claude.ai/code/onboarding?magic=github-app-setup (or run
+  `/web-setup`) to install/verify the app on this repo, then re-check via
+  the schedule skill. The cheapest, most foundational check in this whole
+  section — every other cloud-routine item depends on it, so it goes
+  first.
+- [ ] **SC-14: Confirm the cloud routine can reach the NAS-deployed store,
+  and resolve where `SC-1`'s script actually executes (user-directed
+  2026-09-03, spot-checked same day)** — `/schedule` cloud routines run
+  in Anthropic's cloud and, per the schedule skill's own docs, "cannot
+  access local files, local services," so `SC-2`'s SQLite store is only
+  reachable if the NAS is genuinely exposed, and `nas-configs` (this
+  repo's NAS deployment owner) has no reverse proxy, tunnel, or other
+  public-exposure setup documented for any stack — a real reason to
+  doubt it going in. Spot-checked 2026-09-03: `twharris.synology.me`
+  resolves to a real public IP via a public DNS resolver, both `:8501`
+  (dynasty) and `:8502` (confidence-pool) return HTTP 200, and the user
+  separately confirms routinely using both apps off-prem from their
+  phone — real-world confirmation the NAS is genuinely reachable from
+  outside, not just a same-network artifact of the spot check. So "is the
+  NAS reachable at all" is resolved; what's left here is narrower: (1)
+  confirm the *cloud sandbox's own* egress path can reach it too — a
+  different network route than a phone's, even against the same forwarded
+  port, and the only way to know for sure is having an actual routine try
+  it (fold into `SC-11`'s own reachability check once it exists, or do a
+  standalone curl-only routine first if `SC-11` isn't built yet); (2)
+  decide where `SC-1`'s script is meant to run — inside the cloud
+  sandbox directly (meaning it needs its own outbound access to Sleeper's
+  and FantasyCalc's public APIs, and its own Python environment with this
+  repo's dependencies installed) versus only ever running on the NAS side
+  and being triggered/read remotely via `SC-11`'s API. This changes what
+  `SC-11` actually needs to expose — a full "run `gather_state` and give
+  me the result" trigger endpoint in the first case, versus just
+  store-read/write endpoints in the second — so resolve it before
+  finalizing `SC-11`'s design, not after. Also flag, not a new decision:
+  both NAS ports are currently plain HTTP with no TLS and no auth (fine
+  for the existing read-only dashboards' current stakes) — `SC-11`'s API
+  cannot reuse that same unauthenticated exposure and needs real auth
+  added explicitly.
 
 ## Roster & trade tooling
 
