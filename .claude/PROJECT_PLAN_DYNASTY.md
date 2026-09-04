@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-30`, `VA-9`, `CQ-12`, `DL-9`, `SC-14`.
+below): `NB-2`, `RT-31`, `VA-9`, `CQ-13`, `DL-9`, `SC-14`.
 
 ## Short list — actively prioritized right now
 
@@ -87,6 +87,28 @@ step only depends on ones before it:
 Target: once `SC-13`/`SC-14` (validated), `SC-1`–`SC-8`, `SC-11`, `SC-12`
 land, schedule the routine for 8pm local (user-confirmed 2026-09-03),
 running a fixed in-season cadence.
+
+**First buildable slice — the concrete next step once this PR merges
+(user-directed 2026-09-03; planning only until then, no build/deploy
+work starts on this before merge):** a minimal, real proof of concept
+combining `SC-11`/`SC-12`/`SC-13`/`SC-14` into one small, end-to-end
+test rather than each item's full scope:
+1. Build one simple, authenticated API endpoint on the NAS-deployed
+   dynasty app (a `SC-11` slice — a health/ping check, not real
+   findings data yet) and deploy it through the existing CI/CD path.
+2. Create a `/schedule` cloud routine that, once that's deployed, calls
+   the endpoint and pushes a phone notification reporting whether it
+   worked (`SC-12`/`SC-14`'s real outside-in confirmation, from the
+   cloud sandbox specifically, not just the same-network spot check
+   already done).
+3. In the same POC, deliberately test `SC-13`'s dual-path design (see
+   its own entry): have the routine attempt something GitHub-side, and
+   confirm the durable-queue fallback actually gets flushed by the next
+   local Claude Code session when the direct path is unavailable.
+The point of bundling these into one slice rather than building each
+item's full scope first is exactly the user's stated goal: prove the
+whole pipeline works regardless of whether the desktop is up and
+reachable, before investing further build time on top of it.
 
 **Explicitly not required for initial release** (both still tracked
 below, neither blocks the list above): `SC-9` (season-aware
@@ -392,6 +414,25 @@ added to the short list above, 2026-09-03):
   with a fixed in-season cadence first; build the ramp/throttle logic
   once real season-transition data exists rather than guessing at it
   ahead of time.
+
+  **Draft-date signal checked live, 2026-09-03** (user-flagged: this
+  year's draft was itself pushed back a week from its original date,
+  confirming the field is genuinely dynamic, not just theoretically so).
+  `draft["start_time"]` (epoch ms, via `sleeper.get_draft(draft_id)`) is
+  real and populated — confirmed against this league's own completed
+  2026 draft. So "the next rookie draft is scheduled" *can* be a live
+  signal, not a guess, but two things need to be designed in, not
+  assumed: (1) re-read it every time rather than caching the first
+  observed value, since it can change after being set, exactly like it
+  did this year; (2) next season's draft doesn't live under this
+  league's current `draft_id` at all — Sleeper creates a new league
+  object (and a new `draft_id`) per season, chained via
+  `previous_league_id` (the same chain `RT-25` already plans to walk for
+  FAAB history) — so the ramp-up check first has to find *next* season's
+  league/draft object before it can read a `start_time` off it, which
+  won't exist at all until the commissioner sets up that season. Worth
+  scoping that discovery step explicitly when this item is picked up,
+  not assuming `draft_id` stays constant year to year.
 - [ ] **SC-10: Documentation — written incrementally, final consolidated
   pass once everything ships (user-directed 2026-09-03)** — write
   `docs/dynasty-daily-scout.md` as each piece of this section lands,
@@ -458,6 +499,30 @@ added to the short list above, 2026-09-03):
   the schedule skill. The cheapest, most foundational check in this whole
   section — every other cloud-routine item depends on it, so it goes
   first.
+
+  **Resilience design, user-directed 2026-09-03: don't let `SC-7` depend
+  on the cloud routine's GitHub access alone.** Rather than a single path
+  that either works or silently doesn't, `SC-7`'s issue-opening action
+  (and any future cloud-routine action that needs GitHub write access)
+  should attempt it directly from the cloud routine first, but fall back
+  to a durable queue when that fails or is unavailable: write the pending
+  action (what issue to open, with what body) into `SC-2`'s store via
+  `SC-11`'s API, and have it get flushed by whichever path becomes
+  available first — the cloud routine itself on a later run, *or* the
+  next local Claude Code session, at the desktop, with the user logged
+  in. The local path is not hypothetical — this very session already has
+  working `gh` access to this repo (it opened and commented on `PR #72`
+  earlier in this conversation), so "flush the queue" from a local
+  session is a real, already-proven capability, not something new to
+  build. The point isn't redundancy for its own sake: the user's stated
+  goal is confirming the whole pipeline works regardless of whether the
+  desktop is up and reachable, and a single-path design (cloud-only, or
+  desktop-only) can't demonstrate that — a dual-path design with a
+  durable, inspectable queue can. Worth testing as an explicit part of
+  the first proof-of-concept build (see the short list's "first
+  buildable slice" note) rather than added later once `SC-7` is real:
+  deliberately fail the cloud path in the POC and confirm the local
+  fallback actually flushes the queue on the next session.
 - [ ] **SC-14: Confirm the cloud routine can reach the NAS-deployed store,
   and resolve where `SC-1`'s script actually executes (user-directed
   2026-09-03, spot-checked same day)** — `/schedule` cloud routines run
@@ -720,6 +785,38 @@ Deliberately out of v1, not forgotten:
   list alongside `SC-1`–`SC-6`; the unconfirmed assumptions above (cut
   transaction `type`, `leg` bucketing beyond a single observed value)
   still need live verification before implementation, same as before.
+- [ ] **RT-31: Trade-block-style watchlist — track other teams' players
+  worth a look, auto-remove once traded or dropped (user-flagged
+  2026-09-03)** — periodically review who other managers have flagged as
+  available (Sleeper's app-side "trade block"), add candidates to a
+  tracked list for review, and drop them off it automatically once
+  they're no longer relevant (rostered on a different team, or dropped
+  outright — both already detectable via existing tooling, see below).
+  **Checked live, 2026-09-03: Sleeper's public API does not expose trade
+  block at all.** Confirmed two ways — this league's real
+  `/league/{id}/rosters` response has no `trade_block`-shaped key
+  anywhere in `metadata` (which is otherwise a real, populated free-form
+  dict for this league, e.g. custom player nicknames — so it's not that
+  metadata is empty/unused, trade block specifically isn't in it), and
+  Sleeper's own API docs list only transactions/traded-picks/rosters as
+  the trade-related surface, with no trade-block endpoint or field
+  documented. So this can't be a Sleeper-sourced automated feed the way
+  `RT-21`'s transaction log is — the "who's on the block" input has to
+  come from somewhere else: most likely the user manually adding a
+  player after seeing it mentioned in league chat/Discord/wherever
+  trade-block talk actually happens in this league, not pulled from an
+  API. Once a player's on the tracked list, though, removal *can* be
+  fully automated — a rostered-elsewhere check (`rostered_player_ids`)
+  or a dropped check (`pickup_snapshots.py`'s existing status diff)
+  both already exist and are exactly what's needed, no new detection
+  logic required there. Natural fit with this section's other work: a
+  tracked player is a good candidate to feed into `SC-3`'s bounded scout
+  scope (a manually-flagged player is at least as "earned attention" as
+  one surfaced by the notable-events survey), and the list itself is
+  another `SC-4`-shaped dedup/persistence problem, so this is worth
+  scoping after `SC-2`'s store exists rather than as a standalone
+  persistence design. Not part of the initial-release build order —
+  files here as a real, scoped feature idea, not a vague "would be nice."
 - [ ] **RT-25: Extend FAAB bid guidance to prior seasons via
   `previous_league_id`** (deliberately deferred from `RT-10`, 2026-08-20)
   — a real `previous_league_id` chain exists for this league and could
@@ -835,6 +932,26 @@ cutoff.
   helper (e.g. `_pick_value_lookup(pick_value_table)` returning both the
   dict and a `sum(names)` closure) next time either function is touched,
   rather than a third copy appearing.
+- [ ] **CQ-13: Summary tab's "(+N more)" note has nowhere to send the user**
+  (user-flagged 2026-09-03, seen live as "and 7 others") — `summary.py`'s
+  `_capped()` caps each Attention Digest category to `top_n=3` and appends
+  a plain-text `"(+N more)"` line (`summary_tab.py` renders it as an
+  ordinary `st.caption`, no link, no expander), so a user seeing "(+7
+  more)" has no way to find out what the other 7 are or where to look.
+  Three of the four capped categories (`weekly_gaps`, `sellable`,
+  `free_agents`) do have a fuller view elsewhere (Roster tab), so the fix
+  there is straightforward — point the note at the right tab. The fourth,
+  `pickup_alerts`, doesn't: grepped the whole `tabs/` package and it's
+  rendered *only* in `summary_tab.py` — there is no other view of the
+  full pickup-alert list to send anyone to yet, so fixing this category
+  needs a real full-list view built first, not just a better link.
+  Directly relevant to this section, not just a coincidental UX bug: `SC-6`'s
+  push notification is going to face the identical "here's the top few,
+  and N more" shape, and would hit the exact same dead end if it doesn't
+  give the user somewhere to go — this is exactly what `SC-2`'s store
+  (read via `SC-11`'s API, or eventually a dedicated view in the app) is
+  positioned to be, so treat this old bug as an early warning for that
+  design, not a separate concern to fix in isolation later.
 - [ ] **CQ-8: Add signal handlers for graceful container shutdown**
   (user-flagged 2026-08-20) — `docker_guidelines.md`'s existing "Graceful
   Shutdown" section already covers half of this (`CMD` exec form so
