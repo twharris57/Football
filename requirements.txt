@@ -6,7 +6,7 @@ fastapi==0.141.1
 fastparquet==2024.5.0
 fsspec==2024.9.0
 httpx2==2.12.0
-idna==3.8
+idna==3.19
 nfl_data_py==0.3.2
 numpy==2.1.1
 packaging==24.1
