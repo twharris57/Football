@@ -21,6 +21,16 @@ services:
       - confidence_pool_data:/app/confidence_pool_data
     restart: unless-stopped
 
+  scout-api:
+    build:
+      context: .
+      dockerfile: dynasty/Dockerfile.scout-api
+    ports:
+      - "8503:8503"
+    environment:
+      - SCOUT_API_TOKEN=${SCOUT_API_TOKEN:?SCOUT_API_TOKEN must be set (e.g. in a local .env) - see .env.example}
+    restart: unless-stopped
+
 volumes:
   nfl_data_cache:
   confidence_pool_data:

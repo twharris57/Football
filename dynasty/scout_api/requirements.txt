@@ -1,0 +1,8 @@
+# Deliberately separate from the root requirements.txt (shared by the
+# dynasty and confidence-pool Streamlit apps) - this service doesn't need
+# pandas/streamlit/nfl_data_py, and pulling those in would bloat an image
+# that's meant to stay small (docker_guidelines.md's "keep images small").
+# fastapi is pinned to match the root requirements.txt's copy (used to run
+# this service's tests) - keep both in sync if either is bumped.
+fastapi==0.141.1
+uvicorn==0.52.4
