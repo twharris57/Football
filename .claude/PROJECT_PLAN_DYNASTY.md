@@ -527,6 +527,41 @@ added to the short list above, 2026-09-03):
     it directly each night as its own normal write path, not a PR. Format
     (single JSON file vs. one per category, exact field layout) is a real
     design decision to make when this is picked up, not decided here.
+
+    **Mechanism decision (user-confirmed 2026-09-09): a dedicated branch,
+    not a Gist or GitHub Issues.** Considered and rejected: a private
+    Gist (a second, separate credential scope/API to manage alongside the
+    repo access already in place, and it lives outside the repo entirely
+    — cuts against this project's whole pattern of keeping everything
+    traceable in one place) and GitHub Issues for the bulk data (wrong
+    shape — issues are a comment stream, not a queryable current-state
+    snapshot; forcing nightly findings/dedup data into issue bodies means
+    either spamming the tracker with routine noise or hackily overwriting
+    one issue's body as a fake key-value store, and conflicts with
+    `code_conventions.md`'s own "issues are for genuinely open, actionable
+    work" convention). Issues stay exactly where `SC-7` already uses
+    them — a diagnosed gap with a proposed fix is genuinely
+    issue-shaped (human-readable, actionable, one per real problem);
+    everything else is exactly what a plain versioned file is for. A
+    branch reuses tooling the cloud routine already has (git/`gh`), adds
+    no new credential scope, and gets free history for nothing — every
+    night's state is a commit.
+
+    **Proof-of-concept required before building this for real
+    (user-directed 2026-09-09).** The whole design depends on the cloud
+    routine actually being able to write to a branch — resolving the
+    "couldn't verify GitHub access" warning earlier only confirmed a
+    status check, never an actual clone-and-push. Given this session
+    already found one resolved-looking status message hiding a real
+    problem (the environment network policy, before the inbound-design
+    investigation), don't repeat that mistake here. Vertical-slice POC:
+    a `/schedule` routine with this repo attached as a source clones it,
+    creates/checks out `scout-data`, writes a trivial test payload,
+    commits and pushes it, and reports success/failure via push
+    notification; separately, confirm the content is actually retrievable
+    from that branch (a local `git fetch`/`git show`, or the NAS-side
+    script's own pull once it exists). Do this before writing any of the
+    real schema/sync-script logic below.
   - **The NAS-side sync script**: `dynasty/scout_api` pivots from the
     `SC-11`-era inbound HTTP server to an outbound-polling script, run on
     a schedule via Synology's Task Scheduler (or an equivalent cron
