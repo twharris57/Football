@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-31`, `VA-9`, `CQ-13`, `DL-9`, `SC-15`.
+below): `NB-2`, `RT-31`, `VA-9`, `CQ-13`, `DL-9`, `SC-16`.
 
 ## Short list — actively prioritized right now
 
@@ -415,7 +415,8 @@ added to the short list above, 2026-09-03):
   `scout-data` branch for anything Scout found since the last check,
   apply `SC-4`/`SC-5`, run `SC-7`'s self-reflection, push a phone
   notification only if something clears the bar, then commit the updated
-  state back to `scout-data`. Notification mechanism: the `/schedule`
+  state back to `scout-data` — including `SC-16`'s 30-day retention
+  prune, which belongs in this same commit-back step. Notification mechanism: the `/schedule`
   cloud routine's own push-to-phone path — already confirmed working
   live via many real test routines during `SC-14`'s debugging
   (2026-09-05/07), each of which called `PushNotification` explicitly to
@@ -611,6 +612,37 @@ added to the short list above, 2026-09-03):
   - `SC-2`/`SC-4` still need to define the real finding/dedup field
     layout on top of this generic file mirror — this item's own scope was
     the sync mechanism, not that schema.
+- [ ] **SC-16: 30-day retention pruning on `scout-data` + a staleness
+  signal once a Scout UI exists (user-directed 2026-09-13, from `SC-15`'s
+  code review)** — review of `dynasty/scout_api/sync.py` found that
+  GitHub's Contents API silently truncates a directory listing at 1,000
+  entries with no pagination available on that endpoint; `sync.py` now
+  hard-fails rather than syncing a possibly-incomplete list, but that's
+  only a guard against the symptom. The real fix belongs upstream, in
+  `SC-6`'s nightly routine, not the NAS-side mirror:
+  - **`SC-6` prunes anything on `scout-data` older than 30 days** as part
+    of its own commit-back-to-the-branch step — it already has write
+    access there every night, while `sync.py` deliberately stays
+    read-only (see `SC-15`'s architecture note), so pruning can't live on
+    the NAS side. At any realistic daily file count this keeps
+    `scout-data/` orders of magnitude under the 1,000-entry cap
+    indefinitely, without needing a by-year subpath layout or a switch to
+    the Git Trees API to merely raise the ceiling — both considered and
+    rejected in favor of bounding growth at the source. Side benefit
+    (user-flagged): it also caps how much history context `SC-3`'s Scout
+    research pass has to reason over.
+  - Pruning by age needs a reliable per-file date, which the Contents API
+    listing doesn't provide (no per-file commit timestamp) — `SC-2`'s
+    schema should carry an explicit date field in each file's own JSON
+    rather than making `SC-6` do a per-file commit-history lookup just to
+    determine age.
+  - **A staleness banner belongs in whatever UI eventually surfaces Scout
+    findings**, once one exists (no such view is built yet — see `SC-2`'s
+    "eventually a dedicated view in the app" note): warn when the most
+    recent successful sync is more than 2 days stale. `sync.py`'s
+    existing `synced_at` column already carries what a future consumer
+    needs to compute this — nothing left to build in `sync.py` itself for
+    this part.
 
 ## Roster & trade tooling
 
