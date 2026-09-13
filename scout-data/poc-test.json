@@ -1,0 +1,6 @@
+{
+  "poc": "SC-15 vertical slice",
+  "written_by": "cloud routine (Football-Scout environment)",
+  "written_at": "2026-09-13T02:28:51Z",
+  "message": "If you can read this from the scout-data branch, the cloud routine can push its own state to GitHub and the outbound-only architecture is viable."
+}
