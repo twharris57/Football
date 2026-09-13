@@ -605,7 +605,15 @@ added to the short list above, 2026-09-03):
     equivalent) on a schedule, and confirm a real run against the live
     `scout-data` branch from the real NAS — this session's testing only
     exercised the sync logic locally against a fake session, never the
-    real deployed container.
+    real deployed container. **Also enable Task Scheduler's own
+    notify-on-failure/email-run-details option on that entry** (user-asked
+    2026-09-13) — today a `sync.py` failure (the 1,000-entry guard
+    tripping, a network error, an expired token, anything caught by
+    `main()`'s `except`) only ever prints `FAIL: ...` and exits 1; nothing
+    pushes that anywhere without this being turned on. `SC-16`'s planned
+    staleness banner is the more general backstop for the same failure
+    class once a Scout UI exists, but this per-task NAS setting is the
+    zero-code path that's available the moment this bullet gets done.
   - Confirm the `scout_data` named volume is covered by the NAS's
     existing offsite backup, same open question `confidence_pool_data`
     already has (`CLAUDE.md`'s Key Constraints).
