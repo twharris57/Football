@@ -342,6 +342,33 @@ added to the short list above, 2026-09-03):
   Needs pytest coverage on both the JSON schema (read/write, dedup-state
   round-trip) and the SQLite mirror's migrations/ingest path, the same
   shape as `tests/confidence_pool/`'s store round-trip tests.
+
+  **Schema + SQLite mirror built, 2026-09-13.**
+  `dynasty/scout_api/finding_schema.py` defines the fixed-field `Finding`
+  dataclass (player_id, category, summary, source, confidence,
+  observed_at, plus `created_at` for `SC-16`'s retention pruning) and
+  strict `parse_finding()`/`finding_to_json()` validation (exact key-set
+  match, `category`/`confidence` constrained to first-draft tuples,
+  `summary` capped at 300 chars for UI/notification hygiene — not a
+  prompt-injection defense by itself; that defense is the schema's
+  fixed-fields structure, per `SC-8`). No generated ID: the GitHub file
+  path is the natural key, matching `scout_data_files`'s own pattern.
+  `dynasty/scout_api/db_schema/migrations/0002_scout_findings.sql` adds
+  the typed `scout_findings` table; `sync.py`'s new `ingest_findings()`
+  parses every `finding_*.json` row already in `scout_data_files` and
+  upserts it there, called from `main()` right after `sync()` (fails
+  loud on a malformed finding, by design — see the function's own
+  docstring). Full pytest coverage in `tests/test_finding_schema.py` and
+  a new `TestIngestFindings` class in `tests/test_scout_api.py`.
+
+  **Still open:**
+  - `category`'s `role_change`/`performance_trend` values are first-draft
+    guesses, not confirmed anywhere — revisit once `SC-3` produces real
+    findings.
+  - No producer yet — `SC-3`/`SC-6` still have to actually write
+    `finding_*.json` files for any of this to see real data.
+  - The NAS volume/backup-coverage question is `SC-15`'s open item, not a
+    new one here.
 - [ ] **SC-3: Claude Scout — routine research pass, bounded scope (not a
   full free-agent-pool sweep, user-directed 2026-09-03)** (name and
   concept confirmed user 2026-09-03; generalizes `RT-6`) — runs on a

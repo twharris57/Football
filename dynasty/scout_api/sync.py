@@ -33,7 +33,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from . import db_schema
+from . import db_schema, finding_schema
 from .scout_data_dir import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -157,6 +157,67 @@ def sync(conn: sqlite3.Connection, session: requests.Session) -> int:
     return len(contents)
 
 
+def ingest_findings(conn: sqlite3.Connection) -> int:
+    """Parse every finding_*.json row already mirrored into scout_data_files
+    (SC-2's templated schema, see finding_schema.py) and upsert its typed
+    fields into scout_findings. Returns the number ingested.
+
+    Reads from the local scout_data_files mirror rather than fetching fresh
+    from GitHub - the content is already locally validated JSON from sync(),
+    so no network access is needed here.
+
+    Raises ValueError on the first malformed finding, aborting the whole
+    ingest with nothing partially written - same all-or-nothing shape
+    sync() already has for raw JSON validity. This is a deliberate
+    trade-off, not an implicit side effect: SC-3's own writer is expected
+    to validate against this same schema before ever committing to
+    scout-data, so a failure here means schema drift or a bug upstream,
+    not routine bad data to skip past silently.
+    """
+    rows = conn.execute("SELECT path, content FROM scout_data_files").fetchall()
+    finding_rows = [(row["path"], row["content"]) for row in rows if finding_schema.is_finding_path(row["path"])]
+
+    parsed = [(path, finding_schema.parse_finding(content)) for path, content in finding_rows]
+
+    with conn:
+        current_paths = [path for path, _ in parsed]
+        if current_paths:
+            placeholders = ",".join("?" for _ in current_paths)
+            conn.execute(
+                f"DELETE FROM scout_findings WHERE path NOT IN ({placeholders})",
+                current_paths,
+            )
+        else:
+            conn.execute("DELETE FROM scout_findings")
+        for path, finding in parsed:
+            conn.execute(
+                """
+                INSERT INTO scout_findings
+                    (path, player_id, category, summary, source, confidence, observed_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    player_id = excluded.player_id,
+                    category = excluded.category,
+                    summary = excluded.summary,
+                    source = excluded.source,
+                    confidence = excluded.confidence,
+                    observed_at = excluded.observed_at,
+                    created_at = excluded.created_at
+                """,
+                (
+                    path,
+                    finding.player_id,
+                    finding.category,
+                    finding.summary,
+                    finding.source,
+                    finding.confidence,
+                    finding.observed_at,
+                    finding.created_at,
+                ),
+            )
+    return len(parsed)
+
+
 def connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -178,13 +239,14 @@ def main() -> int:
         conn = connect(str(DB_PATH))
         session = _build_session()
         count = sync(conn, session)
+        finding_count = ingest_findings(conn)
     except (requests.RequestException, KeyError, sqlite3.Error, ValueError, RuntimeError, OSError) as exc:
-        print(f"FAIL: could not sync scout-data from GitHub: {exc}")
+        print(f"FAIL: could not sync/ingest scout-data: {exc}")
         return 1
     finally:
         if conn is not None:
             conn.close()
-    print(f"OK: synced {count} file(s) from scout-data into {DB_PATH}")
+    print(f"OK: synced {count} file(s), ingested {finding_count} finding(s) into {DB_PATH}")
     return 0
 
 

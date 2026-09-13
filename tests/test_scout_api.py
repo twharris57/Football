@@ -265,4 +265,90 @@ class TestApplyMigrations:
         db_schema.apply_migrations(conn)
 
         applied = conn.execute("SELECT version FROM schema_migrations").fetchall()
-        assert len(applied) == 1
+        # Computed from the migrations directory rather than hardcoded, so
+        # adding a future migration doesn't silently re-break this count.
+        assert len(applied) == len(list(db_schema.MIGRATIONS_DIR.glob("*.sql")))
+
+
+def _valid_finding_payload(**overrides):
+    payload = {
+        "player_id": "4046",
+        "category": "injury",
+        "summary": "Questionable with a hamstring injury.",
+        "source": "https://example.com/report",
+        "confidence": "medium",
+        "observed_at": "2026-09-10T12:00:00+00:00",
+        "created_at": "2026-09-13T08:00:00+00:00",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _insert_data_file(conn, path, content, commit_sha="abc123", synced_at="2026-09-13T08:00:00+00:00"):
+    conn.execute(
+        "INSERT INTO scout_data_files (path, content, commit_sha, synced_at) VALUES (?, ?, ?, ?)",
+        (path, content, commit_sha, synced_at),
+    )
+
+
+class TestIngestFindings:
+    def test_ingests_a_well_formed_finding(self):
+        conn = _fresh_conn()
+        _insert_data_file(conn, "scout-data/finding_a.json", json.dumps(_valid_finding_payload()))
+
+        count = sync.ingest_findings(conn)
+
+        assert count == 1
+        row = conn.execute("SELECT * FROM scout_findings WHERE path = ?", ("scout-data/finding_a.json",)).fetchone()
+        assert row["player_id"] == "4046"
+        assert row["category"] == "injury"
+
+    def test_skips_files_that_are_not_findings(self):
+        conn = _fresh_conn()
+        _insert_data_file(conn, "scout-data/status.json", json.dumps({"ok": True}))
+
+        count = sync.ingest_findings(conn)
+
+        assert count == 0
+        assert conn.execute("SELECT COUNT(*) FROM scout_findings").fetchone()[0] == 0
+
+    def test_raises_on_a_malformed_finding_and_writes_nothing(self):
+        conn = _fresh_conn()
+        _insert_data_file(
+            conn, "scout-data/finding_bad.json", json.dumps(_valid_finding_payload(category="not_a_category"))
+        )
+
+        try:
+            sync.ingest_findings(conn)
+            raise AssertionError("expected ValueError for a malformed finding")
+        except ValueError as exc:
+            assert "category" in str(exc)
+
+        assert conn.execute("SELECT COUNT(*) FROM scout_findings").fetchone()[0] == 0
+
+    def test_removes_findings_for_files_no_longer_present(self):
+        conn = _fresh_conn()
+        _insert_data_file(conn, "scout-data/finding_a.json", json.dumps(_valid_finding_payload()))
+        sync.ingest_findings(conn)
+
+        conn.execute("DELETE FROM scout_data_files WHERE path = ?", ("scout-data/finding_a.json",))
+        count = sync.ingest_findings(conn)
+
+        assert count == 0
+        assert conn.execute("SELECT COUNT(*) FROM scout_findings").fetchone()[0] == 0
+
+    def test_reingesting_updates_the_existing_row_rather_than_duplicating(self):
+        conn = _fresh_conn()
+        _insert_data_file(conn, "scout-data/finding_a.json", json.dumps(_valid_finding_payload(confidence="low")))
+        sync.ingest_findings(conn)
+
+        conn.execute(
+            "UPDATE scout_data_files SET content = ? WHERE path = ?",
+            (json.dumps(_valid_finding_payload(confidence="high")), "scout-data/finding_a.json"),
+        )
+        count = sync.ingest_findings(conn)
+
+        assert count == 1
+        rows = conn.execute("SELECT * FROM scout_findings").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["confidence"] == "high"
