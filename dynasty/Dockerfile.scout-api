@@ -1,5 +1,5 @@
 # python:3.12-slim, matching the sibling Streamlit apps' Dockerfiles for
-# consistency, even though this service has none of nfl_data_py's
+# consistency, even though this script has none of nfl_data_py's
 # musl-wheel problems that motivated that choice there - a future shared
 # base image won't need reconciling two different bases later.
 FROM python:3.12-slim
@@ -7,28 +7,29 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Own requirements.txt (dynasty/scout_api/requirements.txt), not the root
-# one shared by the two Streamlit apps - this service doesn't need
+# one shared by the two Streamlit apps - this script doesn't need
 # pandas/streamlit/nfl_data_py, see that file's own comment.
 COPY dynasty/scout_api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY dynasty/scout_api ./dynasty/scout_api
 
-# Baked in at build time so /ping can report which commit is actually
-# running, matching the sibling Streamlit apps' footer pattern.
-ARG GIT_SHA=dev
-ENV GIT_SHA=$GIT_SHA
-
 RUN groupadd --system --gid 1000 app \
  && useradd --system --uid 1000 --gid app app
 USER app
 
-EXPOSE 8503
+# scout_data/ is where scout_data_dir.py resolves the SQLite mirror -
+# mount a named volume here so it survives across scheduled runs (see
+# docker-compose.deploy.yml).
+VOLUME ["/app/scout_data"]
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8503/health', timeout=4).status==200 else 1)"
-
-# --app-dir dynasty (not dynasty/scout_api) so `scout_api` resolves as a
-# real package the same way conftest.py resolves it for tests - both put
-# dynasty/ on sys.path and import `scout_api.app`, not the directory itself.
-CMD ["uvicorn", "scout_api.app:app", "--app-dir", "dynasty", "--host", "0.0.0.0", "--port", "8503"]
+# No EXPOSE/HEALTHCHECK here - unlike the retired inbound server this
+# replaced (SC-11's PoC), this image runs to completion once per
+# invocation (Synology Task Scheduler on a cron) rather than staying up as
+# a long-running service; its own exit code is the health signal, checked
+# by whatever invoked `docker run`, not by an orchestrator watching a port.
+# WORKDIR set to dynasty/ (not /app) so `python -m scout_api.sync` resolves
+# scout_api as a top-level package, the same way the retired server used
+# uvicorn's `--app-dir dynasty` to do the same thing.
+WORKDIR /app/dynasty
+CMD ["python", "-m", "scout_api.sync"]

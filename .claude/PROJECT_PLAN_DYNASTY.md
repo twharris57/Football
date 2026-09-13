@@ -82,15 +82,14 @@ local (user-confirmed 2026-09-03), running a fixed in-season cadence.
 `SC-12` (push notifications) and `SC-13` (GitHub App access) are already
 done — see the architecture note for how they resolved.
 
-**First buildable slice — the concrete next step (revised 2026-09-07):**
-prove the new sync mechanism end to end before building anything on top
-of it: have a `/schedule` cloud routine commit a small test payload to
-the `scout-data` branch, and have a NAS-side script (Synology Task
-Scheduler, repurposing `dynasty/scout_api`) pull it down and confirm it
-landed. This replaces the original inbound-API POC (`/health`/`/ping`),
-which is not wasted work — it proved the Docker/CI/GHCR deployment
-pipeline end to end, which `SC-15`'s script reuses; only the "listen on
-a port" part of that build is retired.
+**First buildable slice — done, 2026-09-12/13.** The vertical-slice POC
+(a `/schedule` cloud routine pushing a test payload to `scout-data`,
+confirmed retrievable via a local `git fetch`/`git show`) succeeded, and
+`dynasty/scout_api/sync.py` (the NAS-side half of `SC-15`) is now built
+and tested against a fake GitHub session — see `SC-15`'s own entry above
+for the full state and what's still open (a real NAS Task Scheduler
+deployment and a live GitHub token, not yet done). Next up in the build
+order: `SC-1`.
 
 **Explicitly not required for initial release** (both still tracked
 below, neither blocks the list above): `SC-9` (season-aware
@@ -259,21 +258,55 @@ added to the short list above, 2026-09-03):
 - [ ] **SC-1: `gather_state()` runs inside the cloud routine's own sandbox
   (revised 2026-09-07 — originally scoped as a NAS-side headless script;
   the NAS is no longer in this loop at all, see the architecture note
-  above)** — `gather_state()` is currently only ever called from
-  `streamlit_app.py`'s cached `load_state()`. Add a plain entrypoint
-  script (e.g. `dynasty/scripts/daily_check.py`) that calls it directly
-  (league ID from existing env/config, no `st.*` dependency) and returns
-  a structured result — the cloud routine's own session clones the repo,
-  `pip install`s `requirements.txt` (PyPI is on the environment's Trusted
-  allowlist by default), and runs this script itself. Needs
-  `api.sleeper.app` and FantasyCalc's API domain added to the cloud
-  environment's Custom network allowlist (`ifconfig.me` already proved
-  this cloud sandbox's outbound HTTPS to arbitrary allowlisted domains
-  works fine — much more likely to behave than the NAS ever was, since
-  these are ordinary public REST APIs on standard ports, not a home
-  connection on a nonstandard one). Add pytest coverage alongside —
-  nothing about this entrypoint needs a Streamlit workaround, so it
-  should be as testable as everything else in `dynasty_core/`.
+  above)** — `gather_state()` was previously only ever called from
+  `streamlit_app.py`'s cached `load_state()`.
+
+  **Entrypoint script built, 2026-09-13.** `dynasty/scripts/daily_check.py`
+  calls `gather_state()` directly (league ID/username from
+  `DYNASTY_LEAGUE_ID`/`DYNASTY_USERNAME` env vars, falling back to the
+  existing `DEFAULT_LEAGUE_ID`/`DEFAULT_USERNAME` constants; no `st.*`
+  dependency) and prints a JSON result — just the already-serializable
+  signal fields (`attention_digest`, `data_warnings`), not the full state
+  dict (every DataFrame, the whole player/roster universe) that's exactly
+  what the NAS-side Streamlit app already renders. Ends in an explicit
+  `OK:`/`FAIL:` message with a matching exit code, per
+  `code_conventions.md`'s Scripts and Automation rule. Pytest coverage in
+  `tests/test_daily_check.py` (`dynasty_core.gather_state` monkeypatched,
+  no real Sleeper/FantasyCalc calls) covers the signal extraction,
+  OK/FAIL reporting, and the env-var/default fallback.
+
+  **Still open before this item can close:**
+  - The cloud environment's network allowlist itself has to be edited on
+    claude.ai (Football-Scout environment's Custom network policy) — no
+    tool in this session can do that from here. Confirmed domains needed:
+    `api.sleeper.app`, `api.fantasycalc.com` (FantasyCalc's real API
+    host, checked directly against `fantasycalc_api.py`'s `FANTASYCALC_URL`,
+    not guessed), and — newly found this session, not previously called
+    out here — `nfl_data_py` itself pulls from `github.com` (release
+    asset downloads) and `raw.githubusercontent.com` (several CSV/parquet
+    sources), both needed for `bye_week_by_team()`'s and
+    `player_scoring.get_multipliers()`'s nfl_data_py calls inside
+    `gather_state()` to succeed rather than degrade to a `data_warnings`
+    entry.
+  - **New finding, not previously documented: every cloud-routine run
+    pays nfl_data_py's full "recompute from scratch" cost, not just the
+    first one.** `player_scoring.get_multipliers()`'s and
+    `bye_week_by_team()`'s disk caches (`dynasty/cache_dir.py`'s
+    `CACHE_DIR`, gitignored) never persist between cloud-routine runs —
+    each run clones the repo fresh, so the cache is always empty, and
+    `get_multipliers()`'s own docstring already documents this exact cost
+    as "a 1-2 minute synchronous pull" when it's forced. This isn't a
+    crash risk (both calls are already wrapped in `try`/`except` inside
+    `gather_state()`, degrading to a `data_warnings` entry on failure,
+    same resilience the NAS-side app already relies on) but it is a real,
+    previously-unweighed cost to the nightly routine's runtime (and
+    whatever the cloud session's own time/compute limits are) that the
+    original SC-1 scoping didn't account for. Worth a real decision when
+    `SC-6` (the nightly orchestrator) is picked up: accept the recurring
+    cost, or have the nightly routine skip the bye/scoring-multiplier
+    enrichments entirely and let the NAS-side Streamlit app be their only
+    consumer, since the cloud routine's actual `SC-5` materiality checks
+    (free-agent/trade marginal-value deltas) don't obviously need them.
 - [ ] **SC-2: Templated finding schema — canonical copy lives in `SC-15`'s
   GitHub branch, mirrored into NAS-side SQLite for the UI (revised
   2026-09-07 — originally scoped as a single NAS-hosted SQLite store the
@@ -518,67 +551,66 @@ added to the short list above, 2026-09-03):
   persistent state) + NAS-side outbound sync script, repurposing
   `dynasty/scout_api` (new 2026-09-07, replaces the retired `SC-11`)** —
   the concrete replacement for the abandoned inbound-API design; see the
-  "Architecture, revised" note above for why. Two halves:
-  - **The `scout-data` branch itself**: a dedicated, non-`main` branch
-    holding the JSON state `SC-2`/`SC-4`/`SC-9` all read and write —
-    findings, dedup log, last-run status/timestamps. Never merged to
-    `main`, so it doesn't conflict with `git_workflow_simple.md`'s "no
-    direct main commits" convention; the cloud routine commits/pushes to
-    it directly each night as its own normal write path, not a PR. Format
-    (single JSON file vs. one per category, exact field layout) is a real
-    design decision to make when this is picked up, not decided here.
+  "Architecture, revised" note above for why. Mechanism decision
+  (user-confirmed 2026-09-09): a dedicated branch, not a Gist (a second
+  credential scope, outside the repo entirely) or GitHub Issues (wrong
+  shape for a queryable current-state snapshot — issues stay exactly
+  where `SC-7` already uses them).
 
-    **Mechanism decision (user-confirmed 2026-09-09): a dedicated branch,
-    not a Gist or GitHub Issues.** Considered and rejected: a private
-    Gist (a second, separate credential scope/API to manage alongside the
-    repo access already in place, and it lives outside the repo entirely
-    — cuts against this project's whole pattern of keeping everything
-    traceable in one place) and GitHub Issues for the bulk data (wrong
-    shape — issues are a comment stream, not a queryable current-state
-    snapshot; forcing nightly findings/dedup data into issue bodies means
-    either spamming the tracker with routine noise or hackily overwriting
-    one issue's body as a fake key-value store, and conflicts with
-    `code_conventions.md`'s own "issues are for genuinely open, actionable
-    work" convention). Issues stay exactly where `SC-7` already uses
-    them — a diagnosed gap with a proposed fix is genuinely
-    issue-shaped (human-readable, actionable, one per real problem);
-    everything else is exactly what a plain versioned file is for. A
-    branch reuses tooling the cloud routine already has (git/`gh`), adds
-    no new credential scope, and gets free history for nothing — every
-    night's state is a commit.
+  **Vertical-slice POC done and confirmed, 2026-09-12/13.** A one-shot
+  `/schedule` cloud routine (Football-Scout environment) cloned this
+  repo, created `scout-data` from `main`, wrote a trivial test payload,
+  committed and pushed it — confirmed independently via a local
+  `git fetch`/`git show` against `origin/scout-data` (commit `713b50c`,
+  content matched exactly). This answers the open question the PoC
+  requirement existed to settle: the cloud routine really can write to a
+  branch, not just report a resolved-looking status check. Proceeding to
+  build on top of it was safe.
 
-    **Proof-of-concept required before building this for real
-    (user-directed 2026-09-09).** The whole design depends on the cloud
-    routine actually being able to write to a branch — resolving the
-    "couldn't verify GitHub access" warning earlier only confirmed a
-    status check, never an actual clone-and-push. Given this session
-    already found one resolved-looking status message hiding a real
-    problem (the environment network policy, before the inbound-design
-    investigation), don't repeat that mistake here. Vertical-slice POC:
-    a `/schedule` routine with this repo attached as a source clones it,
-    creates/checks out `scout-data`, writes a trivial test payload,
-    commits and pushes it, and reports success/failure via push
-    notification; separately, confirm the content is actually retrievable
-    from that branch (a local `git fetch`/`git show`, or the NAS-side
-    script's own pull once it exists). Do this before writing any of the
-    real schema/sync-script logic below.
-  - **The NAS-side sync script**: `dynasty/scout_api` pivots from the
-    `SC-11`-era inbound HTTP server to an outbound-polling script, run on
-    a schedule via Synology's Task Scheduler (or an equivalent cron
-    inside the existing container) — it pulls `scout-data`'s latest
-    content down and ingests it into local SQLite (`SC-2`'s mirror),
-    which the Streamlit app already knows how to query. No open port, no
-    inbound auth token, no attack surface added to the NAS. Needs its own
-    outbound GitHub credential (a read-only PAT, or a fine-grained token
-    scoped to just this repo) stored as a NAS-side secret the same way
-    `SCOUT_API_TOKEN` was — same secrets-handling discipline, opposite
-    direction (authenticating *out* to GitHub, not gating *in*).
-  The `/health`/`/ping` proof-of-concept work from PRs #72/#73 is not
-  wasted by this pivot — it proved the Docker image, GHCR publish, and
-  CI matrix end to end, all of which this script reuses; only the
-  "listen on a port" part of that build is retired. Needs pytest coverage
-  on the sync script's pull/ingest logic (mock the GitHub API response,
-  no real network) and on the `scout-data` read/write contract itself.
+  **NAS-side sync script built, 2026-09-13 (not yet deployed/verified on
+  the real NAS).** `dynasty/scout_api` pivoted from the `SC-11`-era
+  inbound HTTP server to `sync.py`, an outbound script (no server, no
+  open port) that pulls every `.json` file directly under `scout-data/`
+  on the branch via GitHub's REST API and upserts each into a
+  `scout_data_files` SQLite table (`dynasty/scout_api/db_schema/`,
+  migration-runner shape copied from `confidence_pool/db_schema/`, no
+  shared code). Deliberately generic/path-keyed rather than modeling
+  `SC-2`'s real finding/dedup fields yet — those land as real schema on
+  top of this same mirror once `SC-2`/`SC-4` are picked up, not modeled
+  here. Optional `SCOUT_DATA_GITHUB_TOKEN` env var for GitHub's higher
+  authenticated rate limit (this repo is public, so an unauthenticated
+  sync a few times a day works fine unauthenticated too — no crash-loop
+  on a missing token, unlike the retired server's `SCOUT_API_TOKEN`,
+  which gated real inbound auth). `docker-compose.yml`/`docker-compose.deploy.yml`
+  updated: `scout-api` is now a `profiles: ["cron"]` service (no
+  ports/`restart:` — a clean exit is its normal outcome, not a crash to
+  recover from), invoked via `docker compose run --rm scout-api` rather
+  than `up`. Pytest coverage added (`tests/test_scout_api.py`, a fake
+  `requests.Session`, no real network) for the pull/ingest logic,
+  upsert-not-duplicate behavior on re-sync, and the migration runner;
+  full suite (430 tests) still green. The `/health`/`/ping`
+  proof-of-concept work from PRs #72/#73 was not wasted by this pivot —
+  it proved the Docker image, GHCR publish, and CI matrix end to end, all
+  of which `sync.py` reuses; only the "listen on a port" part of that
+  build was retired.
+
+  **Still open before this item can close:**
+  - Provision a real read-only/fine-grained GitHub PAT as a NAS-side
+    secret (same secrets-handling discipline as the retired
+    `SCOUT_API_TOKEN`, opposite direction — authenticating *out* to
+    GitHub, not gating *in*) and set `SCOUT_DATA_GITHUB_TOKEN` on the NAS.
+  - Wire an actual Synology Task Scheduler entry to run
+    `docker compose -f docker-compose.deploy.yml run --rm scout-api` (or
+    equivalent) on a schedule, and confirm a real run against the live
+    `scout-data` branch from the real NAS — this session's testing only
+    exercised the sync logic locally against a fake session, never the
+    real deployed container.
+  - Confirm the `scout_data` named volume is covered by the NAS's
+    existing offsite backup, same open question `confidence_pool_data`
+    already has (`CLAUDE.md`'s Key Constraints).
+  - `SC-2`/`SC-4` still need to define the real finding/dedup field
+    layout on top of this generic file mirror — this item's own scope was
+    the sync mechanism, not that schema.
 
 ## Roster & trade tooling
 

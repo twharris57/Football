@@ -27,17 +27,22 @@ services:
       - confidence_pool_data:/app/confidence_pool_data
     restart: unless-stopped
 
+  # SC-15's NAS-side sync (.claude/PROJECT_PLAN_DYNASTY.md) - pulls the
+  # scout-data branch's JSON state down and mirrors it into
+  # scout_data/scout_data.db. A batch job, not a long-running service: no
+  # ports, no restart policy (a clean exit is its normal outcome, not a
+  # crash to recover from). Not started by `docker compose up`
+  # (`profiles: [cron]`) - the NAS's Synology Task Scheduler invokes it
+  # directly on a schedule instead, e.g.
+  # `docker compose -f docker-compose.deploy.yml run --rm scout-api`.
   scout-api:
-    # Proof-of-concept slice for the automated daily-scout's SC-11 API
-    # surface (.claude/PROJECT_PLAN_DYNASTY.md) - currently just /health
-    # and /ping, so no persisted volume yet (SC-2's store lands later).
     image: ghcr.io/twharris57/football-scout-api:latest
     pull_policy: always
-    ports:
-      - "${SCOUT_API_HOST_PORT:-8503}:8503"
+    profiles: ["cron"]
     environment:
-      - SCOUT_API_TOKEN=${SCOUT_API_TOKEN:?SCOUT_API_TOKEN must be set}
-    restart: unless-stopped
+      - SCOUT_DATA_GITHUB_TOKEN=${SCOUT_DATA_GITHUB_TOKEN:-}
+    volumes:
+      - scout_data:/app/scout_data
 
 volumes:
   nfl_data_cache:
@@ -47,3 +52,6 @@ volumes:
   # container restarts either way, but backup coverage is a separate,
   # NAS-side question).
   confidence_pool_data:
+  # The scout-data mirror (SC-15) - needs the same NAS backup-coverage
+  # check as confidence_pool_data above once this is actually deployed.
+  scout_data:
