@@ -15,16 +15,20 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import requests
+
 from scout_api import db_schema, sync
 
 
 class FakeResponse:
-    def __init__(self, payload=None, text=None):
+    def __init__(self, payload=None, text=None, status_code=200):
         self._payload = payload
         self.text = text if text is not None else json.dumps(payload)
+        self.status_code = status_code
 
     def raise_for_status(self) -> None:
-        pass
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} error", response=self)
 
     def json(self):
         return self._payload
@@ -33,16 +37,25 @@ class FakeResponse:
 class FakeSession:
     """Dispatches GitHub API calls by URL, matching sync.py's own request shapes."""
 
-    def __init__(self, branch_sha: str, contents: list[dict], file_bodies: dict[str, str]):
+    def __init__(
+        self,
+        branch_sha: str,
+        contents: list[dict],
+        file_bodies: dict[str, str],
+        branch_status: int = 200,
+    ):
         self.branch_sha = branch_sha
         self.contents = contents
         self.file_bodies = file_bodies
+        self.branch_status = branch_status
         self.calls: list[str] = []
+        self.headers_by_call: list[dict] = []
 
     def get(self, url, params=None, headers=None, timeout=None):
         self.calls.append(url)
+        self.headers_by_call.append(headers or {})
         if url == f"{sync.GITHUB_API_BASE}/repos/{sync.REPO}/branches/{sync.BRANCH}":
-            return FakeResponse({"commit": {"sha": self.branch_sha}})
+            return FakeResponse({"commit": {"sha": self.branch_sha}}, status_code=self.branch_status)
         if url == f"{sync.GITHUB_API_BASE}/repos/{sync.REPO}/contents/{sync.BRANCH_DIR}":
             return FakeResponse(self.contents)
         if url in self.file_bodies:
@@ -126,6 +139,70 @@ class TestSync:
 
         assert count == 0
 
+    def test_removes_rows_for_files_no_longer_on_the_branch(self):
+        conn = _fresh_conn()
+        contents = [
+            {"type": "file", "name": "a.json", "path": "scout-data/a.json", "download_url": "https://raw/a"},
+            {"type": "file", "name": "b.json", "path": "scout-data/b.json", "download_url": "https://raw/b"},
+        ]
+        first = FakeSession(
+            branch_sha="sha1", contents=contents, file_bodies={"https://raw/a": '{"n": 1}', "https://raw/b": '{"n": 2}'}
+        )
+        sync.sync(conn, first)
+
+        contents_after_rename = [
+            {"type": "file", "name": "a.json", "path": "scout-data/a.json", "download_url": "https://raw/a"},
+        ]
+        second = FakeSession(branch_sha="sha2", contents=contents_after_rename, file_bodies={"https://raw/a": '{"n": 1}'})
+        count = sync.sync(conn, second)
+
+        assert count == 1
+        paths = {row["path"] for row in conn.execute("SELECT path FROM scout_data_files").fetchall()}
+        assert paths == {"scout-data/a.json"}
+
+    def test_raises_on_malformed_json_content(self):
+        conn = _fresh_conn()
+        contents = [
+            {"type": "file", "name": "bad.json", "path": "scout-data/bad.json", "download_url": "https://raw/bad"},
+        ]
+        session = FakeSession(branch_sha="abc123", contents=contents, file_bodies={"https://raw/bad": "{not valid json"})
+
+        try:
+            sync.sync(conn, session)
+            raise AssertionError("expected ValueError for malformed JSON content")
+        except ValueError as exc:
+            assert "bad.json" in str(exc)
+
+        assert conn.execute("SELECT COUNT(*) FROM scout_data_files").fetchone()[0] == 0
+
+    def test_file_downloads_include_auth_headers_when_token_set(self, monkeypatch):
+        monkeypatch.setenv("SCOUT_DATA_GITHUB_TOKEN", "test-token")
+        conn = _fresh_conn()
+        contents = [
+            {"type": "file", "name": "status.json", "path": "scout-data/status.json", "download_url": "https://raw/status"},
+        ]
+        session = FakeSession(branch_sha="abc123", contents=contents, file_bodies={"https://raw/status": '{"ok": true}'})
+
+        sync.sync(conn, session)
+
+        file_download_headers = session.headers_by_call[session.calls.index("https://raw/status")]
+        assert file_download_headers.get("Authorization") == "Bearer test-token"
+
+
+class TestFetchDataFiles:
+    def test_raises_when_listing_may_be_truncated(self):
+        contents = [
+            {"type": "file", "name": f"f{i}.json", "path": f"scout-data/f{i}.json", "download_url": f"https://raw/{i}"}
+            for i in range(sync.GITHUB_CONTENTS_PAGE_LIMIT)
+        ]
+        session = FakeSession(branch_sha="abc123", contents=contents, file_bodies={})
+
+        try:
+            sync.fetch_data_files(session, ref="abc123")
+            raise AssertionError("expected RuntimeError for a possibly-truncated listing")
+        except RuntimeError as exc:
+            assert "truncated" in str(exc)
+
 
 class TestMain:
     def test_reports_ok_and_exits_zero_on_success(self, monkeypatch, tmp_path, capsys):
@@ -138,8 +215,6 @@ class TestMain:
         assert "OK:" in capsys.readouterr().out
 
     def test_reports_fail_and_exits_nonzero_on_request_error(self, monkeypatch, tmp_path, capsys):
-        import requests
-
         monkeypatch.setattr(sync, "DB_PATH", tmp_path / "scout_data.db")
 
         class RaisingSession:
@@ -147,6 +222,35 @@ class TestMain:
                 raise requests.ConnectionError("no route to host")
 
         monkeypatch.setattr(sync, "_build_session", RaisingSession)
+
+        exit_code = sync.main()
+
+        assert exit_code == 1
+        assert "FAIL:" in capsys.readouterr().out
+
+    def test_reports_fail_and_exits_nonzero_on_http_error_status(self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(sync, "DB_PATH", tmp_path / "scout_data.db")
+        monkeypatch.setattr(
+            sync,
+            "_build_session",
+            lambda: FakeSession(branch_sha="abc123", contents=[], file_bodies={}, branch_status=403),
+        )
+
+        exit_code = sync.main()
+
+        assert exit_code == 1
+        assert "FAIL:" in capsys.readouterr().out
+
+    def test_reports_fail_and_exits_nonzero_on_malformed_github_response(self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(sync, "DB_PATH", tmp_path / "scout_data.db")
+
+        class MissingKeySession:
+            def get(self, url, params=None, headers=None, timeout=None):
+                if url == f"{sync.GITHUB_API_BASE}/repos/{sync.REPO}/branches/{sync.BRANCH}":
+                    return FakeResponse({"commit": {}})
+                raise AssertionError(f"unexpected URL requested: {url}")
+
+        monkeypatch.setattr(sync, "_build_session", MissingKeySession)
 
         exit_code = sync.main()
 

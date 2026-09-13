@@ -15,12 +15,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY dynasty/scout_api ./dynasty/scout_api
 
 RUN groupadd --system --gid 1000 app \
- && useradd --system --uid 1000 --gid app app
+ && useradd --system --uid 1000 --gid app app \
+ && mkdir -p /app/scout_data && chown -R app:app /app
 USER app
 
 # scout_data/ is where scout_data_dir.py resolves the SQLite mirror -
 # mount a named volume here so it survives across scheduled runs (see
-# docker-compose.deploy.yml).
+# docker-compose.deploy.yml). Created and chowned above, before USER app,
+# so the volume mounts in as app-owned rather than the root-owned mount
+# point Docker would otherwise create for a path with no prior layer.
 VOLUME ["/app/scout_data"]
 
 # No EXPOSE/HEALTHCHECK here - unlike the retired inbound server this

@@ -21,6 +21,7 @@ a few times a day).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -41,6 +42,11 @@ GITHUB_API_BASE = "https://api.github.com"
 REPO = "twharris57/Football"
 BRANCH = "scout-data"
 BRANCH_DIR = "scout-data"
+
+# GitHub's contents API for a directory silently truncates here with no
+# error and no Link-header pagination (unlike the git trees API) - treated
+# as a hard failure rather than a silent partial sync, see fetch_data_files.
+GITHUB_CONTENTS_PAGE_LIMIT = 1000
 
 
 def _build_session() -> requests.Session:
@@ -80,21 +86,30 @@ def fetch_branch_head_sha(session: requests.Session) -> str:
     return response.json()["commit"]["sha"]
 
 
-def fetch_data_files(session: requests.Session) -> list[dict[str, Any]]:
-    """Return every JSON file directly under scout-data/ on the scout-data branch."""
+def fetch_data_files(session: requests.Session, ref: str) -> list[dict[str, Any]]:
+    """Return every JSON file directly under scout-data/ at the given ref
+    (a commit SHA, so this observes the same commit fetch_branch_head_sha()
+    resolved rather than whatever the branch has moved to since)."""
     response = session.get(
         f"{GITHUB_API_BASE}/repos/{REPO}/contents/{BRANCH_DIR}",
-        params={"ref": BRANCH},
+        params={"ref": ref},
         headers=_headers(),
         timeout=30,
     )
     response.raise_for_status()
     entries = response.json()
+    if len(entries) >= GITHUB_CONTENTS_PAGE_LIMIT:
+        raise RuntimeError(
+            f"scout-data/ listing returned {len(entries)} entries, at or above "
+            f"GitHub's {GITHUB_CONTENTS_PAGE_LIMIT}-entry contents-API cap - the "
+            "listing may be silently truncated; refusing to sync a possibly-"
+            "incomplete file list"
+        )
     return [entry for entry in entries if entry["type"] == "file" and entry["name"].endswith(".json")]
 
 
 def fetch_file_content(session: requests.Session, download_url: str) -> str:
-    response = session.get(download_url, timeout=30)
+    response = session.get(download_url, headers=_headers(), timeout=30)
     response.raise_for_status()
     return response.text
 
@@ -105,11 +120,29 @@ def sync(conn: sqlite3.Connection, session: requests.Session) -> int:
     Returns the number of files ingested.
     """
     commit_sha = fetch_branch_head_sha(session)
-    files = fetch_data_files(session)
+    files = fetch_data_files(session, ref=commit_sha)
     synced_at = datetime.now(timezone.utc).isoformat()
+
+    contents: list[tuple[str, str]] = []
+    for entry in files:
+        content = fetch_file_content(session, entry["download_url"])
+        try:
+            json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{entry['path']} is not valid JSON: {exc}") from exc
+        contents.append((entry["path"], content))
+
     with conn:
-        for entry in files:
-            content = fetch_file_content(session, entry["download_url"])
+        current_paths = [path for path, _ in contents]
+        if current_paths:
+            placeholders = ",".join("?" for _ in current_paths)
+            conn.execute(
+                f"DELETE FROM scout_data_files WHERE path NOT IN ({placeholders})",
+                current_paths,
+            )
+        else:
+            conn.execute("DELETE FROM scout_data_files")
+        for path, content in contents:
             conn.execute(
                 """
                 INSERT INTO scout_data_files (path, content, commit_sha, synced_at)
@@ -119,9 +152,9 @@ def sync(conn: sqlite3.Connection, session: requests.Session) -> int:
                     commit_sha = excluded.commit_sha,
                     synced_at = excluded.synced_at
                 """,
-                (entry["path"], content, commit_sha, synced_at),
+                (path, content, commit_sha, synced_at),
             )
-    return len(files)
+    return len(contents)
 
 
 def connect(db_path: str) -> sqlite3.Connection:
@@ -139,16 +172,18 @@ def main() -> int:
     this runs unattended on a schedule, so there is no one present to
     interpret an ambiguous result."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = connect(str(DB_PATH))
-    session = _build_session()
+    conn: sqlite3.Connection | None = None
     try:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = connect(str(DB_PATH))
+        session = _build_session()
         count = sync(conn, session)
-    except requests.RequestException as exc:
+    except (requests.RequestException, KeyError, sqlite3.Error, ValueError, RuntimeError, OSError) as exc:
         print(f"FAIL: could not sync scout-data from GitHub: {exc}")
         return 1
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     print(f"OK: synced {count} file(s) from scout-data into {DB_PATH}")
     return 0
 
