@@ -26,8 +26,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from pathlib import PurePosixPath
+
+from .schema_validation import require_exact_keys, require_iso8601, require_nonempty_str
 
 CATEGORIES = (
     "injury",
@@ -70,27 +71,6 @@ def is_finding_path(path: str) -> bool:
     return PurePosixPath(path).name.startswith(FINDING_FILENAME_PREFIX)
 
 
-def _require_nonempty_str(payload: dict, key: str) -> str:
-    value = payload[key]
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{key} must be a non-empty string, got {value!r}")
-    return value
-
-
-def _require_iso8601(payload: dict, key: str) -> str:
-    value = _require_nonempty_str(payload, key)
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError(f"{key} is not a valid ISO8601 timestamp: {value!r}") from exc
-    if parsed.tzinfo is None:
-        # created_at anchors SC-16's future retention pruning - a mix of
-        # naive and aware timestamps in the store would make that
-        # comparison raise TypeError the first time it hit a naive value.
-        raise ValueError(f"{key} must include a UTC offset, got a timezone-naive timestamp: {value!r}")
-    return value
-
-
 def parse_finding(content: str) -> Finding:
     """Parse and strictly validate a finding_*.json file's content.
 
@@ -108,19 +88,10 @@ def parse_finding(content: str) -> Finding:
     if not isinstance(payload, dict):
         raise ValueError(f"finding content must be a JSON object, got {type(payload).__name__}")
 
-    keys = set(payload.keys())
-    if keys != _REQUIRED_KEYS:
-        missing = _REQUIRED_KEYS - keys
-        unexpected = keys - _REQUIRED_KEYS
-        parts = []
-        if missing:
-            parts.append(f"missing {sorted(missing)}")
-        if unexpected:
-            parts.append(f"unexpected {sorted(unexpected)}")
-        raise ValueError(f"finding has the wrong fields: {', '.join(parts)}")
+    require_exact_keys(payload, _REQUIRED_KEYS, "finding")
 
-    player_id = _require_nonempty_str(payload, "player_id")
-    source = _require_nonempty_str(payload, "source")
+    player_id = require_nonempty_str(payload, "player_id")
+    source = require_nonempty_str(payload, "source")
 
     category = payload["category"]
     if category not in CATEGORIES:
@@ -130,12 +101,15 @@ def parse_finding(content: str) -> Finding:
     if confidence not in CONFIDENCE_LEVELS:
         raise ValueError(f"confidence must be one of {CONFIDENCE_LEVELS}, got {confidence!r}")
 
-    summary = _require_nonempty_str(payload, "summary")
+    summary = require_nonempty_str(payload, "summary")
     if len(summary) > SUMMARY_MAX_LENGTH:
         raise ValueError(f"summary exceeds {SUMMARY_MAX_LENGTH} characters ({len(summary)})")
 
-    observed_at = _require_iso8601(payload, "observed_at")
-    created_at = _require_iso8601(payload, "created_at")
+    observed_at = require_iso8601(payload, "observed_at")
+    # created_at anchors SC-16's future retention pruning - require_iso8601's
+    # tz-aware check exists specifically so that comparison can't mix naive
+    # and aware timestamps.
+    created_at = require_iso8601(payload, "created_at")
 
     return Finding(
         player_id=player_id,

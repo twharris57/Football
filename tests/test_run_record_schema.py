@@ -79,6 +79,18 @@ class TestParseRunRecord:
         except ValueError as exc:
             assert "run_date" in str(exc)
 
+    def test_rejects_a_non_zero_padded_run_date(self):
+        # Regression guard: strptime("%Y-%m-%d") parses "2026-9-6" without
+        # complaint, but storing it unnormalized would sort wrong against
+        # a normal zero-padded date in a lexicographic TEXT comparison.
+        payload = valid_run_record_payload(run_date="2026-9-6")
+
+        try:
+            run_record_schema.parse_run_record(json.dumps(payload))
+            raise AssertionError("expected ValueError for a non-zero-padded run_date")
+        except ValueError as exc:
+            assert "zero-padded" in str(exc)
+
     def test_rejects_a_non_iso_generated_at(self):
         payload = valid_run_record_payload(generated_at="not a date")
 
@@ -197,6 +209,15 @@ class TestParseReviewedItem:
         try:
             run_record_schema.parse_run_record(json.dumps(payload))
             raise AssertionError("expected ValueError for a non-string source_path")
+        except ValueError as exc:
+            assert "source_path" in str(exc)
+
+    def test_rejects_an_empty_string_source_path(self):
+        payload = valid_run_record_payload(items=[valid_reviewed_item_payload(source_path="")])
+
+        try:
+            run_record_schema.parse_run_record(json.dumps(payload))
+            raise AssertionError("expected ValueError for an empty-string source_path")
         except ValueError as exc:
             assert "source_path" in str(exc)
 

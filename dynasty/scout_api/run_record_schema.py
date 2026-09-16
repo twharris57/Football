@@ -48,6 +48,7 @@ from datetime import datetime
 from pathlib import PurePosixPath
 
 from .finding_schema import CATEGORIES
+from .schema_validation import require_exact_keys, require_iso8601, require_nonempty_str, require_nullable_str
 
 VERDICT_LANES = ("deterministic", "agentic")
 VERDICTS = ("surfaced", "suppressed")
@@ -102,37 +103,20 @@ def is_run_record_path(path: str) -> bool:
     return PurePosixPath(path).name.startswith(RUN_RECORD_FILENAME_PREFIX)
 
 
-def _require_nonempty_str(payload: dict, key: str) -> str:
-    value = payload[key]
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{key} must be a non-empty string, got {value!r}")
-    return value
-
-
-def _require_nullable_str(payload: dict, key: str) -> str | None:
-    value = payload[key]
-    if value is not None and not isinstance(value, str):
-        raise ValueError(f"{key} must be a string or null, got {value!r}")
-    return value
-
-
-def _require_iso8601(payload: dict, key: str) -> str:
-    value = _require_nonempty_str(payload, key)
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError(f"{key} is not a valid ISO8601 timestamp: {value!r}") from exc
-    if parsed.tzinfo is None:
-        raise ValueError(f"{key} must include a UTC offset, got a timezone-naive timestamp: {value!r}")
-    return value
-
-
 def _require_iso_date(payload: dict, key: str) -> str:
-    value = _require_nonempty_str(payload, key)
+    value = require_nonempty_str(payload, key)
     try:
-        datetime.strptime(value, "%Y-%m-%d")
+        parsed = datetime.strptime(value, "%Y-%m-%d")
     except ValueError as exc:
         raise ValueError(f"{key} is not a valid YYYY-MM-DD date: {value!r}") from exc
+    # strptime accepts non-zero-padded input ("2026-9-6") but this column
+    # is compared lexicographically (dedup/recency scans, see the
+    # scout_run_record_items indexes) - a non-canonical value would sort
+    # wrong against a normal zero-padded date, so reject it outright
+    # rather than silently normalizing (no coercion, same posture as the
+    # rest of this schema).
+    if parsed.strftime("%Y-%m-%d") != value:
+        raise ValueError(f"{key} must be zero-padded YYYY-MM-DD, got {value!r}")
     return value
 
 
@@ -140,18 +124,9 @@ def _parse_reviewed_item(payload: object, index: int) -> ReviewedItem:
     if not isinstance(payload, dict):
         raise ValueError(f"items[{index}] must be a JSON object, got {type(payload).__name__}")
 
-    keys = set(payload.keys())
-    if keys != _ITEM_REQUIRED_KEYS:
-        missing = _ITEM_REQUIRED_KEYS - keys
-        unexpected = keys - _ITEM_REQUIRED_KEYS
-        parts = []
-        if missing:
-            parts.append(f"missing {sorted(missing)}")
-        if unexpected:
-            parts.append(f"unexpected {sorted(unexpected)}")
-        raise ValueError(f"items[{index}] has the wrong fields: {', '.join(parts)}")
+    require_exact_keys(payload, _ITEM_REQUIRED_KEYS, f"items[{index}]")
 
-    player_id = _require_nonempty_str(payload, "player_id")
+    player_id = require_nonempty_str(payload, "player_id")
 
     category = payload["category"]
     if category not in CATEGORIES:
@@ -167,11 +142,11 @@ def _parse_reviewed_item(payload: object, index: int) -> ReviewedItem:
     if verdict not in VERDICTS:
         raise ValueError(f"items[{index}].verdict must be one of {VERDICTS}, got {verdict!r}")
 
-    reason = _require_nonempty_str(payload, "reason")
+    reason = require_nonempty_str(payload, "reason")
     if len(reason) > REASON_MAX_LENGTH:
         raise ValueError(f"items[{index}].reason exceeds {REASON_MAX_LENGTH} characters ({len(reason)})")
 
-    source_path = _require_nullable_str(payload, "source_path")
+    source_path = require_nullable_str(payload, "source_path")
 
     return ReviewedItem(
         player_id=player_id,
@@ -189,22 +164,13 @@ def _parse_reflection(payload: object) -> ReflectionState | None:
     if not isinstance(payload, dict):
         raise ValueError(f"reflection must be a JSON object or null, got {type(payload).__name__}")
 
-    keys = set(payload.keys())
-    if keys != _REFLECTION_REQUIRED_KEYS:
-        missing = _REFLECTION_REQUIRED_KEYS - keys
-        unexpected = keys - _REFLECTION_REQUIRED_KEYS
-        parts = []
-        if missing:
-            parts.append(f"missing {sorted(missing)}")
-        if unexpected:
-            parts.append(f"unexpected {sorted(unexpected)}")
-        raise ValueError(f"reflection has the wrong fields: {', '.join(parts)}")
+    require_exact_keys(payload, _REFLECTION_REQUIRED_KEYS, "reflection")
 
-    reviewed_at = _require_iso8601(payload, "reviewed_at")
-    notes = _require_nonempty_str(payload, "notes")
+    reviewed_at = require_iso8601(payload, "reviewed_at")
+    notes = require_nonempty_str(payload, "notes")
     if len(notes) > REFLECTION_NOTES_MAX_LENGTH:
         raise ValueError(f"reflection.notes exceeds {REFLECTION_NOTES_MAX_LENGTH} characters ({len(notes)})")
-    issue_url = _require_nullable_str(payload, "issue_url")
+    issue_url = require_nullable_str(payload, "issue_url")
 
     return ReflectionState(reviewed_at=reviewed_at, notes=notes, issue_url=issue_url)
 
@@ -220,19 +186,10 @@ def parse_run_record(content: str) -> RunRecord:
     if not isinstance(payload, dict):
         raise ValueError(f"run record content must be a JSON object, got {type(payload).__name__}")
 
-    keys = set(payload.keys())
-    if keys != _RUN_RECORD_REQUIRED_KEYS:
-        missing = _RUN_RECORD_REQUIRED_KEYS - keys
-        unexpected = keys - _RUN_RECORD_REQUIRED_KEYS
-        parts = []
-        if missing:
-            parts.append(f"missing {sorted(missing)}")
-        if unexpected:
-            parts.append(f"unexpected {sorted(unexpected)}")
-        raise ValueError(f"run record has the wrong fields: {', '.join(parts)}")
+    require_exact_keys(payload, _RUN_RECORD_REQUIRED_KEYS, "run record")
 
     run_date = _require_iso_date(payload, "run_date")
-    generated_at = _require_iso8601(payload, "generated_at")
+    generated_at = require_iso8601(payload, "generated_at")
 
     items_payload = payload["items"]
     if not isinstance(items_payload, list):

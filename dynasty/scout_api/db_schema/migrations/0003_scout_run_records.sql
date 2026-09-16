@@ -10,26 +10,39 @@
 -- runs - the exact access pattern SC-4's own plan entry describes ("scan
 -- recent run records for this player+category").
 --
+-- Keyed on the GitHub path, not on run_date - run_date is the file's own
+-- content, not an externally-guaranteed-unique identifier the way path
+-- is (matching scout_findings, which keys on path rather than any of a
+-- finding's own fields). Keying on run_date instead would let two
+-- distinct files that ever happen to claim the same date (a retry, or
+-- any off-schedule extra run) silently overwrite each other with no way
+-- to detect the collision - ingest_findings() never assumes a finding's
+-- own fields are unique either, for the same reason.
+--
 -- No REFERENCES between these tables or to scout_data_files(path): this
 -- connection never enables PRAGMA foreign_keys, so a declared FK here
 -- would be silently unenforced (same reasoning as scout_findings).
 CREATE TABLE scout_run_records (
-    run_date TEXT PRIMARY KEY,
+    path TEXT PRIMARY KEY,
+    run_date TEXT NOT NULL,
     generated_at TEXT NOT NULL,
     notification_fired INTEGER NOT NULL,
     reflection_reviewed_at TEXT,
     reflection_notes TEXT,
     reflection_issue_url TEXT
 );
+CREATE INDEX idx_scout_run_records_run_date ON scout_run_records (run_date);
 
--- id is a derived "run_date:index" key, not a generated UUID - items have
--- no natural external key of their own (they're inline array entries in
--- one run's file, not separate GitHub files the way findings are), so
--- this is the composite (run_date, item position) key flattened to one
--- column to fit the same single-column mirroring shape scout_findings
--- already uses.
+-- id is a derived "path:index" key, not a generated UUID - items have no
+-- natural external key of their own (they're inline array entries in one
+-- run's file, not separate GitHub files the way findings are), so this
+-- is the composite (path, item position) key flattened to one column to
+-- fit the same single-column mirroring shape scout_findings already
+-- uses. Keyed on path rather than run_date for the same collision
+-- reasoning as scout_run_records above.
 CREATE TABLE scout_run_record_items (
     id TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
     run_date TEXT NOT NULL,
     player_id TEXT NOT NULL,
     category TEXT NOT NULL,

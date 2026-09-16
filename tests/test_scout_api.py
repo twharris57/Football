@@ -408,6 +408,31 @@ class TestIngestFindings:
 
 
 class TestIngestRunRecords:
+    def test_two_files_sharing_a_run_date_are_both_kept_not_collided(self):
+        # Regression guard: rows must be keyed on the GitHub path, not on
+        # the run_date content field - two distinct files that happen to
+        # claim the same date (a retry, a hypothetical reflection-patch
+        # recommit) must not silently overwrite each other.
+        conn = _fresh_conn()
+        _insert_data_file(
+            conn,
+            "scout-data/run_20260916.json",
+            json.dumps(_valid_run_record_payload(items=[_valid_reviewed_item_payload(player_id="1111")])),
+        )
+        _insert_data_file(
+            conn,
+            "scout-data/run_20260916_retry.json",
+            json.dumps(_valid_run_record_payload(items=[_valid_reviewed_item_payload(player_id="2222")])),
+        )
+
+        count = sync.ingest_run_records(conn)
+
+        assert count == 2
+        record_rows = conn.execute("SELECT * FROM scout_run_records WHERE run_date = ?", ("2026-09-16",)).fetchall()
+        assert len(record_rows) == 2
+        item_rows = conn.execute("SELECT * FROM scout_run_record_items WHERE run_date = ?", ("2026-09-16",)).fetchall()
+        assert {row["player_id"] for row in item_rows} == {"1111", "2222"}
+
     def test_ingests_a_well_formed_run_record_and_its_items(self):
         conn = _fresh_conn()
         _insert_data_file(conn, "scout-data/run_20260916.json", json.dumps(_valid_run_record_payload()))
@@ -425,7 +450,7 @@ class TestIngestRunRecords:
         ).fetchall()
         assert len(item_rows) == 1
         assert item_rows[0]["player_id"] == "4046"
-        assert item_rows[0]["id"] == "2026-09-16:0"
+        assert item_rows[0]["id"] == "scout-data/run_20260916.json:0"
 
     def test_ingests_a_populated_reflection(self):
         conn = _fresh_conn()

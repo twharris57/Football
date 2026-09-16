@@ -119,10 +119,12 @@ def _mirror_table(conn: sqlite3.Connection, table: str, columns: tuple[str, ...]
     inside the caller's own `with conn:` transaction.
 
     `columns[0]` is the primary key every row is keyed on; `rows` must carry
-    values in the same order as `columns`. Shared by sync() (scout_data_files)
-    and ingest_findings() (scout_findings) - both mirror an external source's
-    current full state into one table, keyed the same way, and previously
-    duplicated this exact delete/upsert shape independently.
+    values in the same order as `columns`. Shared by sync() (scout_data_files),
+    ingest_findings() (scout_findings), and ingest_run_records() (called
+    twice, once each for scout_run_records/scout_run_record_items) - all
+    mirror an external source's current full state into one table, keyed
+    the same way, and previously duplicated this exact delete/upsert shape
+    independently.
     """
     key_column = columns[0]
     current_keys = [row[0] for row in rows]
@@ -174,6 +176,18 @@ def sync(conn: sqlite3.Connection, session: requests.Session) -> int:
     return len(contents)
 
 
+def _fetch_and_parse(conn: sqlite3.Connection, path_predicate, parser) -> list[tuple[str, Any]]:
+    """Select every scout_data_files row matching `path_predicate` and
+    parse its content with `parser`. Shared by ingest_findings() and
+    ingest_run_records(), which previously duplicated this exact
+    fetch-then-filter-then-parse shape with only the predicate/parser
+    swapped.
+    """
+    rows = conn.execute("SELECT path, content FROM scout_data_files").fetchall()
+    matching = [(row["path"], row["content"]) for row in rows if path_predicate(row["path"])]
+    return [(path, parser(content)) for path, content in matching]
+
+
 def ingest_findings(conn: sqlite3.Connection) -> int:
     """Parse every finding_*.json row already mirrored into scout_data_files
     (SC-2's templated schema, see finding_schema.py) and upsert its typed
@@ -191,10 +205,7 @@ def ingest_findings(conn: sqlite3.Connection) -> int:
     scout-data, so a failure here means schema drift or a bug upstream,
     not routine bad data to skip past silently.
     """
-    rows = conn.execute("SELECT path, content FROM scout_data_files").fetchall()
-    finding_rows = [(row["path"], row["content"]) for row in rows if finding_schema.is_finding_path(row["path"])]
-
-    parsed = [(path, finding_schema.parse_finding(content)) for path, content in finding_rows]
+    parsed = _fetch_and_parse(conn, finding_schema.is_finding_path, finding_schema.parse_finding)
 
     with conn:
         _mirror_table(
@@ -233,18 +244,14 @@ def ingest_run_records(conn: sqlite3.Connection) -> int:
     a future SC-6 writer is expected to already validate against this
     schema before ever committing to scout-data.
     """
-    rows = conn.execute("SELECT path, content FROM scout_data_files").fetchall()
-    record_rows = [
-        (row["path"], row["content"]) for row in rows if run_record_schema.is_run_record_path(row["path"])
-    ]
-
-    parsed = [(path, run_record_schema.parse_run_record(content)) for path, content in record_rows]
+    parsed = _fetch_and_parse(conn, run_record_schema.is_run_record_path, run_record_schema.parse_run_record)
 
     with conn:
         _mirror_table(
             conn,
             "scout_run_records",
             (
+                "path",
                 "run_date",
                 "generated_at",
                 "notification_fired",
@@ -254,6 +261,7 @@ def ingest_run_records(conn: sqlite3.Connection) -> int:
             ),
             [
                 (
+                    path,
                     record.run_date,
                     record.generated_at,
                     record.notification_fired,
@@ -261,16 +269,17 @@ def ingest_run_records(conn: sqlite3.Connection) -> int:
                     record.reflection.notes if record.reflection else None,
                     record.reflection.issue_url if record.reflection else None,
                 )
-                for _, record in parsed
+                for path, record in parsed
             ],
         )
         _mirror_table(
             conn,
             "scout_run_record_items",
-            ("id", "run_date", "player_id", "category", "verdict_lane", "verdict", "reason", "source_path"),
+            ("id", "path", "run_date", "player_id", "category", "verdict_lane", "verdict", "reason", "source_path"),
             [
                 (
-                    f"{record.run_date}:{index}",
+                    f"{path}:{index}",
+                    path,
                     record.run_date,
                     item.player_id,
                     item.category,
@@ -279,7 +288,7 @@ def ingest_run_records(conn: sqlite3.Connection) -> int:
                     item.reason,
                     item.source_path,
                 )
-                for _, record in parsed
+                for path, record in parsed
                 for index, item in enumerate(record.items)
             ],
         )
