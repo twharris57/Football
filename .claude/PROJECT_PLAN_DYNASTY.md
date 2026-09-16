@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-31`, `VA-9`, `CQ-13`, `DL-9`, `SC-16`.
+below): `NB-2`, `RT-31`, `VA-9`, `CQ-13`, `DL-9`, `SC-18`.
 
 ## Short list — actively prioritized right now
 
@@ -48,55 +48,42 @@ it's stopped being a "short" list — thin it back out to what's actually
 active. Remove an item once it's done (its own full entry gets removed
 too, per the convention above), don't let this become a history log.
 
-**Initial-release build order** (revised 2026-09-07 — see "Automated
-daily scout" below, especially the "Architecture, revised" note, for why
-this changed from the original inbound-API design) — ordered so each
-step only depends on ones before it:
+**Initial-release build order** (revised 2026-09-13 — condensed to one
+nightly `/schedule` routine that gathers, researches, decides, and
+notifies end to end; see "Automated daily scout" below):
 
-1. `SC-15` — the GitHub `scout-data` branch (the cloud routine's actual
-   durable state, since it has none of its own between runs) plus the
-   NAS-side outbound sync script that mirrors it into local SQLite for
-   the UI. Foundational — everything else either writes to or reads from
-   this.
-2. `SC-1` — `gather_state()` runs *inside* the cloud routine directly
-   (now confirmed viable — see the architecture note), needing
-   Sleeper's and FantasyCalc's API domains added to the cloud
-   environment's allowlist.
-3. `SC-2` — the templated finding schema, now living in `SC-15`'s
-   `scout-data` branch as the canonical copy, mirrored into SQLite
-   locally for the app's own queries.
-4. `SC-8` — templated-storage-plus-double-check prompt-injection defense
-   (needed before `SC-3` writes anything real to `scout-data`).
-5. `SC-3` — Claude Scout research pass, bounded scope.
-6. `SC-4` — dedup log, extended to trades/scout findings, read/written
-   against `scout-data` (the cloud routine's only persistent memory).
-7. `RT-21` — transaction log; can now be pulled directly from Sleeper by
-   the cloud routine itself, same as `SC-1`, rather than needing the NAS.
-8. `SC-5` — materiality thresholds, quant/qual signals kept distinct.
-9. `SC-7` — self-reflection pass, opens a GitHub issue on a miss
-   (unchanged by this revision — already GitHub-native).
-10. `SC-6` — the nightly cloud routine that ties it all together.
+1. `scout-data` GitHub branch — the cloud routine's actual memory, since
+   it has none of its own between runs. **Built, proven** (vertical-slice
+   PoC, 2026-09-12/13).
+2. `SC-1` — `gather_state()` runs inside the cloud routine's own sandbox.
+   **Built.**
+3. `SC-2` — templated finding schema. **Built.**
+4. `SC-4` — run-record schema: dedup, materiality audit, and reflection
+   state as one artifact, committed nightly to `scout-data`.
+5. `SC-17` — confirm a completed run doesn't auto-notify on its own;
+   `SC-5`'s "stay quiet on a quiet night" guarantee depends on this.
+6. `SC-18` — trade-block list as a checked-in file, so `SC-3` has
+   something to read.
+7. `SC-3` — Claude Scout research pass, bounded scope.
+8. `SC-6` — the nightly orchestrator, tying `SC-1`/`SC-3`/`SC-4`/`SC-5`
+   together and notifying.
+9. `RT-21` — transaction log, pulled directly by the cloud routine.
+10. `SC-7` — self-reflection pass against `RT-21`.
 
-Target: once `SC-15`, `SC-1`–`SC-8` land, schedule the routine for 8pm
-local (user-confirmed 2026-09-03), running a fixed in-season cadence.
-`SC-12` (push notifications) and `SC-13` (GitHub App access) are already
-done — see the architecture note for how they resolved.
+`SC-5`/`SC-8` are built alongside `SC-4`/`SC-3` rather than as separate
+later steps — see their entries below. Target: once these land, schedule
+the routine for 8pm local, fixed in-season cadence.
 
-**First buildable slice — done, 2026-09-12/13.** The vertical-slice POC
-(a `/schedule` cloud routine pushing a test payload to `scout-data`,
-confirmed retrievable via a local `git fetch`/`git show`) succeeded, and
-`dynasty/scout_api/sync.py` (the NAS-side half of `SC-15`) is now built
-and tested against a fake GitHub session — see `SC-15`'s own entry above
-for the full state and what's still open (a real NAS Task Scheduler
-deployment and a live GitHub token, not yet done). Next up in the build
-order: `SC-1`.
-
-**Explicitly not required for initial release** (both still tracked
-below, neither blocks the list above): `SC-9` (season-aware
-ramp-up/throttle — needed before next year's rookie draft, not before
-first ship) and `SC-10` (docs get written incrementally alongside each
-item above; only the *final consolidated* pass waits until everything's
-in).
+**Explicitly not required for initial release** (all still tracked
+below, none block the list above): `SC-9` (season-aware ramp-up/throttle
+— needed before next year's rookie draft, not before first ship), `SC-10`
+(docs written incrementally; only the final consolidated pass waits),
+and `SC-15`'s remaining NAS-side deployment (GitHub PAT, Task Scheduler
+entry, backup coverage) — the `scout-data` branch itself is already in
+the critical path above, but the NAS sync only ever feeds a future
+dashboard, not the notify loop, so its deployment can wait until that
+dashboard is actually being built. `SC-16`'s pruning ships inside `SC-6`;
+its staleness banner waits on that same future dashboard.
 
 **Nice to have (no deadline, worth doing when there's room):**
 
@@ -128,529 +115,144 @@ Empty right now — nothing blocking.
 
 ## Automated daily scout
 
-Motivation (user-flagged 2026-09-03): keeping up with the NFL closely
-enough to catch every real dynasty opportunity — a depth-chart bump, an
-IR move that opens a value-add free agent, a trade window worth acting on
-— takes being fully engaged daily, which isn't realistic every day. This
-feature closes that gap: the app checks every day on its own and only
-interrupts the user when something is actually worth acting on.
+Goal: catch dynasty opportunities (a depth-chart bump, an IR move that
+frees a free agent, a trade window) on nights the user can't check in
+personally — check automatically, stay quiet unless something's actually
+worth acting on.
 
-**Architecture (user-clarified 2026-09-03; revised 2026-09-07 — the
-inbound-API design below was scrapped after two nights of live
-debugging; see "Why the inbound design was abandoned" below for the
-full record before touching this area again).** Two distinct scheduled
-components, not one monolithic job:
-- **Claude Scout** (`SC-3`) runs routine research queries (news, injury
-  detail, depth-chart/trade-buzz context beyond Sleeper's structured
-  fields — this is the "Claude Scout" `RT-6` speculated about, now
-  confirmed and generalized from a single-player on-demand lookup to a
-  scheduled pass) and writes templated findings into a persisted store
-  (`SC-2`). Deliberately *not* a blind sweep of the entire player
-  universe — see `SC-3`'s own entry below for the bounded-scope design
-  (user-directed 2026-09-03).
-- **The nightly `/schedule` cloud routine** (`SC-6`) is the reviewer: it
-  runs the deterministic Sleeper/FantasyCalc-based checks (pickup alerts,
-  suggested trades) directly — now *inside its own sandbox*, per `SC-1`'s
-  revised design below, not on the NAS — reads whatever Scout has stored
-  since the last check, runs self-reflection (`SC-7`), and pushes a phone
-  notification only when something clears the materiality bar (`SC-5`)
-  and isn't already-reported (`SC-4`). A quiet night — nothing new, or
-  nothing beyond what was already surfaced the day before — stays silent.
+**Architecture: one nightly `/schedule` cloud routine does the whole
+job.** Each run: gathers live Sleeper/FantasyCalc state (`SC-1`), runs
+Scout's research pass (`SC-3`), checks results against its own history
+(`SC-4`), applies materiality (`SC-5`), self-reflects (`SC-7`), notifies
+via `PushNotification` when warranted, and commits updated state to the
+`scout-data` GitHub branch (`SC-15`) — its only memory between runs. A
+separate NAS job pulls that branch into local SQLite a few minutes
+later, purely to feed a future dashboard; it is not on the notify path
+and can lag or fail without consequence.
 
-**Why the inbound design was abandoned (2026-09-07).** The original plan
-had the cloud routine reach directly into a small API on the NAS
-(`SC-11`) to read/write `SC-2`'s store. Two full nights of live testing
-against the real deployed `dynasty/scout_api` PoC (`SC-12`/`SC-13`/`SC-14`,
-PRs #72/#73) proved this path doesn't work on this network, and — this is
-the important part for anyone tempted to revisit it — *not* for any
-reason a config change can fix. In order, all ruled out live, not
-theoretically:
-- The environment-level network policy (`Trusted` → `Custom` with the
-  domain allowlisted) — fixed early, confirmed no longer the blocker.
-- DNS/hostname reputation — tested with two independent domains
-  (`twharris.synology.me`, a shared-DDNS-provider namespace, and
-  `twharris.dev`, the user's own personal domain), both resolving
-  correctly and instantly, both failing identically. A `curl --resolve`
-  test bypassing DNS entirely and connecting straight to the known IP
-  failed identically too — DNS is not a factor at any layer.
-- Every controllable security feature on both ends, disabled
-  simultaneously: the NAS's DSM firewall (fully off, not just a rule
-  added), Netgear's Protection Engine/Armor (bundles DoS/DDoS
-  protection), and Netgear's separate WAN-level "Disable Port Scan and
-  DoS Protection." Still identical failure with literally everything off.
-- An explicit DSM firewall allow rule for Anthropic's published outbound
-  range (`160.79.104.0/21`) — the cloud routine's real confirmed source
-  IP (`160.79.106.139`, verified via `ifconfig.me`) genuinely falls
-  inside that range, so the rule targeted the right thing and still
-  didn't help.
-- Port-specificity, timing, and TLS were all ruled out earlier
-  (`:8502`/`:8503` fail identically; a 30s timeout changes nothing; the
-  connection dies at the raw TCP `SYN` stage, before TLS is even
-  relevant).
+*Why GitHub, not the NAS, holds state:* an earlier design had the cloud
+routine reach inbound to a NAS API. Two nights of live debugging
+(2026-09-07) proved that's blocked at the network level regardless of
+firewall/DNS/port config — outbound works fine both directions, inbound
+never does. Don't revisit an inbound design here. (Checked against
+`Finance-Dashboards`' similar "Claude scout" — different shape, raw
+Anthropic API in a NAS container, no Claude Code routine, no push
+notifications — not directly portable, but its dedup pattern informed
+`SC-4`.)
 
-Every test showed the identical signature: DNS resolves correctly, curl
-sends a real TCP `SYN`, and nothing ever comes back — not a rejection,
-just silence — while the same host/ports are reachable instantly from
-residential and cellular clients. That leaves only the router's
-non-toggleable core NAT/firewall stack or something upstream at the ISP,
-neither reachable through more configuration. **Conclusion: don't design
-anything in this section around the cloud routine reaching inbound to
-the NAS. It doesn't work on this network, and re-litigating individual
-router/firewall settings is a dead end already fully explored.**
+- [ ] **SC-1: `gather_state()` runs inside the cloud routine's sandbox.**
+  Built (`dynasty/scripts/daily_check.py`) — pulls Sleeper/FantasyCalc
+  live, no NAS involved. Still open: the cloud environment's network
+  allowlist needs `api.sleeper.app`, `api.fantasycalc.com`, `github.com`,
+  `raw.githubusercontent.com` set manually on claude.ai. Also: nfl_data_py's
+  cache never persists between runs, so every run pays its ~1-2 min
+  cold-fetch cost — decide later whether to eat it or skip bye/scoring
+  enrichment nightly.
 
-**Architecture, revised (2026-09-07): outbound-only, GitHub as the
-state bus.** Flip the direction instead of continuing to fight it. The
-cloud routine already has proven, reliable outbound access to GitHub
-(cloning the repo, opening issues, pushing branches — `SC-13`'s App
-access resolved cleanly) and, per the same debugging above, to ordinary
-public HTTPS APIs on standard ports (`ifconfig.me` worked immediately
-once allowlisted). The NAS already has proven outbound internet access
-too — it's never been in question, since the existing apps call
-Sleeper's and FantasyCalc's APIs from the NAS every day. Only *inbound
-to the NAS* is broken. So:
-- The cloud routine reads and writes its state in a dedicated GitHub
-  branch (`scout-data` — see `SC-15`), not a NAS-hosted API. This is not
-  optional plumbing: **the cloud routine has no persistent disk of its
-  own between nightly runs**, so this branch is its actual memory for
-  dedup state (`SC-4`), not just a place findings get published to.
-- `SC-1`'s deterministic-signal gathering (`gather_state()`) now runs
-  *inside the cloud routine's own sandbox*, pulling live Sleeper/
-  FantasyCalc data directly, rather than needing the NAS to run it and
-  hand back a result. The cloud sandbox's outbound HTTPS access to
-  ordinary public APIs is proven; the NAS's involvement in nightly
-  data-gathering is no longer required at all.
-- The NAS's role shrinks to being the durable local store for the
-  Streamlit UI: a scheduled script (`SC-15`, repurposing the
-  `dynasty/scout_api` PoC from an inbound server into an outbound-polling
-  script) pulls `scout-data`'s latest content down periodically and
-  mirrors it into local SQLite, which the app already knows how to
-  query. No open port, no inbound auth token, no attack surface added to
-  the NAS at all.
+- [ ] **SC-2: Finding schema.** Built (`dynasty/scout_api/finding_schema.py`
+  + SQLite mirror) — fixed fields (player_id, category, summary, source,
+  confidence, observed_at), no free text; this is the primary
+  prompt-injection defense (`SC-8`). Still open: categories are
+  first-draft guesses; nothing produces real findings yet (`SC-3`).
 
-Cross-checked against the sibling `Finance-Dashboards` repo's "Claude
-scout" (2026-09-03) on the assumption it might be a directly portable
-pattern — it isn't: that repo uses APScheduler inside a long-running
-Docker container, calling the raw Anthropic API directly, writing to a
-DuckDB health table, and surfacing results passively as a UI status badge
-(no push notifications, no Claude Code cloud routine at all). Its de-dup
-pattern (a persisted per-day status log checked before acting, distinct
-"checked/found nothing" vs. "failed" states, already-reported content fed
-back into the prompt so it isn't re-flagged) is the one piece directly
-worth reusing — see `SC-4`/`SC-6` below — but the scheduling/execution
-model itself is being designed fresh for this repo.
+- [ ] **SC-3: Scout research pass.** Not started. Two tiers: (1) a cheap
+  daily diff off structured data (`pickup_snapshots`, `RT-21`'s
+  transaction log) to spot what changed; (2) real research only on what
+  tier 1 or existing candidate-pool functions (free agent board, trade
+  candidates, pickup alerts) already flagged, plus anyone on `SC-18`'s
+  trade-block list — never a blind sweep. Writes `SC-2`-shaped findings.
+  Build `SC-8`'s corroboration step in from the start, not after the fact.
 
-Existing work this depends on or should be prioritized alongside (all
-added to the short list above, 2026-09-03):
-- **`RT-21`** (transaction log) — promoted from "revisit next year" to a
-  real dependency; see its own entry above for why.
-- **`RT-9`/`RT-19`/`RT-20`** (already shipped) — `pickup_snapshots.py`'s
-  load/diff/persist shape (via `snapshot_io.py`'s shared shell) is the
-  direct template `SC-4` extends; no new persistence design needed there,
-  just more categories.
-- **`RT-6`** — see its own entry above; effectively superseded in scope by
-  `SC-3` for the routine case, kept open only for the narrower on-demand
-  single-player trigger.
-- **`RT-10`/`RT-28`** (FAAB comparable-sample thinness) — `SC-5`'s
-  materiality gate needs to inherit this low-confidence-on-thin-sample
-  caveat explicitly for any FAAB-bid-guidance finding, not treat it as
-  just another threshold.
+- [ ] **SC-4: Run-record schema — dedup, materiality, and reflection
+  state in one artifact.** Not started. One `run_YYYYMMDD.json` per
+  night in `scout-data`: what was reviewed, each item's surfaced/
+  suppressed verdict and why, whether a notification fired, and any
+  self-reflection notes. Replaces three separately-designed logs with
+  one — dedup is "scan recent run records for this player+category,"
+  materiality's audit trail lives here, `SC-7` diffs it against reality.
+  Two verdict lanes: **deterministic** (numeric thresholds already used
+  elsewhere — marginal value, FAAB comparables — real code, testable)
+  and **agentic** (Scout's qualitative judgment, only after the
+  deterministic dedup check already ran). Only agentic, borderline
+  verdicts go through `SC-8`'s corroboration search.
 
-- [ ] **SC-1: `gather_state()` runs inside the cloud routine's own sandbox
-  (revised 2026-09-07 — originally scoped as a NAS-side headless script;
-  the NAS is no longer in this loop at all, see the architecture note
-  above)** — `gather_state()` was previously only ever called from
-  `streamlit_app.py`'s cached `load_state()`.
+- [ ] **SC-17: Confirm push notifications stay conditional on an
+  unattended run.** New. `PushNotification` is confirmed to reach the
+  phone from a cloud routine (proven live during `SC-14`'s debugging).
+  Not yet confirmed: whether a run notifies on completion alone, with no
+  explicit `PushNotification` call — if so, `SC-5`'s "stay quiet on a
+  quiet night" guarantee doesn't hold. Run an isolated test (no
+  `PushNotification` call) before `SC-6` ships. Blocks `SC-6`.
 
-  **Entrypoint script built, 2026-09-13.** `dynasty/scripts/daily_check.py`
-  calls `gather_state()` directly (league ID/username from
-  `DYNASTY_LEAGUE_ID`/`DYNASTY_USERNAME` env vars, falling back to the
-  existing `DEFAULT_LEAGUE_ID`/`DEFAULT_USERNAME` constants; no `st.*`
-  dependency) and prints a JSON result — just the already-serializable
-  signal fields (`attention_digest`, `data_warnings`), not the full state
-  dict (every DataFrame, the whole player/roster universe) that's exactly
-  what the NAS-side Streamlit app already renders. Ends in an explicit
-  `OK:`/`FAIL:` message with a matching exit code, per
-  `code_conventions.md`'s Scripts and Automation rule. Pytest coverage in
-  `tests/test_daily_check.py` (`dynasty_core.gather_state` monkeypatched,
-  no real Sleeper/FantasyCalc calls) covers the signal extraction,
-  OK/FAIL reporting, and the env-var/default fallback.
+- [ ] **SC-5: Materiality thresholds.** Consumes `SC-4`'s run records.
+  Deterministic side reuses existing acceptance gates (`free_agent_board()`'s
+  `> 0` marginal value, `suggested_trades()`'s tolerance gate), with
+  `RT-10`/`RT-28`'s FAAB thin-sample caveat inherited explicitly.
+  Convergence — a quantitative signal and a scout finding agreeing —
+  is its own higher-confidence category, never blended into one score.
 
-  **Still open before this item can close:**
-  - The cloud environment's network allowlist itself has to be edited on
-    claude.ai (Football-Scout environment's Custom network policy) — no
-    tool in this session can do that from here. Confirmed domains needed:
-    `api.sleeper.app`, `api.fantasycalc.com` (FantasyCalc's real API
-    host, checked directly against `fantasycalc_api.py`'s `FANTASYCALC_URL`,
-    not guessed), and — newly found this session, not previously called
-    out here — `nfl_data_py` itself pulls from `github.com` (release
-    asset downloads) and `raw.githubusercontent.com` (several CSV/parquet
-    sources), both needed for `bye_week_by_team()`'s and
-    `player_scoring.get_multipliers()`'s nfl_data_py calls inside
-    `gather_state()` to succeed rather than degrade to a `data_warnings`
-    entry.
-  - **New finding, not previously documented: every cloud-routine run
-    pays nfl_data_py's full "recompute from scratch" cost, not just the
-    first one.** `player_scoring.get_multipliers()`'s and
-    `bye_week_by_team()`'s disk caches (`dynasty/cache_dir.py`'s
-    `CACHE_DIR`, gitignored) never persist between cloud-routine runs —
-    each run clones the repo fresh, so the cache is always empty, and
-    `get_multipliers()`'s own docstring already documents this exact cost
-    as "a 1-2 minute synchronous pull" when it's forced. This isn't a
-    crash risk (both calls are already wrapped in `try`/`except` inside
-    `gather_state()`, degrading to a `data_warnings` entry on failure,
-    same resilience the NAS-side app already relies on) but it is a real,
-    previously-unweighed cost to the nightly routine's runtime (and
-    whatever the cloud session's own time/compute limits are) that the
-    original SC-1 scoping didn't account for. Worth a real decision when
-    `SC-6` (the nightly orchestrator) is picked up: accept the recurring
-    cost, or have the nightly routine skip the bye/scoring-multiplier
-    enrichments entirely and let the NAS-side Streamlit app be their only
-    consumer, since the cloud routine's actual `SC-5` materiality checks
-    (free-agent/trade marginal-value deltas) don't obviously need them.
-- [ ] **SC-2: Templated finding schema — canonical copy lives in `SC-15`'s
-  GitHub branch, mirrored into NAS-side SQLite for the UI (revised
-  2026-09-07 — originally scoped as a single NAS-hosted SQLite store the
-  cloud routine would reach via `SC-11`'s API; that API is retired, see
-  the architecture note above)** — a place for `SC-3`'s research output
-  to land so `SC-6` can review it without re-running the research itself,
-  and for `SC-4`/`SC-7` to query historically. Two representations of the
-  same data now, not one:
-  - **Canonical: JSON file(s) in `SC-15`'s `scout-data` branch.** This is
-    what the cloud routine actually reads and writes each night, since
-    it's the only thing both the cloud routine and the NAS can reach
-    without an inbound connection. **This is the cloud routine's actual
-    persistent memory, not just an export format** — it has no disk of
-    its own between runs, so if `SC-4`'s dedup state isn't in this file,
-    the routine has no way to know what it already reported last night.
-  - **Mirror: SQLite on the NAS**, following `confidence_pool/store.py`'s
-    already-established pattern in this same repo (versioned migrations
-    under `db_schema/`) — this is dynasty's first real persistence beyond
-    file-cached snapshots, so it's the migration-runner *shape* that gets
-    reused, not shared code, per `CLAUDE.md`'s Architecture section
-    (`dynasty`/`confidence_pool` still share none). `SC-15`'s sync script
-    populates this from the canonical GitHub copy; the Streamlit app
-    queries it exactly like any other local data. Needs a real volume
-    mount wired into the NAS's existing backup coverage the same way
-    `docker-compose.deploy.yml`'s `confidence_pool_data` volume already
-    is.
-  A templated schema, not free text, either way — fixed fields
-  (player_id, category, one-line summary, source, confidence,
-  observed_at) rather than a blob of raw scraped text. This is also half
-  of `SC-8`'s prompt-injection defense, not a separate concern from it —
-  the schema itself is what keeps a later consumer (`SC-6`, a
-  notification) from ever rendering or reasoning over raw untrusted text.
-  Needs pytest coverage on both the JSON schema (read/write, dedup-state
-  round-trip) and the SQLite mirror's migrations/ingest path, the same
-  shape as `tests/confidence_pool/`'s store round-trip tests.
-- [ ] **SC-3: Claude Scout — routine research pass, bounded scope (not a
-  full free-agent-pool sweep, user-directed 2026-09-03)** (name and
-  concept confirmed user 2026-09-03; generalizes `RT-6`) — runs on a
-  schedule (own cadence, see `SC-9`), but deliberately does not research
-  every free agent every night — that's unbounded cost for very little
-  marginal signal on most nights, the general principle behind this
-  design applying beyond just this one item. Two-tier scope instead:
-  1. A cheap, bounded daily survey for notable events, built from
-     structured status/depth-chart/roster-move changes already
-     comparable via `pickup_snapshots.py`'s diff shape (and, once it
-     exists, `RT-21`'s transaction log) — not a fresh research query per
-     player.
-  2. A real research pass only on the subset that's actually earned
-     attention: players the notable-events survey flagged (or a relevant
-     subset of it), plus anyone already surfaced by the app's own
-     existing candidate-pool functions (`free_agent_board()`,
-     `leaguewide_trade_candidates()`, pickup alerts) — reusing those
-     rankings as the scope filter rather than re-deriving "worth a look"
-     from scratch, the same reuse discipline
-     `valuation_principles.md`'s "one valuation strategy, used everywhere"
-     rule already asks for elsewhere in this codebase.
-  Writes templated findings (`SC-2`'s schema) to the store rather than
-  returning them inline to one question. Needs `SC-8`'s
-  templated-storage-plus-double-check defense built in from the start —
-  this is the component that actually touches unstructured external
-  content, unlike the rest of the pipeline.
-- [ ] **SC-4: Persisted "already reported" dedup log, extended beyond
-  pickups, living in `SC-15`'s GitHub state (revised 2026-09-07)** —
-  `pickup_snapshots.py` already solves this for free-agent availability
-  changes; extend the same load/diff/persist shape to
-  `suggested_trades()`/`leaguewide_trade_candidates()` output (keyed by
-  candidate/pairing) and to `SC-3`'s scout findings (keyed by player +
-  category, using `SC-2`'s templated fields directly rather than parsing
-  free text), so something found once doesn't re-notify every night it
-  remains true — only when it's new or materially changed. This dedup
-  state has to live in `SC-2`'s canonical `scout-data` copy, not NAS-side
-  SQLite — the cloud routine is the only thing that ever needs to check
-  it (each night, against its own fresh findings), and it's the side with
-  no other persistent memory. Also the natural place multi-signal
-  convergence gets detected for `SC-5` below — a second, independent
-  signal landing on the same player is exactly the kind of thing this log
-  is positioned to notice. Needs pytest coverage on the diff/dedup logic,
-  mirroring `tests/dynasty_core/test_pickup_snapshots.py`'s existing
-  shape.
-- [ ] **SC-5: Materiality thresholds — quantitative and qualitative
-  signals kept distinct, convergence treated as a positive signal
-  (user-directed 2026-09-03)** — reuse existing, already-reviewed
-  acceptance gates for the deterministic signals rather than invent new
-  ones (`suggested_trades()`'s own tolerance-gated offer search; a
-  minimum `marginal_value` delta matching `free_agent_board()`'s `> 0`
-  convention), with the `RT-10`/`RT-28` FAAB caveat folded in explicitly
-  rather than silently inherited. `SC-3`'s scout findings are a
-  genuinely different kind of signal — qualitative, uncertain, sourced
-  from unstructured text — and must not be forced through the same
-  numeric bar or blended into one score with the quantitative side; per
-  this project's own "one valuation strategy, used everywhere" principle,
-  the fix isn't a second parallel *ranking* algorithm, it's keeping two
-  clearly-labeled *signal types* that both feed the same
-  worth-a-push decision explicitly rather than silently averaging into a
-  number that means neither thing. When independent signals — a
-  quantitative ranking and a scout finding, or two scout findings from
-  different angles — point at the same player and the same action
-  (add/drop/bid/trade), that convergence is itself worth surfacing with
-  more confidence, not a conflict to resolve down to one number.
-  Concretely: `SC-6`'s notification should be able to say "flagged by
-  both the marginal-value ranking *and* tonight's scout research" as its
-  own, higher-confidence category, distinct from either signal alone.
-- [ ] **SC-6: The nightly `/schedule` cloud routine (revised 2026-09-07)**
-  — orchestrates: run `SC-1`'s script *inside its own sandbox* for the
-  deterministic signals, read `SC-2`'s canonical copy in `SC-15`'s
-  `scout-data` branch for anything Scout found since the last check,
-  apply `SC-4`/`SC-5`, run `SC-7`'s self-reflection, push a phone
-  notification only if something clears the bar, then commit the updated
-  state back to `scout-data` — including `SC-16`'s 30-day retention
-  prune, which belongs in this same commit-back step. Notification mechanism: the `/schedule`
-  cloud routine's own push-to-phone path — already confirmed working
-  live via many real test routines during `SC-14`'s debugging
-  (2026-09-05/07), each of which called `PushNotification` explicitly to
-  report its result. Whether a routine *run completing* also generates
-  its own phone notification independent of an explicit
-  `PushNotification` call (the second half of `SC-12`'s original
-  question) was never actually isolated — every test routine always
-  called `PushNotification` itself, so this is still genuinely open, not
-  confirmed either way, and matters directly for `SC-5`: if a bare run
-  completion also notifies, the materiality gate can't actually keep the
-  routine silent on a quiet night. Worth a dedicated one-line-prompt test
-  (no `PushNotification` call at all) before relying on `SC-5` to control
-  this. Needs an explicit "checked, found nothing
-  new" vs. "check failed" distinction in its own logic (mirroring
-  `Finance-Dashboards`' `ingest_health` status split) so a broken routine
-  doesn't read as a quiet night. Target cadence: daily 8pm local
-  in-season, per `SC-9`.
-- [ ] **SC-7: Self-reflection pass — did we miss something, and why,
-  files a GitHub issue on a miss (user-directed 2026-09-03)**
-  (user-flagged 2026-09-03, the core "close the gap" ask) — a second pass
-  in the same nightly routine that checks the scout's own recent output
-  against what actually happened, using `RT-21`'s transaction log plus
-  `pickup_snapshots.py`'s existing status/depth-chart diffs (example given
-  by the user: a rostered-elsewhere player goes on IR, freeing a
-  value-add free agent the scout should have flagged, and didn't). When a
-  miss is found: identify the likely root cause, propose a concrete fix,
-  and open a GitHub issue on this repo (`gh issue create`, tagged so it's
-  findable later) describing the miss and the proposed fix — never a
-  branch/commit/PR directly; the routine only ever proposes via an issue,
-  consistent with `git_workflow_simple.md`'s "no direct main commits,
-  nothing merges without explicit approval" — a human still decides
-  whether and how to act on it. Also push-notifies that an issue was
-  opened, with its own `SC-4`-style dedup keyed on the diagnosed gap so
-  the same miss doesn't get a new issue every night before it's
-  addressed. Genuinely new logic — no current code compares "what the
-  scout said" against "what actually happened" after the fact.
+- [ ] **SC-6: Nightly orchestrator.** Not started — now mostly wiring,
+  since `SC-4`'s schema carries the design weight. Orchestrates `SC-1` →
+  `SC-3` → `SC-4`/`SC-5` → `SC-7` → notify → commit + prune (`SC-16`).
+  Needs an explicit "checked, nothing new" vs. "check failed" status so
+  a broken run never reads as a quiet night. Target cadence: 8pm local,
+  in-season.
 
-  **Resilience design (user-directed 2026-09-03, carried over from the
-  original `SC-13`): don't let this depend on the cloud routine's GitHub
-  access alone.** Rather than a single path that either works or
-  silently doesn't, this issue-opening action (and any future
-  cloud-routine action that needs GitHub write access) should attempt it
-  directly from the cloud routine first, but fall back to a durable queue
-  when that fails or is unavailable: write the pending action (what issue
-  to open, with what body) into `SC-15`'s `scout-data` branch, and have
-  it get flushed by whichever path becomes available first — the cloud
-  routine itself on a later run, *or* the next local Claude Code session,
-  at the desktop, with the user logged in. The local path is not
-  hypothetical — this project's own sessions already have working `gh`
-  access to this repo (used to open and merge PRs #72/#73 and this very
-  plan revision), so "flush the queue" from a local session is a real,
-  already-proven capability, not something new to build. The point isn't
-  redundancy for its own sake: a single-path design (cloud-only, or
-  desktop-only) leaves a real gap the moment the cloud side's GitHub
-  access has any hiccup, and a durable, inspectable queue in
-  `scout-data` (rather than an in-memory retry) survives that.
-- [ ] **SC-8: Prompt-injection defense — templated storage plus
-  on-demand double-checking (user-directed 2026-09-03)** —
-  Sleeper/FantasyCalc's structured API responses are low-risk, but `SC-3`'s
-  research pass (and any later `RT-6` on-demand fold-in) pulls in
-  less-structured content — news, injury reports, transaction notes.
-  Two-part defense: (1) `SC-2`'s templated finding schema is the primary
-  guard — the store never holds a raw untrusted blob a later consumer
-  (`SC-6`, a notification) could render or reason over as instructions,
-  only extracted fields; (2) when a finding looks borderline or
-  high-stakes, the scout runs a second, independent web search to
-  corroborate it before writing it to the store, rather than trusting a
-  single source outright — the same spirit as `Finance-Dashboards`'
-  `claude_scout.py` fenced/untrusted-content handling for its RSS
-  sources, adapted to a search-based source instead of a feed. Build
-  this in alongside `SC-3` rather than retrofitting after a real issue
-  surfaces.
-- [ ] **SC-9: Season-aware cadence — not required for initial release,
-  but needed before next year's rookie draft ramp-up (user-directed
-  2026-09-03: due before late summer 2027)** (user-flagged 2026-09-03) —
-  full daily-8pm cadence only applies in-season; off-season, both `SC-6`'s
-  nightly review and `SC-3`'s research pass should throttle back to
-  roughly once every few weeks, then ramp back up to full cadence once
-  the next rookie draft is scheduled — the ramp-up trigger needs to be as
-  real/live as the throttle-down one, not a manual flip the user has to
-  remember to make. Needs a live, not hardcoded, in-season/off-season
-  signal — check what Sleeper's `league` object actually exposes for this
-  (`status` — `pre_draft`/`drafting`/`in_season`/`complete` — is a
-  plausible candidate, alongside the `league["settings"]["leg"]`
-  current-week counter already used elsewhere per
-  `valuation_principles.md`'s "anchor on the live current week" rule)
-  rather than assuming, per this project's "document what you can't
-  verify" pattern; `confidence_pool/picks_core.py`'s own current-week
-  detection is a useful reference pattern to look at, though not shared
-  code (`dynasty`/`confidence_pool` share none, per `CLAUDE.md`'s
-  Architecture section — this would be independently derived). Default
-  design: keep one fixed cron (fires daily year-round) and gate real work
-  inside the routine/Scout logic based on the detected season state,
-  checking a persisted "last off-season run" timestamp — stored in
-  `SC-15`'s `scout-data` branch, the cloud routine's actual persistent
-  memory — before doing anything during the off-season window; simpler
-  and more robust than trying to reprogram the `/schedule` cron itself at
-  season boundaries. Revisit that choice only if the
-  fixed-cron-plus-internal-gate approach proves awkward in practice. Ship
-  `SC-1`–`SC-8`/`SC-15` with a fixed in-season cadence first; build the
-  ramp/throttle logic once real season-transition data exists rather than
-  guessing at it ahead of time.
+- [ ] **SC-7: Self-reflection.** Not started. Diffs `SC-4`'s recent run
+  records against what actually happened, via `RT-21`'s transaction log.
+  On a miss: identifies the cause, proposes a fix, opens a GitHub issue
+  (never a direct commit/PR) with its own dedup so the same miss doesn't
+  reopen nightly. Hard-blocked on `RT-21` existing — no ground truth to
+  compare against otherwise. Falls back to writing the pending issue into
+  `scout-data` if the cloud routine's GitHub access hiccups, flushed by a
+  later run or the next local session.
 
-  **Draft-date signal checked live, 2026-09-03** (user-flagged: this
-  year's draft was itself pushed back a week from its original date,
-  confirming the field is genuinely dynamic, not just theoretically so).
-  `draft["start_time"]` (epoch ms, via `sleeper.get_draft(draft_id)`) is
-  real and populated — confirmed against this league's own completed
-  2026 draft. So "the next rookie draft is scheduled" *can* be a live
-  signal, not a guess, but two things need to be designed in, not
-  assumed: (1) re-read it every time rather than caching the first
-  observed value, since it can change after being set, exactly like it
-  did this year; (2) next season's draft doesn't live under this
-  league's current `draft_id` at all — Sleeper creates a new league
-  object (and a new `draft_id`) per season, chained via
-  `previous_league_id` (the same chain `RT-25` already plans to walk for
-  FAAB history) — so the ramp-up check first has to find *next* season's
-  league/draft object before it can read a `start_time` off it, which
-  won't exist at all until the commissioner sets up that season. Worth
-  scoping that discovery step explicitly when this item is picked up,
-  not assuming `draft_id` stays constant year to year.
-- [ ] **SC-10: Documentation — written incrementally, final consolidated
-  pass once everything ships (user-directed 2026-09-03)** — write
-  `docs/dynasty-daily-scout.md` as each piece of this section lands,
-  mirroring how the rest of the app's docs already get written alongside
-  a feature rather than deferred entirely to the end. Once `SC-1` through
-  `SC-9`/`SC-15` are built and proven out, do one final pass over the
-  whole doc for consistency and fold this section's intro/architecture
-  notes into it — including the full "why the inbound design was
-  abandoned" record above, which deserves a durable home in the doc, not
-  just this backlog file — rather than leaving the rationale only here.
-- [ ] **SC-15: GitHub `scout-data` branch (the cloud routine's real
-  persistent state) + NAS-side outbound sync script, repurposing
-  `dynasty/scout_api` (new 2026-09-07, replaces the retired `SC-11`)** —
-  the concrete replacement for the abandoned inbound-API design; see the
-  "Architecture, revised" note above for why. Mechanism decision
-  (user-confirmed 2026-09-09): a dedicated branch, not a Gist (a second
-  credential scope, outside the repo entirely) or GitHub Issues (wrong
-  shape for a queryable current-state snapshot — issues stay exactly
-  where `SC-7` already uses them).
+- [ ] **SC-8: Prompt-injection defense.** Structural half already done via
+  `SC-2`'s fixed-field schema. Remaining: a second, independent
+  corroboration search before writing any borderline/high-stakes finding
+  — build alongside `SC-3`, not retrofitted after.
 
-  **Vertical-slice POC done and confirmed, 2026-09-12/13.** A one-shot
-  `/schedule` cloud routine (Football-Scout environment) cloned this
-  repo, created `scout-data` from `main`, wrote a trivial test payload,
-  committed and pushed it — confirmed independently via a local
-  `git fetch`/`git show` against `origin/scout-data` (commit `713b50c`,
-  content matched exactly). This answers the open question the PoC
-  requirement existed to settle: the cloud routine really can write to a
-  branch, not just report a resolved-looking status check. Proceeding to
-  build on top of it was safe.
+- [ ] **SC-9: Season-aware cadence.** Not started, not needed for initial
+  release — due before summer 2027. Fixed daily cron, gated internally on
+  a live in-season/off-season signal (Sleeper's `league["status"]` and
+  `settings.leg`), not a manually-flipped switch.
 
-  **NAS-side sync script built, 2026-09-13 (not yet deployed/verified on
-  the real NAS).** `dynasty/scout_api` pivoted from the `SC-11`-era
-  inbound HTTP server to `sync.py`, an outbound script (no server, no
-  open port) that pulls every `.json` file directly under `scout-data/`
-  on the branch via GitHub's REST API and upserts each into a
-  `scout_data_files` SQLite table (`dynasty/scout_api/db_schema/`,
-  migration-runner shape copied from `confidence_pool/db_schema/`, no
-  shared code). Deliberately generic/path-keyed rather than modeling
-  `SC-2`'s real finding/dedup fields yet — those land as real schema on
-  top of this same mirror once `SC-2`/`SC-4` are picked up, not modeled
-  here. Optional `SCOUT_DATA_GITHUB_TOKEN` env var for GitHub's higher
-  authenticated rate limit (this repo is public, so an unauthenticated
-  sync a few times a day works fine unauthenticated too — no crash-loop
-  on a missing token, unlike the retired server's `SCOUT_API_TOKEN`,
-  which gated real inbound auth). `docker-compose.yml`/`docker-compose.deploy.yml`
-  updated: `scout-api` is now a `profiles: ["cron"]` service (no
-  ports/`restart:` — a clean exit is its normal outcome, not a crash to
-  recover from), invoked via `docker compose run --rm scout-api` rather
-  than `up`. Pytest coverage added (`tests/test_scout_api.py`, a fake
-  `requests.Session`, no real network) for the pull/ingest logic,
-  upsert-not-duplicate behavior on re-sync, and the migration runner;
-  full suite (430 tests) still green. The `/health`/`/ping`
-  proof-of-concept work from PRs #72/#73 was not wasted by this pivot —
-  it proved the Docker image, GHCR publish, and CI matrix end to end, all
-  of which `sync.py` reuses; only the "listen on a port" part of that
-  build was retired.
+- [ ] **SC-10: Docs.** Not started. Write `docs/dynasty-daily-scout.md`
+  incrementally as pieces land; final pass folds in this section's
+  architecture notes once everything ships.
 
-  **Still open before this item can close:**
-  - Provision a real read-only/fine-grained GitHub PAT as a NAS-side
-    secret (same secrets-handling discipline as the retired
-    `SCOUT_API_TOKEN`, opposite direction — authenticating *out* to
-    GitHub, not gating *in*) and set `SCOUT_DATA_GITHUB_TOKEN` on the NAS.
-  - Wire an actual Synology Task Scheduler entry to run
-    `docker compose -f docker-compose.deploy.yml run --rm scout-api` (or
-    equivalent) on a schedule, and confirm a real run against the live
-    `scout-data` branch from the real NAS — this session's testing only
-    exercised the sync logic locally against a fake session, never the
-    real deployed container. **Also enable Task Scheduler's own
-    notify-on-failure/email-run-details option on that entry** (user-asked
-    2026-09-13) — today a `sync.py` failure (the 1,000-entry guard
-    tripping, a network error, an expired token, anything caught by
-    `main()`'s `except`) only ever prints `FAIL: ...` and exits 1; nothing
-    pushes that anywhere without this being turned on. `SC-16`'s planned
-    staleness banner is the more general backstop for the same failure
-    class once a Scout UI exists, but this per-task NAS setting is the
-    zero-code path that's available the moment this bullet gets done.
-  - Confirm the `scout_data` named volume is covered by the NAS's
-    existing offsite backup, same open question `confidence_pool_data`
-    already has (`CLAUDE.md`'s Key Constraints).
-  - `SC-2`/`SC-4` still need to define the real finding/dedup field
-    layout on top of this generic file mirror — this item's own scope was
-    the sync mechanism, not that schema.
-- [ ] **SC-16: 30-day retention pruning on `scout-data` + a staleness
-  signal once a Scout UI exists (user-directed 2026-09-13, from `SC-15`'s
-  code review)** — review of `dynasty/scout_api/sync.py` found that
-  GitHub's Contents API silently truncates a directory listing at 1,000
-  entries with no pagination available on that endpoint; `sync.py` now
-  hard-fails rather than syncing a possibly-incomplete list, but that's
-  only a guard against the symptom. The real fix belongs upstream, in
-  `SC-6`'s nightly routine, not the NAS-side mirror:
-  - **`SC-6` prunes anything on `scout-data` older than 30 days** as part
-    of its own commit-back-to-the-branch step — it already has write
-    access there every night, while `sync.py` deliberately stays
-    read-only (see `SC-15`'s architecture note), so pruning can't live on
-    the NAS side. At any realistic daily file count this keeps
-    `scout-data/` orders of magnitude under the 1,000-entry cap
-    indefinitely, without needing a by-year subpath layout or a switch to
-    the Git Trees API to merely raise the ceiling — both considered and
-    rejected in favor of bounding growth at the source. Side benefit
-    (user-flagged): it also caps how much history context `SC-3`'s Scout
-    research pass has to reason over.
-  - Pruning by age needs a reliable per-file date, which the Contents API
-    listing doesn't provide (no per-file commit timestamp) — `SC-2`'s
-    schema should carry an explicit date field in each file's own JSON
-    rather than making `SC-6` do a per-file commit-history lookup just to
-    determine age.
-  - **A staleness banner belongs in whatever UI eventually surfaces Scout
-    findings**, once one exists (no such view is built yet — see `SC-2`'s
-    "eventually a dedicated view in the app" note): warn when the most
-    recent successful sync is more than 2 days stale. `sync.py`'s
-    existing `synced_at` column already carries what a future consumer
-    needs to compute this — nothing left to build in `sync.py` itself for
-    this part.
+- [ ] **SC-15: `scout-data` GitHub branch + NAS-side sync
+  (deprioritized).** The branch itself — the cloud routine's real
+  memory — is built and proven (vertical-slice PoC, 2026-09-12/13):
+  foundational, in the critical path. The NAS-side sync script
+  (`dynasty/scout_api/sync.py`) is also built but **not deployed**, and
+  no longer needs to be for the notify loop to work — it only ever feeds
+  a future dashboard tab. Still open, whenever that dashboard is picked
+  up: provision a GitHub PAT, wire a Synology Task Scheduler entry (with
+  failure notification turned on), confirm the `scout_data` volume is
+  backed up.
+
+- [ ] **SC-16: 30-day retention pruning + staleness signal.** Not
+  started. Pruning ships inside `SC-6`'s nightly commit-back step (keeps
+  `scout-data` under GitHub's 1,000-entry listing cap). Staleness banner
+  waits for a Scout UI to exist.
+
+- [ ] **SC-18: Trade-block list — a checked-in file, not app state.**
+  Not started. Sleeper has no "on the trade block" concept — which
+  players are being shopped is purely user-declared intent, so it has to
+  live somewhere the cloud routine can actually read. A small
+  `trade_block.json` checked into `main`, edited directly by the user or
+  a local Claude Code session (already has working git/`gh` write
+  access, same capability `SC-7`'s fallback already leans on) rather
+  than an automated NAS-to-GitHub push — trade-block changes are
+  infrequent enough that this is simpler than giving the NAS app its own
+  GitHub write credential. `SC-3` reads it to prioritize research.
+
+**Build order:** `scout-data` branch ✅ → `SC-1` ✅ → `SC-2` ✅ → `SC-4`
+→ `SC-17` → `SC-18` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9`
+→ `SC-10`. `SC-15`'s remaining NAS deployment and `SC-16`'s staleness
+banner are decoupled from this chain — pick up whenever a Scout UI is
+built.
 
 ## Roster & trade tooling
 
