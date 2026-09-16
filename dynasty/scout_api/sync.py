@@ -114,6 +114,38 @@ def fetch_file_content(session: requests.Session, download_url: str) -> str:
     return response.text
 
 
+def _mirror_table(conn: sqlite3.Connection, table: str, columns: tuple[str, ...], rows: list[tuple]) -> None:
+    """Replace `table`'s contents with `rows` via delete-stale-then-upsert,
+    inside the caller's own `with conn:` transaction.
+
+    `columns[0]` is the primary key every row is keyed on; `rows` must carry
+    values in the same order as `columns`. Shared by sync() (scout_data_files)
+    and ingest_findings() (scout_findings) - both mirror an external source's
+    current full state into one table, keyed the same way, and previously
+    duplicated this exact delete/upsert shape independently.
+    """
+    key_column = columns[0]
+    current_keys = [row[0] for row in rows]
+    if current_keys:
+        placeholders = ",".join("?" for _ in current_keys)
+        conn.execute(f"DELETE FROM {table} WHERE {key_column} NOT IN ({placeholders})", current_keys)
+    else:
+        conn.execute(f"DELETE FROM {table}")
+
+    column_list = ", ".join(columns)
+    value_placeholders = ", ".join("?" for _ in columns)
+    update_clause = ", ".join(f"{column} = excluded.{column}" for column in columns[1:])
+    for row in rows:
+        conn.execute(
+            f"""
+            INSERT INTO {table} ({column_list})
+            VALUES ({value_placeholders})
+            ON CONFLICT({key_column}) DO UPDATE SET {update_clause}
+            """,
+            row,
+        )
+
+
 def sync(conn: sqlite3.Connection, session: requests.Session) -> int:
     """Pull every JSON file on scout-data down and mirror it into SQLite.
 
@@ -133,27 +165,12 @@ def sync(conn: sqlite3.Connection, session: requests.Session) -> int:
         contents.append((entry["path"], content))
 
     with conn:
-        current_paths = [path for path, _ in contents]
-        if current_paths:
-            placeholders = ",".join("?" for _ in current_paths)
-            conn.execute(
-                f"DELETE FROM scout_data_files WHERE path NOT IN ({placeholders})",
-                current_paths,
-            )
-        else:
-            conn.execute("DELETE FROM scout_data_files")
-        for path, content in contents:
-            conn.execute(
-                """
-                INSERT INTO scout_data_files (path, content, commit_sha, synced_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(path) DO UPDATE SET
-                    content = excluded.content,
-                    commit_sha = excluded.commit_sha,
-                    synced_at = excluded.synced_at
-                """,
-                (path, content, commit_sha, synced_at),
-            )
+        _mirror_table(
+            conn,
+            "scout_data_files",
+            ("path", "content", "commit_sha", "synced_at"),
+            [(path, content, commit_sha, synced_at) for path, content in contents],
+        )
     return len(contents)
 
 
@@ -180,30 +197,11 @@ def ingest_findings(conn: sqlite3.Connection) -> int:
     parsed = [(path, finding_schema.parse_finding(content)) for path, content in finding_rows]
 
     with conn:
-        current_paths = [path for path, _ in parsed]
-        if current_paths:
-            placeholders = ",".join("?" for _ in current_paths)
-            conn.execute(
-                f"DELETE FROM scout_findings WHERE path NOT IN ({placeholders})",
-                current_paths,
-            )
-        else:
-            conn.execute("DELETE FROM scout_findings")
-        for path, finding in parsed:
-            conn.execute(
-                """
-                INSERT INTO scout_findings
-                    (path, player_id, category, summary, source, confidence, observed_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(path) DO UPDATE SET
-                    player_id = excluded.player_id,
-                    category = excluded.category,
-                    summary = excluded.summary,
-                    source = excluded.source,
-                    confidence = excluded.confidence,
-                    observed_at = excluded.observed_at,
-                    created_at = excluded.created_at
-                """,
+        _mirror_table(
+            conn,
+            "scout_findings",
+            ("path", "player_id", "category", "summary", "source", "confidence", "observed_at", "created_at"),
+            [
                 (
                     path,
                     finding.player_id,
@@ -213,8 +211,10 @@ def ingest_findings(conn: sqlite3.Connection) -> int:
                     finding.confidence,
                     finding.observed_at,
                     finding.created_at,
-                ),
-            )
+                )
+                for path, finding in parsed
+            ],
+        )
     return len(parsed)
 
 
@@ -235,14 +235,25 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     conn: sqlite3.Connection | None = None
     try:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = connect(str(DB_PATH))
-        session = _build_session()
-        count = sync(conn, session)
-        finding_count = ingest_findings(conn)
-    except (requests.RequestException, KeyError, sqlite3.Error, ValueError, RuntimeError, OSError) as exc:
-        print(f"FAIL: could not sync/ingest scout-data: {exc}")
-        return 1
+        try:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            conn = connect(str(DB_PATH))
+            session = _build_session()
+        except (sqlite3.Error, OSError) as exc:
+            print(f"FAIL: could not open the local scout-data mirror at {DB_PATH}: {exc}")
+            return 1
+
+        try:
+            count = sync(conn, session)
+        except (requests.RequestException, KeyError, sqlite3.Error, ValueError, RuntimeError) as exc:
+            print(f"FAIL: could not sync scout-data from GitHub: {exc}")
+            return 1
+
+        try:
+            finding_count = ingest_findings(conn)
+        except (sqlite3.Error, ValueError) as exc:
+            print(f"FAIL: could not ingest findings into the local mirror: {exc}")
+            return 1
     finally:
         if conn is not None:
             conn.close()

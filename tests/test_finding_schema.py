@@ -8,19 +8,7 @@ import json
 
 from scout_api import finding_schema
 
-
-def _valid_payload(**overrides):
-    payload = {
-        "player_id": "4046",
-        "category": "injury",
-        "summary": "Questionable with a hamstring injury.",
-        "source": "https://example.com/report",
-        "confidence": "medium",
-        "observed_at": "2026-09-10T12:00:00+00:00",
-        "created_at": "2026-09-13T08:00:00+00:00",
-    }
-    payload.update(overrides)
-    return payload
+from tests.scout_api_helpers import valid_finding_payload as _valid_payload
 
 
 class TestParseFinding:
@@ -92,6 +80,24 @@ class TestParseFinding:
             raise AssertionError("expected ValueError for a non-ISO8601 created_at")
         except ValueError as exc:
             assert "created_at" in str(exc)
+
+    def test_rejects_a_timezone_naive_observed_at(self):
+        payload = _valid_payload(observed_at="2026-09-10T12:00:00")
+
+        try:
+            finding_schema.parse_finding(json.dumps(payload))
+            raise AssertionError("expected ValueError for a timezone-naive observed_at")
+        except ValueError as exc:
+            assert "observed_at" in str(exc) and "timezone-naive" in str(exc)
+
+    def test_rejects_a_timezone_naive_created_at(self):
+        payload = _valid_payload(created_at="2026-09-13T08:00:00")
+
+        try:
+            finding_schema.parse_finding(json.dumps(payload))
+            raise AssertionError("expected ValueError for a timezone-naive created_at")
+        except ValueError as exc:
+            assert "created_at" in str(exc) and "timezone-naive" in str(exc)
 
     def test_rejects_an_empty_summary(self):
         payload = _valid_payload(summary="")

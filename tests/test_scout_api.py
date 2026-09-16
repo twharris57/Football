@@ -19,6 +19,8 @@ import requests
 
 from scout_api import db_schema, sync
 
+from tests.scout_api_helpers import valid_finding_payload as _valid_finding_payload
+
 
 class FakeResponse:
     def __init__(self, payload=None, text=None, status_code=200):
@@ -225,8 +227,38 @@ class TestMain:
 
         exit_code = sync.main()
 
+        output = capsys.readouterr().out
         assert exit_code == 1
-        assert "FAIL:" in capsys.readouterr().out
+        assert "FAIL: could not sync scout-data from GitHub" in output
+
+    def test_reports_fail_with_an_ingest_specific_message_on_a_malformed_finding(self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(sync, "DB_PATH", tmp_path / "scout_data.db")
+        contents = [
+            {
+                "type": "file",
+                "name": "finding_bad.json",
+                "path": "scout-data/finding_bad.json",
+                "download_url": "https://raw/finding_bad",
+            },
+        ]
+        bad_finding = json.dumps(_valid_finding_payload(category="not_a_category"))
+        monkeypatch.setattr(
+            sync,
+            "_build_session",
+            lambda: FakeSession(branch_sha="abc123", contents=contents, file_bodies={"https://raw/finding_bad": bad_finding}),
+        )
+
+        exit_code = sync.main()
+
+        output = capsys.readouterr().out
+        assert exit_code == 1
+        assert "FAIL: could not ingest findings into the local mirror" in output
+        # The prior sync step (writing scout_data_files) must have succeeded
+        # and been committed even though the later ingest step failed - the
+        # two phases are separate transactions, not one all-or-nothing unit.
+        conn = sync.connect(str(tmp_path / "scout_data.db"))
+        assert conn.execute("SELECT COUNT(*) FROM scout_data_files").fetchone()[0] == 1
+        conn.close()
 
     def test_reports_fail_and_exits_nonzero_on_http_error_status(self, monkeypatch, tmp_path, capsys):
         monkeypatch.setattr(sync, "DB_PATH", tmp_path / "scout_data.db")
@@ -268,20 +300,6 @@ class TestApplyMigrations:
         # Computed from the migrations directory rather than hardcoded, so
         # adding a future migration doesn't silently re-break this count.
         assert len(applied) == len(list(db_schema.MIGRATIONS_DIR.glob("*.sql")))
-
-
-def _valid_finding_payload(**overrides):
-    payload = {
-        "player_id": "4046",
-        "category": "injury",
-        "summary": "Questionable with a hamstring injury.",
-        "source": "https://example.com/report",
-        "confidence": "medium",
-        "observed_at": "2026-09-10T12:00:00+00:00",
-        "created_at": "2026-09-13T08:00:00+00:00",
-    }
-    payload.update(overrides)
-    return payload
 
 
 def _insert_data_file(conn, path, content, commit_sha="abc123", synced_at="2026-09-13T08:00:00+00:00"):
