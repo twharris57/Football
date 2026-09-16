@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-31`, `VA-9`, `CQ-13`, `DL-9`, `SC-17`.
+below): `NB-2`, `RT-31`, `VA-9`, `CQ-13`, `DL-9`, `SC-18`.
 
 ## Short list — actively prioritized right now
 
@@ -62,11 +62,13 @@ notifies end to end; see "Automated daily scout" below):
    state as one artifact, committed nightly to `scout-data`.
 5. `SC-17` — confirm a completed run doesn't auto-notify on its own;
    `SC-5`'s "stay quiet on a quiet night" guarantee depends on this.
-6. `SC-3` — Claude Scout research pass, bounded scope.
-7. `SC-6` — the nightly orchestrator, tying `SC-1`/`SC-3`/`SC-4`/`SC-5`
+6. `SC-18` — trade-block list as a checked-in file, so `SC-3` has
+   something to read.
+7. `SC-3` — Claude Scout research pass, bounded scope.
+8. `SC-6` — the nightly orchestrator, tying `SC-1`/`SC-3`/`SC-4`/`SC-5`
    together and notifying.
-8. `RT-21` — transaction log, pulled directly by the cloud routine.
-9. `SC-7` — self-reflection pass against `RT-21`.
+9. `RT-21` — transaction log, pulled directly by the cloud routine.
+10. `SC-7` — self-reflection pass against `RT-21`.
 
 `SC-5`/`SC-8` are built alongside `SC-4`/`SC-3` rather than as separate
 later steps — see their entries below. Target: once these land, schedule
@@ -157,9 +159,9 @@ notifications — not directly portable, but its dedup pattern informed
   daily diff off structured data (`pickup_snapshots`, `RT-21`'s
   transaction log) to spot what changed; (2) real research only on what
   tier 1 or existing candidate-pool functions (free agent board, trade
-  candidates, pickup alerts) already flagged — never a blind sweep.
-  Writes `SC-2`-shaped findings. Build `SC-8`'s corroboration step in
-  from the start, not after the fact.
+  candidates, pickup alerts) already flagged, plus anyone on `SC-18`'s
+  trade-block list — never a blind sweep. Writes `SC-2`-shaped findings.
+  Build `SC-8`'s corroboration step in from the start, not after the fact.
 
 - [ ] **SC-4: Run-record schema — dedup, materiality, and reflection
   state in one artifact.** Not started. One `run_YYYYMMDD.json` per
@@ -235,10 +237,22 @@ notifications — not directly portable, but its dedup pattern informed
   `scout-data` under GitHub's 1,000-entry listing cap). Staleness banner
   waits for a Scout UI to exist.
 
+- [ ] **SC-18: Trade-block list — a checked-in file, not app state.**
+  Not started. Sleeper has no "on the trade block" concept — which
+  players are being shopped is purely user-declared intent, so it has to
+  live somewhere the cloud routine can actually read. A small
+  `trade_block.json` checked into `main`, edited directly by the user or
+  a local Claude Code session (already has working git/`gh` write
+  access, same capability `SC-7`'s fallback already leans on) rather
+  than an automated NAS-to-GitHub push — trade-block changes are
+  infrequent enough that this is simpler than giving the NAS app its own
+  GitHub write credential. `SC-3` reads it to prioritize research.
+
 **Build order:** `scout-data` branch ✅ → `SC-1` ✅ → `SC-2` ✅ → `SC-4`
-→ `SC-17` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9` → `SC-10`.
-`SC-15`'s remaining NAS deployment and `SC-16`'s staleness banner are
-decoupled from this chain — pick up whenever a Scout UI is built.
+→ `SC-17` → `SC-18` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9`
+→ `SC-10`. `SC-15`'s remaining NAS deployment and `SC-16`'s staleness
+banner are decoupled from this chain — pick up whenever a Scout UI is
+built.
 
 ## Roster & trade tooling
 
