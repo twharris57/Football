@@ -80,9 +80,14 @@ def _require_nonempty_str(payload: dict, key: str) -> str:
 def _require_iso8601(payload: dict, key: str) -> str:
     value = _require_nonempty_str(payload, key)
     try:
-        datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise ValueError(f"{key} is not a valid ISO8601 timestamp: {value!r}") from exc
+    if parsed.tzinfo is None:
+        # created_at anchors SC-16's future retention pruning - a mix of
+        # naive and aware timestamps in the store would make that
+        # comparison raise TypeError the first time it hit a naive value.
+        raise ValueError(f"{key} must include a UTC offset, got a timezone-naive timestamp: {value!r}")
     return value
 
 
@@ -144,4 +149,5 @@ def parse_finding(content: str) -> Finding:
 
 
 def finding_to_json(finding: Finding) -> str:
+    """Serialize a Finding back to the same JSON shape parse_finding reads."""
     return json.dumps(asdict(finding), indent=2)
