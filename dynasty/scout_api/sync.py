@@ -33,7 +33,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from . import db_schema, finding_schema
+from . import db_schema, finding_schema, run_record_schema
 from .scout_data_dir import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -218,6 +218,74 @@ def ingest_findings(conn: sqlite3.Connection) -> int:
     return len(parsed)
 
 
+def ingest_run_records(conn: sqlite3.Connection) -> int:
+    """Parse every run_*.json row already mirrored into scout_data_files
+    (SC-4's run-record schema, see run_record_schema.py) and upsert its
+    typed fields into scout_run_records/scout_run_record_items. Returns
+    the number of run records ingested.
+
+    Reads from the local scout_data_files mirror rather than fetching
+    fresh from GitHub - same reasoning as ingest_findings().
+
+    Raises ValueError on the first malformed run record, aborting the
+    whole ingest with nothing partially written - same all-or-nothing
+    shape sync() and ingest_findings() already have, for the same reason:
+    a future SC-6 writer is expected to already validate against this
+    schema before ever committing to scout-data.
+    """
+    rows = conn.execute("SELECT path, content FROM scout_data_files").fetchall()
+    record_rows = [
+        (row["path"], row["content"]) for row in rows if run_record_schema.is_run_record_path(row["path"])
+    ]
+
+    parsed = [(path, run_record_schema.parse_run_record(content)) for path, content in record_rows]
+
+    with conn:
+        _mirror_table(
+            conn,
+            "scout_run_records",
+            (
+                "run_date",
+                "generated_at",
+                "notification_fired",
+                "reflection_reviewed_at",
+                "reflection_notes",
+                "reflection_issue_url",
+            ),
+            [
+                (
+                    record.run_date,
+                    record.generated_at,
+                    record.notification_fired,
+                    record.reflection.reviewed_at if record.reflection else None,
+                    record.reflection.notes if record.reflection else None,
+                    record.reflection.issue_url if record.reflection else None,
+                )
+                for _, record in parsed
+            ],
+        )
+        _mirror_table(
+            conn,
+            "scout_run_record_items",
+            ("id", "run_date", "player_id", "category", "verdict_lane", "verdict", "reason", "source_path"),
+            [
+                (
+                    f"{record.run_date}:{index}",
+                    record.run_date,
+                    item.player_id,
+                    item.category,
+                    item.verdict_lane,
+                    item.verdict,
+                    item.reason,
+                    item.source_path,
+                )
+                for _, record in parsed
+                for index, item in enumerate(record.items)
+            ],
+        )
+    return len(parsed)
+
+
 def connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -254,10 +322,19 @@ def main() -> int:
         except (sqlite3.Error, ValueError) as exc:
             print(f"FAIL: could not ingest findings into the local mirror: {exc}")
             return 1
+
+        try:
+            run_record_count = ingest_run_records(conn)
+        except (sqlite3.Error, ValueError) as exc:
+            print(f"FAIL: could not ingest run records into the local mirror: {exc}")
+            return 1
     finally:
         if conn is not None:
             conn.close()
-    print(f"OK: synced {count} file(s), ingested {finding_count} finding(s) into {DB_PATH}")
+    print(
+        f"OK: synced {count} file(s), ingested {finding_count} finding(s) and "
+        f"{run_record_count} run record(s) into {DB_PATH}"
+    )
     return 0
 
 

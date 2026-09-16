@@ -58,8 +58,7 @@ notifies end to end; see "Automated daily scout" below):
 2. `SC-1` — `gather_state()` runs inside the cloud routine's own sandbox.
    **Built.**
 3. `SC-2` — templated finding schema. **Built.**
-4. `SC-4` — run-record schema: dedup, materiality audit, and reflection
-   state as one artifact, committed nightly to `scout-data`.
+4. `SC-4` — run-record schema. **Built.**
 5. `SC-17` — confirm a completed run doesn't auto-notify on its own;
    `SC-5`'s "stay quiet on a quiet night" guarantee depends on this.
 6. `SC-18` — trade-block list as a checked-in file, so `SC-3` has
@@ -164,17 +163,20 @@ notifications — not directly portable, but its dedup pattern informed
   Build `SC-8`'s corroboration step in from the start, not after the fact.
 
 - [ ] **SC-4: Run-record schema — dedup, materiality, and reflection
-  state in one artifact.** Not started. One `run_YYYYMMDD.json` per
-  night in `scout-data`: what was reviewed, each item's surfaced/
-  suppressed verdict and why, whether a notification fired, and any
-  self-reflection notes. Replaces three separately-designed logs with
-  one — dedup is "scan recent run records for this player+category,"
-  materiality's audit trail lives here, `SC-7` diffs it against reality.
-  Two verdict lanes: **deterministic** (numeric thresholds already used
+  state in one artifact.** Built (`dynasty/scout_api/run_record_schema.py`
+  + SQLite mirror: `scout_run_records`/`scout_run_record_items`, indexed
+  for dedup lookups on `(player_id, category)`). One `run_YYYYMMDD.json`
+  per night in `scout-data`: what was reviewed, each item's surfaced/
+  suppressed verdict and why, whether a notification fired, and a
+  `reflection` slot reserved for `SC-7` to patch into a past run's file
+  later (fetch/mutate/recommit — not implemented by this schema). Two
+  verdict lanes: **deterministic** (numeric thresholds already used
   elsewhere — marginal value, FAAB comparables — real code, testable)
   and **agentic** (Scout's qualitative judgment, only after the
-  deterministic dedup check already ran). Only agentic, borderline
-  verdicts go through `SC-8`'s corroboration search.
+  deterministic dedup check already ran). Still open: nothing writes a
+  real run record yet (`SC-6` does); the "only agentic, borderline
+  verdicts go through `SC-8`'s corroboration search" rule isn't enforced
+  anywhere yet since `SC-3` doesn't exist either.
 
 - [ ] **SC-17: Confirm push notifications stay conditional on an
   unattended run.** New. `PushNotification` is confirmed to reach the
@@ -248,7 +250,7 @@ notifications — not directly portable, but its dedup pattern informed
   infrequent enough that this is simpler than giving the NAS app its own
   GitHub write credential. `SC-3` reads it to prioritize research.
 
-**Build order:** `scout-data` branch ✅ → `SC-1` ✅ → `SC-2` ✅ → `SC-4`
+**Build order:** `scout-data` branch ✅ → `SC-1` ✅ → `SC-2` ✅ → `SC-4` ✅
 → `SC-17` → `SC-18` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9`
 → `SC-10`. `SC-15`'s remaining NAS deployment and `SC-16`'s staleness
 banner are decoupled from this chain — pick up whenever a Scout UI is
