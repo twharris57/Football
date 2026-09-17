@@ -33,7 +33,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from . import db_schema, finding_schema
+from . import db_schema, finding_schema, run_record_schema
 from .scout_data_dir import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -119,10 +119,12 @@ def _mirror_table(conn: sqlite3.Connection, table: str, columns: tuple[str, ...]
     inside the caller's own `with conn:` transaction.
 
     `columns[0]` is the primary key every row is keyed on; `rows` must carry
-    values in the same order as `columns`. Shared by sync() (scout_data_files)
-    and ingest_findings() (scout_findings) - both mirror an external source's
-    current full state into one table, keyed the same way, and previously
-    duplicated this exact delete/upsert shape independently.
+    values in the same order as `columns`. Shared by sync() (scout_data_files),
+    ingest_findings() (scout_findings), and ingest_run_records() (called
+    twice, once each for scout_run_records/scout_run_record_items) - all
+    mirror an external source's current full state into one table, keyed
+    the same way, and previously duplicated this exact delete/upsert shape
+    independently.
     """
     key_column = columns[0]
     current_keys = [row[0] for row in rows]
@@ -174,6 +176,18 @@ def sync(conn: sqlite3.Connection, session: requests.Session) -> int:
     return len(contents)
 
 
+def _fetch_and_parse(conn: sqlite3.Connection, path_predicate, parser) -> list[tuple[str, Any]]:
+    """Select every scout_data_files row matching `path_predicate` and
+    parse its content with `parser`. Shared by ingest_findings() and
+    ingest_run_records(), which previously duplicated this exact
+    fetch-then-filter-then-parse shape with only the predicate/parser
+    swapped.
+    """
+    rows = conn.execute("SELECT path, content FROM scout_data_files").fetchall()
+    matching = [(row["path"], row["content"]) for row in rows if path_predicate(row["path"])]
+    return [(path, parser(content)) for path, content in matching]
+
+
 def ingest_findings(conn: sqlite3.Connection) -> int:
     """Parse every finding_*.json row already mirrored into scout_data_files
     (SC-2's templated schema, see finding_schema.py) and upsert its typed
@@ -191,10 +205,7 @@ def ingest_findings(conn: sqlite3.Connection) -> int:
     scout-data, so a failure here means schema drift or a bug upstream,
     not routine bad data to skip past silently.
     """
-    rows = conn.execute("SELECT path, content FROM scout_data_files").fetchall()
-    finding_rows = [(row["path"], row["content"]) for row in rows if finding_schema.is_finding_path(row["path"])]
-
-    parsed = [(path, finding_schema.parse_finding(content)) for path, content in finding_rows]
+    parsed = _fetch_and_parse(conn, finding_schema.is_finding_path, finding_schema.parse_finding)
 
     with conn:
         _mirror_table(
@@ -213,6 +224,72 @@ def ingest_findings(conn: sqlite3.Connection) -> int:
                     finding.created_at,
                 )
                 for path, finding in parsed
+            ],
+        )
+    return len(parsed)
+
+
+def ingest_run_records(conn: sqlite3.Connection) -> int:
+    """Parse every run_*.json row already mirrored into scout_data_files
+    (SC-4's run-record schema, see run_record_schema.py) and upsert its
+    typed fields into scout_run_records/scout_run_record_items. Returns
+    the number of run records ingested.
+
+    Reads from the local scout_data_files mirror rather than fetching
+    fresh from GitHub - same reasoning as ingest_findings().
+
+    Raises ValueError on the first malformed run record, aborting the
+    whole ingest with nothing partially written - same all-or-nothing
+    shape sync() and ingest_findings() already have, for the same reason:
+    a future SC-6 writer is expected to already validate against this
+    schema before ever committing to scout-data.
+    """
+    parsed = _fetch_and_parse(conn, run_record_schema.is_run_record_path, run_record_schema.parse_run_record)
+
+    with conn:
+        _mirror_table(
+            conn,
+            "scout_run_records",
+            (
+                "path",
+                "run_date",
+                "generated_at",
+                "notification_fired",
+                "reflection_reviewed_at",
+                "reflection_notes",
+                "reflection_issue_url",
+            ),
+            [
+                (
+                    path,
+                    record.run_date,
+                    record.generated_at,
+                    record.notification_fired,
+                    record.reflection.reviewed_at if record.reflection else None,
+                    record.reflection.notes if record.reflection else None,
+                    record.reflection.issue_url if record.reflection else None,
+                )
+                for path, record in parsed
+            ],
+        )
+        _mirror_table(
+            conn,
+            "scout_run_record_items",
+            ("id", "path", "run_date", "player_id", "category", "verdict_lane", "verdict", "reason", "source_path"),
+            [
+                (
+                    f"{path}:{index}",
+                    path,
+                    record.run_date,
+                    item.player_id,
+                    item.category,
+                    item.verdict_lane,
+                    item.verdict,
+                    item.reason,
+                    item.source_path,
+                )
+                for path, record in parsed
+                for index, item in enumerate(record.items)
             ],
         )
     return len(parsed)
@@ -254,10 +331,19 @@ def main() -> int:
         except (sqlite3.Error, ValueError) as exc:
             print(f"FAIL: could not ingest findings into the local mirror: {exc}")
             return 1
+
+        try:
+            run_record_count = ingest_run_records(conn)
+        except (sqlite3.Error, ValueError) as exc:
+            print(f"FAIL: could not ingest run records into the local mirror: {exc}")
+            return 1
     finally:
         if conn is not None:
             conn.close()
-    print(f"OK: synced {count} file(s), ingested {finding_count} finding(s) into {DB_PATH}")
+    print(
+        f"OK: synced {count} file(s), ingested {finding_count} finding(s) and "
+        f"{run_record_count} run record(s) into {DB_PATH}"
+    )
     return 0
 
 

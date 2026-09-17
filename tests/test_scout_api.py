@@ -20,6 +20,8 @@ import requests
 from scout_api import db_schema, sync
 
 from tests.scout_api_helpers import valid_finding_payload as _valid_finding_payload
+from tests.scout_api_helpers import valid_reviewed_item_payload as _valid_reviewed_item_payload
+from tests.scout_api_helpers import valid_run_record_payload as _valid_run_record_payload
 
 
 class FakeResponse:
@@ -260,6 +262,39 @@ class TestMain:
         assert conn.execute("SELECT COUNT(*) FROM scout_data_files").fetchone()[0] == 1
         conn.close()
 
+    def test_reports_fail_with_an_ingest_specific_message_on_a_malformed_run_record(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        monkeypatch.setattr(sync, "DB_PATH", tmp_path / "scout_data.db")
+        contents = [
+            {
+                "type": "file",
+                "name": "run_20260916.json",
+                "path": "scout-data/run_20260916.json",
+                "download_url": "https://raw/run_20260916",
+            },
+        ]
+        bad_run_record = json.dumps(_valid_run_record_payload(notification_fired="yes"))
+        monkeypatch.setattr(
+            sync,
+            "_build_session",
+            lambda: FakeSession(
+                branch_sha="abc123", contents=contents, file_bodies={"https://raw/run_20260916": bad_run_record}
+            ),
+        )
+
+        exit_code = sync.main()
+
+        output = capsys.readouterr().out
+        assert exit_code == 1
+        assert "FAIL: could not ingest run records into the local mirror" in output
+        # The prior sync step must have succeeded even though the later
+        # run-record ingest step failed - findings ingestion (which has
+        # nothing to do with this malformed run record) also isn't blocked.
+        conn = sync.connect(str(tmp_path / "scout_data.db"))
+        assert conn.execute("SELECT COUNT(*) FROM scout_data_files").fetchone()[0] == 1
+        conn.close()
+
     def test_reports_fail_and_exits_nonzero_on_http_error_status(self, monkeypatch, tmp_path, capsys):
         monkeypatch.setattr(sync, "DB_PATH", tmp_path / "scout_data.db")
         monkeypatch.setattr(
@@ -370,3 +405,127 @@ class TestIngestFindings:
         rows = conn.execute("SELECT * FROM scout_findings").fetchall()
         assert len(rows) == 1
         assert rows[0]["confidence"] == "high"
+
+
+class TestIngestRunRecords:
+    def test_two_files_sharing_a_run_date_are_both_kept_not_collided(self):
+        # Regression guard: rows must be keyed on the GitHub path, not on
+        # the run_date content field - two distinct files that happen to
+        # claim the same date (a retry, a hypothetical reflection-patch
+        # recommit) must not silently overwrite each other.
+        conn = _fresh_conn()
+        _insert_data_file(
+            conn,
+            "scout-data/run_20260916.json",
+            json.dumps(_valid_run_record_payload(items=[_valid_reviewed_item_payload(player_id="1111")])),
+        )
+        _insert_data_file(
+            conn,
+            "scout-data/run_20260916_retry.json",
+            json.dumps(_valid_run_record_payload(items=[_valid_reviewed_item_payload(player_id="2222")])),
+        )
+
+        count = sync.ingest_run_records(conn)
+
+        assert count == 2
+        record_rows = conn.execute("SELECT * FROM scout_run_records WHERE run_date = ?", ("2026-09-16",)).fetchall()
+        assert len(record_rows) == 2
+        item_rows = conn.execute("SELECT * FROM scout_run_record_items WHERE run_date = ?", ("2026-09-16",)).fetchall()
+        assert {row["player_id"] for row in item_rows} == {"1111", "2222"}
+
+    def test_ingests_a_well_formed_run_record_and_its_items(self):
+        conn = _fresh_conn()
+        _insert_data_file(conn, "scout-data/run_20260916.json", json.dumps(_valid_run_record_payload()))
+
+        count = sync.ingest_run_records(conn)
+
+        assert count == 1
+        record_row = conn.execute(
+            "SELECT * FROM scout_run_records WHERE run_date = ?", ("2026-09-16",)
+        ).fetchone()
+        assert record_row["notification_fired"] == 1
+        assert record_row["reflection_notes"] is None
+        item_rows = conn.execute(
+            "SELECT * FROM scout_run_record_items WHERE run_date = ?", ("2026-09-16",)
+        ).fetchall()
+        assert len(item_rows) == 1
+        assert item_rows[0]["player_id"] == "4046"
+        assert item_rows[0]["id"] == "scout-data/run_20260916.json:0"
+
+    def test_ingests_a_populated_reflection(self):
+        conn = _fresh_conn()
+        payload = _valid_run_record_payload(
+            reflection={
+                "reviewed_at": "2026-09-20T01:00:00+00:00",
+                "notes": "Matched a real IR move two days later.",
+                "issue_url": "https://github.com/twharris57/Football/issues/99",
+            }
+        )
+        _insert_data_file(conn, "scout-data/run_20260916.json", json.dumps(payload))
+
+        sync.ingest_run_records(conn)
+
+        row = conn.execute("SELECT * FROM scout_run_records WHERE run_date = ?", ("2026-09-16",)).fetchone()
+        assert row["reflection_reviewed_at"] == "2026-09-20T01:00:00+00:00"
+        assert row["reflection_issue_url"] == "https://github.com/twharris57/Football/issues/99"
+
+    def test_skips_files_that_are_not_run_records(self):
+        conn = _fresh_conn()
+        _insert_data_file(conn, "scout-data/status.json", json.dumps({"ok": True}))
+
+        count = sync.ingest_run_records(conn)
+
+        assert count == 0
+        assert conn.execute("SELECT COUNT(*) FROM scout_run_records").fetchone()[0] == 0
+
+    def test_raises_on_a_malformed_run_record_and_writes_nothing(self):
+        conn = _fresh_conn()
+        _insert_data_file(
+            conn, "scout-data/run_20260916.json", json.dumps(_valid_run_record_payload(notification_fired="yes"))
+        )
+
+        try:
+            sync.ingest_run_records(conn)
+            raise AssertionError("expected ValueError for a malformed run record")
+        except ValueError as exc:
+            assert "notification_fired" in str(exc)
+
+        assert conn.execute("SELECT COUNT(*) FROM scout_run_records").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM scout_run_record_items").fetchone()[0] == 0
+
+    def test_removes_run_records_and_their_items_for_files_no_longer_present(self):
+        conn = _fresh_conn()
+        _insert_data_file(conn, "scout-data/run_20260916.json", json.dumps(_valid_run_record_payload()))
+        sync.ingest_run_records(conn)
+
+        conn.execute("DELETE FROM scout_data_files WHERE path = ?", ("scout-data/run_20260916.json",))
+        count = sync.ingest_run_records(conn)
+
+        assert count == 0
+        assert conn.execute("SELECT COUNT(*) FROM scout_run_records").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM scout_run_record_items").fetchone()[0] == 0
+
+    def test_reingesting_replaces_items_rather_than_accumulating_them(self):
+        conn = _fresh_conn()
+        two_items = _valid_run_record_payload(
+            items=[
+                _valid_reviewed_item_payload(player_id="1111"),
+                _valid_reviewed_item_payload(player_id="2222"),
+            ]
+        )
+        _insert_data_file(conn, "scout-data/run_20260916.json", json.dumps(two_items))
+        sync.ingest_run_records(conn)
+
+        one_item = _valid_run_record_payload(items=[_valid_reviewed_item_payload(player_id="3333")])
+        conn.execute(
+            "UPDATE scout_data_files SET content = ? WHERE path = ?",
+            (json.dumps(one_item), "scout-data/run_20260916.json"),
+        )
+        count = sync.ingest_run_records(conn)
+
+        assert count == 1
+        item_rows = conn.execute(
+            "SELECT * FROM scout_run_record_items WHERE run_date = ?", ("2026-09-16",)
+        ).fetchall()
+        assert len(item_rows) == 1
+        assert item_rows[0]["player_id"] == "3333"
