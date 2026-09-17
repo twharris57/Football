@@ -1,4 +1,4 @@
-"""SC-4's run-record schema: one artifact per nightly cloud-routine run,
+"""The run-record schema: one artifact per nightly cloud-routine run,
 written as JSON to the `scout-data` branch (`run_YYYYMMDD.json`) and
 mirrored into SQLite by `sync.py`'s `ingest_run_records()`.
 
@@ -12,28 +12,29 @@ Unifies three separately-designed logs into one artifact:
   whether or not it made the cut - not just the ones that got notified.
 - **Reflection state**: `reflection` starts `null` on every run and is
   the one field this schema reserves for a write path this module does
-  not implement. SC-7's self-reflection pass (not yet built - hard-blocked
-  on RT-21's transaction log existing) is expected to revisit a *past*
-  run's file days later, once real outcomes are known, and patch this
-  field in - fetch, mutate, recommit, not append-only. Nothing in this
-  module performs that mutation; it only shapes the slot SC-7 will write
-  into.
+  not implement. A future self-reflection pass (not yet built - hard-
+  blocked on a reliable, timestamped transaction log existing) is
+  expected to revisit a *past* run's file days later, once real outcomes
+  are known, and patch this field in - fetch, mutate, recommit, not
+  append-only. Nothing in this module performs that mutation; it only
+  shapes the slot that pass will write into.
 
 Two verdict lanes on `ReviewedItem`: **deterministic**
 (numeric thresholds already used elsewhere in this codebase - marginal
 value, FAAB comparables - real, testable code) and **agentic** (Scout's
 own qualitative judgment, run only after the deterministic dedup check
 already passed). Only a borderline agentic verdict is expected to have
-gone through SC-8's corroboration search before being recorded here.
+gone through a corroboration search (an independent second source
+checking the same claim) before being recorded here.
 
 Same prompt-injection posture as `finding_schema.py`, and the same
 caveat: fixed fields and a length cap on free-text (`reason`,
 `reflection.notes`) keep this store holding extracted, typed judgments
-rather than a raw blob a later consumer (SC-7's own GitHub-issue text,
-a future dashboard) could reason over as instructions - structural, not a
-content filter. `reason`/`notes` are Scout's own generated explanation of
-research content it read during SC-3's pass, so the same discipline
-applies to them as to a finding's `summary`.
+rather than a raw blob a later consumer (the self-reflection pass's own
+GitHub-issue text, a future dashboard) could reason over as instructions
+- structural, not a content filter. `reason`/`notes` are Scout's own
+generated explanation of research content it read during its research
+pass, so the same discipline applies to them as to a finding's `summary`.
 
 Deliberately stdlib-only (no `dynasty_core` import) - see
 `finding_schema.py`'s module docstring for why.
@@ -81,9 +82,11 @@ class ReviewedItem:
 
 @dataclass(frozen=True)
 class ReflectionState:
-    reviewed_at: str  # ISO8601, tz-aware - when SC-7 examined this run
+    # ISO8601, tz-aware - when the self-reflection pass examined this run
+    reviewed_at: str
     notes: str
-    issue_url: str | None  # a GitHub issue SC-7 opened for a missed catch
+    # a GitHub issue the self-reflection pass opened for a missed catch
+    issue_url: str | None
 
 
 @dataclass(frozen=True)

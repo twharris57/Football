@@ -59,8 +59,11 @@ notifies end to end; see "Automated daily scout" below):
    **Built.**
 3. `SC-2` — templated finding schema. **Built.**
 4. `SC-4` — run-record schema. **Built.**
-5. `SC-17` — confirm a completed run doesn't auto-notify on its own;
-   `SC-5`'s "stay quiet on a quiet night" guarantee depends on this.
+5. `SC-17` — confirm a completed run doesn't auto-notify on its own.
+   **Confirmed** (2026-09-17): a one-off `run_once_at` routine that made
+   zero tool calls (no `PushNotification`, nothing else) produced no
+   notification on the user's device. `SC-5`'s "stay quiet on a quiet
+   night" guarantee holds.
 6. `SC-18` — trade-block list as a checked-in file, so `SC-3` has
    something to read.
 7. `SC-3` — Claude Scout research pass, bounded scope.
@@ -178,14 +181,6 @@ notifications — not directly portable, but its dedup pattern informed
   verdicts go through `SC-8`'s corroboration search" rule isn't enforced
   anywhere yet since `SC-3` doesn't exist either.
 
-- [ ] **SC-17: Confirm push notifications stay conditional on an
-  unattended run.** New. `PushNotification` is confirmed to reach the
-  phone from a cloud routine (proven live during `SC-14`'s debugging).
-  Not yet confirmed: whether a run notifies on completion alone, with no
-  explicit `PushNotification` call — if so, `SC-5`'s "stay quiet on a
-  quiet night" guarantee doesn't hold. Run an isolated test (no
-  `PushNotification` call) before `SC-6` ships. Blocks `SC-6`.
-
 - [ ] **SC-5: Materiality thresholds.** Consumes `SC-4`'s run records.
   Deterministic side reuses existing acceptance gates (`free_agent_board()`'s
   `> 0` marginal value, `suggested_trades()`'s tolerance gate), with
@@ -251,7 +246,7 @@ notifications — not directly portable, but its dedup pattern informed
   GitHub write credential. `SC-3` reads it to prioritize research.
 
 **Build order:** `scout-data` branch ✅ → `SC-1` ✅ → `SC-2` ✅ → `SC-4` ✅
-→ `SC-17` → `SC-18` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9`
+→ `SC-17` ✅ → `SC-18` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9`
 → `SC-10`. `SC-15`'s remaining NAS deployment and `SC-16`'s staleness
 banner are decoupled from this chain — pick up whenever a Scout UI is
 built.
