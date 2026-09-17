@@ -1,7 +1,7 @@
 """The templated finding schema: one scouted fact about an NFL player,
 written as JSON to the `scout-data` branch by the not-yet-built cloud
-routine's Scout research pass and self-reflection step, and mirrored into
-SQLite by `sync.py`'s `ingest_findings()`.
+routine's Scout research pass, and mirrored into SQLite by `sync.py`'s
+`ingest_findings()`.
 
 Half of this project's prompt-injection defense for scouted content: this
 schema is what keeps the store holding only extracted, typed fields
