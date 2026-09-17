@@ -2,8 +2,7 @@
 written as JSON to the `scout-data` branch (`run_YYYYMMDD.json`) and
 mirrored into SQLite by `sync.py`'s `ingest_run_records()`.
 
-Unifies three separately-designed logs into one, per
-`.claude/PROJECT_PLAN_DYNASTY.md`'s SC-4 entry:
+Unifies three separately-designed logs into one artifact:
 
 - **Dedup**: a later run scans recent run records for a matching
   `(player_id, category)` pair on a `ReviewedItem` to avoid re-surfacing
@@ -20,7 +19,7 @@ Unifies three separately-designed logs into one, per
   module performs that mutation; it only shapes the slot SC-7 will write
   into.
 
-Two verdict lanes on `ReviewedItem`, per SC-4's plan entry: **deterministic**
+Two verdict lanes on `ReviewedItem`: **deterministic**
 (numeric thresholds already used elsewhere in this codebase - marginal
 value, FAAB comparables - real, testable code) and **agentic** (Scout's
 own qualitative judgment, run only after the deterministic dedup check

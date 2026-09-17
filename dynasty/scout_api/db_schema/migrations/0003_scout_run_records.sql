@@ -1,13 +1,14 @@
--- Real schema for SC-4's run records, landing on top of SC-15's generic
--- path-keyed mirror (scout_data_files) the same way SC-2's scout_findings
--- did - see SC-4 in .claude/PROJECT_PLAN_DYNASTY.md. Populated by
+-- Real schema for the nightly cloud routine's run records (see
+-- run_record_schema.py for the full design), landing on top of the
+-- generic path-keyed mirror (scout_data_files) the same way
+-- scout_findings did for finding records. Populated by
 -- sync.ingest_run_records(), which parses each run_*.json row already in
 -- scout_data_files via run_record_schema.parse_run_record().
 --
 -- Split into a run-level table and a per-item table (rather than one row
 -- per run with a JSON blob column) specifically so dedup can query
 -- scout_run_record_items directly by (player_id, category) across recent
--- runs - the exact access pattern SC-4's own plan entry describes ("scan
+-- runs - the exact access pattern this schema exists to support ("scan
 -- recent run records for this player+category").
 --
 -- Keyed on the GitHub path, not on run_date - run_date is the file's own
