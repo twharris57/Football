@@ -1,7 +1,7 @@
--- Real schema for SC-2's templated findings, landing on top of SC-15's
--- generic path-keyed mirror (scout_data_files) now that the shape is
--- defined - see SC-2/SC-15 in .claude/PROJECT_PLAN_DYNASTY.md. Populated
--- by sync.ingest_findings(), which parses each finding_*.json row already
+-- Real schema for the templated finding records (see finding_schema.py
+-- for the full design), landing on top of the generic path-keyed mirror
+-- (scout_data_files) now that the shape is defined. Populated by
+-- sync.ingest_findings(), which parses each finding_*.json row already
 -- in scout_data_files via finding_schema.parse_finding().
 --
 -- No REFERENCES to scout_data_files(path): this connection never enables

@@ -1,7 +1,8 @@
-"""Cloud-routine entry point for SC-1 (.claude/PROJECT_PLAN_DYNASTY.md):
-runs `gather_state()` inside the nightly cloud routine's own sandbox and
-prints a structured JSON result to stdout for that routine's own next
-steps (`SC-6`) to read.
+"""Cloud-routine entry point for the automated daily scout's state-
+gathering step (.claude/PROJECT_PLAN_DYNASTY.md's "Automated daily scout"
+section): runs `gather_state()` inside the nightly cloud routine's own
+sandbox and prints a structured JSON result to stdout for that routine's
+own next steps (a future nightly orchestrator) to read.
 
     python scripts/daily_check.py
 

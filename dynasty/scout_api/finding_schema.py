@@ -1,16 +1,16 @@
-"""SC-2's templated finding schema: one scouted fact about an NFL player,
+"""The templated finding schema: one scouted fact about an NFL player,
 written as JSON to the `scout-data` branch by the not-yet-built cloud
-routine (`SC-3`/`SC-6`) and mirrored into SQLite by `sync.py`'s
-`ingest_findings()`.
+routine's Scout research pass and self-reflection step, and mirrored into
+SQLite by `sync.py`'s `ingest_findings()`.
 
-Half of `SC-8`'s prompt-injection defense: this schema is what keeps the
-store holding only extracted, typed fields rather than a raw blob a later
-consumer (`SC-6`, a notification) could reason over as instructions. That
-defense is structural (fixed fields, never free text) - the validation
-here additionally guards against schema drift between a future `SC-3`
-writer and this reader, not against injected content itself (a length cap
-or an unknown-key check doesn't stop injected text that already fits
-inside a typed field).
+Half of this project's prompt-injection defense for scouted content: this
+schema is what keeps the store holding only extracted, typed fields
+rather than a raw blob a later consumer (a push notification) could
+reason over as instructions. That defense is structural (fixed fields,
+never free text) - the validation here additionally guards against
+schema drift between a future research-pass writer and this reader, not
+against injected content itself (a length cap or an unknown-key check
+doesn't stop injected text that already fits inside a typed field).
 
 Deliberately stdlib-only (no `dynasty_core` import): `dynasty/scout_api`
 is a separately built, minimal Docker image (`requests` is its only real
@@ -61,7 +61,9 @@ class Finding:
     source: str
     confidence: str
     observed_at: str  # ISO8601 - when the real-world event happened
-    created_at: str  # ISO8601 - when this finding was written (SC-16's retention anchor)
+    # ISO8601 - when this finding was written (the anchor for a future
+    # 30-day retention-pruning step)
+    created_at: str
 
 
 def is_finding_path(path: str) -> bool:
@@ -74,11 +76,11 @@ def is_finding_path(path: str) -> bool:
 def parse_finding(content: str) -> Finding:
     """Parse and strictly validate a finding_*.json file's content.
 
-    Raises ValueError on any violation - a future SC-3 writer is expected
-    to already validate against this same schema before ever committing to
-    scout-data, so a failure here means schema drift or a bug upstream,
-    not routine bad data to skip past silently (see sync.ingest_findings's
-    own docstring for how this propagates).
+    Raises ValueError on any violation - a future Scout research-pass
+    writer is expected to already validate against this same schema
+    before ever committing to scout-data, so a failure here means schema
+    drift or a bug upstream, not routine bad data to skip past silently
+    (see sync.ingest_findings's own docstring for how this propagates).
 
     No defaults, no coercion, and unexpected keys are rejected alongside
     missing ones - both are equally a sign the writer and this reader have
@@ -106,7 +108,7 @@ def parse_finding(content: str) -> Finding:
         raise ValueError(f"summary exceeds {SUMMARY_MAX_LENGTH} characters ({len(summary)})")
 
     observed_at = require_iso8601(payload, "observed_at")
-    # created_at anchors SC-16's future retention pruning - require_iso8601's
+    # created_at anchors a future retention-pruning step - require_iso8601's
     # tz-aware check exists specifically so that comparison can't mix naive
     # and aware timestamps.
     created_at = require_iso8601(payload, "created_at")

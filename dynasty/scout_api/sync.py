@@ -1,6 +1,7 @@
 """Pull the scout-data git branch's JSON state down from GitHub and mirror
-it into local SQLite - the NAS-side half of SC-15
-(.claude/PROJECT_PLAN_DYNASTY.md).
+it into local SQLite - the NAS-side half of this project's outbound
+scout-data sync design (.claude/PROJECT_PLAN_DYNASTY.md's "Automated
+daily scout" section).
 
 The nightly cloud routine has no persistent disk of its own between runs,
 so it keeps its real state (findings, dedup log, last-run status) as JSON
@@ -190,8 +191,8 @@ def _fetch_and_parse(conn: sqlite3.Connection, path_predicate, parser) -> list[t
 
 def ingest_findings(conn: sqlite3.Connection) -> int:
     """Parse every finding_*.json row already mirrored into scout_data_files
-    (SC-2's templated schema, see finding_schema.py) and upsert its typed
-    fields into scout_findings. Returns the number ingested.
+    (the templated finding schema, see finding_schema.py) and upsert its
+    typed fields into scout_findings. Returns the number ingested.
 
     Reads from the local scout_data_files mirror rather than fetching fresh
     from GitHub - the content is already locally validated JSON from sync(),
@@ -200,10 +201,10 @@ def ingest_findings(conn: sqlite3.Connection) -> int:
     Raises ValueError on the first malformed finding, aborting the whole
     ingest with nothing partially written - same all-or-nothing shape
     sync() already has for raw JSON validity. This is a deliberate
-    trade-off, not an implicit side effect: SC-3's own writer is expected
-    to validate against this same schema before ever committing to
-    scout-data, so a failure here means schema drift or a bug upstream,
-    not routine bad data to skip past silently.
+    trade-off, not an implicit side effect: a future Scout research-pass
+    writer is expected to validate against this same schema before ever
+    committing to scout-data, so a failure here means schema drift or a
+    bug upstream, not routine bad data to skip past silently.
     """
     parsed = _fetch_and_parse(conn, finding_schema.is_finding_path, finding_schema.parse_finding)
 
@@ -231,7 +232,7 @@ def ingest_findings(conn: sqlite3.Connection) -> int:
 
 def ingest_run_records(conn: sqlite3.Connection) -> int:
     """Parse every run_*.json row already mirrored into scout_data_files
-    (SC-4's run-record schema, see run_record_schema.py) and upsert its
+    (the run-record schema, see run_record_schema.py) and upsert its
     typed fields into scout_run_records/scout_run_record_items. Returns
     the number of run records ingested.
 
@@ -241,8 +242,8 @@ def ingest_run_records(conn: sqlite3.Connection) -> int:
     Raises ValueError on the first malformed run record, aborting the
     whole ingest with nothing partially written - same all-or-nothing
     shape sync() and ingest_findings() already have, for the same reason:
-    a future SC-6 writer is expected to already validate against this
-    schema before ever committing to scout-data.
+    a future nightly-orchestrator writer is expected to already validate
+    against this schema before ever committing to scout-data.
     """
     parsed = _fetch_and_parse(conn, run_record_schema.is_run_record_path, run_record_schema.parse_run_record)
 

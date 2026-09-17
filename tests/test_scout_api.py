@@ -1,6 +1,6 @@
 """Tests for dynasty/scout_api's outbound sync: pulling the scout-data
-branch's JSON state down from GitHub and mirroring it into SQLite (SC-15,
-.claude/PROJECT_PLAN_DYNASTY.md).
+branch's JSON state down from GitHub and mirroring it into SQLite (see
+.claude/PROJECT_PLAN_DYNASTY.md's "Automated daily scout" section).
 
 No real network calls - a fake `requests.Session` stands in for GitHub's
 API, matching testing.md's "mock only external services you do not
