@@ -626,6 +626,25 @@ class TestIsFirstLookWindow:
 
         assert pc.is_first_look_window(games, monday) is True
 
+    def test_two_days_after_kickoff_is_not_eligible(self):
+        # Regression guard: the late side of the window must have a real
+        # ceiling. A week nobody manually reviewed before its deadline
+        # gets locked by resolve_week_lock()'s post-deadline auto-lock
+        # instead -- without this bound, that late save would still
+        # qualify as a "first look", capturing 'first' and 'current' from
+        # the identical data and making the Picks tab's Current/First-look
+        # toggle show no visible difference no matter how late it fired.
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        tuesday = datetime(2026, 9, 15, 9, 0, tzinfo=pc.ET)
+
+        assert pc.is_first_look_window(games, tuesday) is False
+
+    def test_months_after_kickoff_is_not_eligible(self):
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        months_later = datetime(2027, 3, 1, 9, 0, tzinfo=pc.ET)
+
+        assert pc.is_first_look_window(games, months_later) is False
+
     def test_ignores_a_game_with_an_unset_gametime(self):
         # An unfinalized kickoff must not crash the earliest-kickoff
         # computation -- it should just be excluded from it, same as any

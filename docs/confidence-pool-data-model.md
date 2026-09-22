@@ -160,28 +160,45 @@ CREATE TABLE weekly_picks (
 on every "Regenerate picks" click, frozen the moment `week_status.locked = 1`
 (`save_week()` refuses to touch an already-locked week). `'first'` is
 captured once, on the first `save_week()` call for a `(season_year, week)`
-that's also `first_snapshot_eligible` — never touched again after that,
-exactly two rows per game, ever, no unbounded growth. This is what makes
-"did the odds move between when I first checked this week and when it
-locked" a query (compare `captured_at`/`confidence` across the two
-`snapshot_type` rows) instead of something that would've needed a manual
-screenshot at the time.
+that's also `first_snapshot_eligible` — never touched again after that.
+**Usually** exactly two rows per game once a week locks — but a `'first'`
+row is not guaranteed to exist; see below. This is what makes "did the
+odds move between when I first checked this week and when it locked" a
+query (compare `captured_at`/`confidence` across the two `snapshot_type`
+rows) instead of something that would've needed a manual screenshot at the
+time, whenever a real `'first'` look actually happened.
 
 `first_snapshot_eligible` (caller-supplied, from `picks_core.is_first_look_window()`)
 exists because "the very first save ever" isn't actually the right
 definition of "first look" — the season/week selector lets you preview any
 week at any time, and a save made while browsing ahead (checking what week
 10 looks like while week 3 is current) shouldn't get permanently recorded
-as week 10's first real review. `is_first_look_window()` only returns
-`True` within `FIRST_LOOK_WINDOW_DAYS` (3) of that week's earliest
-kickoff, matching the actual usage pattern — check a few days before
-kickoff (Thursday/Friday, maybe re-check Saturday morning), not however
-many weeks in advance the UI happens to let you browse to. A preview
-outside that window still saves normally as `'current'`; it just can't
-claim `'first'`. If nothing ever falls inside the window before the
-deadline, `resolve_week_lock()`'s own fallback save (at/after the
-deadline, always within the window by construction) becomes the first
-real look, captured at the one moment it was actually generated for real.
+as week 10's first real review. `is_first_look_window()` returns `True`
+within `FIRST_LOOK_WINDOW_DAYS` (3) days *before* that week's earliest
+kickoff through `FIRST_LOOK_LATE_GRACE_DAYS` (1) day *after* it, matching
+the actual usage pattern — check a few days before kickoff (Thursday/
+Friday, maybe re-check Saturday morning), not however many weeks in
+advance the UI happens to let you browse to, and not however long it's
+been since nobody opened the app. A preview outside that window still
+saves normally as `'current'`; it just can't claim `'first'`.
+
+**If nothing ever falls inside the window before the deadline, `'first'`
+may never get captured at all.** `resolve_week_lock()`'s fallback save
+only claims `'first'` if it happens to fire within the same window — true
+when the app is opened reasonably soon after the deadline, since for the
+`'standard'` selection rule the deadline *is* the earliest kickoff. It's
+false when nobody opens the app until well after that week's games have
+been decided (this is a single-user app with no background scheduler —
+the fallback only ever runs on the next page load, whenever that is).
+Recording data computed days or weeks after the fact as though it were a
+"first look" would be actively misleading, not just imprecise — it would
+imply the locked pick reflects the original pregame line when it doesn't
+(the same staleness `resolve_week_lock()`'s own `lock_warning` already
+flags on the `'current'` side). So a `(season_year, week)` locked this way
+ends up with only a `'current'` row, permanently — the Picks tab's
+snapshot toggle simply doesn't render for that week (nothing to compare
+against), rather than showing a `'first'` that's a misleading duplicate of
+`'current'`.
 
 `home_team`/`away_team`/`gameday`/`weekday`/`gametime` live only in `games`
 now, not repeated on every snapshot — they're true for the life of the game,

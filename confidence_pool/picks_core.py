@@ -403,13 +403,24 @@ def is_locked(now: datetime, deadline: datetime) -> bool:
 # weeks in advance the season/week selector happens to let you browse to.
 FIRST_LOOK_WINDOW_DAYS = 3
 
+# How many days *after* a week's earliest kickoff a save can still land and
+# count as a first look -- covers checking in Monday morning about Sunday's
+# late games, not an unbounded allowance. Without this floor, a week nobody
+# manually reviewed before its deadline gets its "first" snapshot captured
+# by resolve_week_lock()'s post-deadline auto-lock instead -- at the exact
+# same moment as "current", from the identical data, making the Picks tab's
+# Current/First-look toggle show byte-identical output no matter how far
+# past kickoff that auto-lock happened to fire.
+FIRST_LOOK_LATE_GRACE_DAYS = 1
+
 
 def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
-    """Whether `now` is within `FIRST_LOOK_WINDOW_DAYS` of this week's
-    earliest kickoff -- used to decide whether a save is eligible to become
-    that week's immutable `'first'` snapshot (see `store.save_week`).
-    Comparing whole calendar days, not exact hours, since "Thursday" vs.
-    "the following Wednesday" is the distinction that actually matters here.
+    """Whether `now` is within `FIRST_LOOK_WINDOW_DAYS` before, or
+    `FIRST_LOOK_LATE_GRACE_DAYS` after, this week's earliest kickoff --
+    used to decide whether a save is eligible to become that week's
+    immutable `'first'` snapshot (see `store.save_week`). Comparing whole
+    calendar days, not exact hours, since "Thursday" vs. "the following
+    Wednesday" is the distinction that actually matters here.
 
     A game with an unfinalized kickoff is excluded from the
     earliest-kickoff computation rather than crashing it; `False` if that
@@ -423,7 +434,8 @@ def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
     if not known_kickoffs:
         return False
     earliest_kickoff = min(known_kickoffs)
-    return (earliest_kickoff.date() - now.date()).days <= FIRST_LOOK_WINDOW_DAYS
+    days_until_kickoff = (earliest_kickoff.date() - now.date()).days
+    return -FIRST_LOOK_LATE_GRACE_DAYS <= days_until_kickoff <= FIRST_LOOK_WINDOW_DAYS
 
 
 @dataclass(frozen=True)

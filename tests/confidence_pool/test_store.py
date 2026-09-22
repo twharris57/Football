@@ -9,6 +9,7 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
+import picks_core
 import store
 
 TEST_ALGORITHM_VERSION = "test-v1"
@@ -352,6 +353,35 @@ class TestFirstSnapshotEligibility:
             "SELECT confidence FROM weekly_picks WHERE game_id = 'g1' AND snapshot_type = 'first'"
         ).fetchone()
         assert first["confidence"] == pytest.approx(0.2)
+
+    def test_a_late_auto_lock_does_not_capture_a_first_snapshot(self, conn):
+        # Integration guard for the actual composition picks_tab.py uses:
+        # resolve_week_lock()'s fallback save feeds its own generated_at
+        # straight into picks_core.is_first_look_window() to decide
+        # first_snapshot_eligible. This app has no background scheduler --
+        # the fallback only ever runs on the next page load, whenever that
+        # happens to be -- so a week nobody reviewed before its deadline
+        # and isn't opened again until well after kickoff must not have
+        # that late save masquerade as a real "first look" (it would
+        # misrepresent stale, post-hoc odds as the original pregame line).
+        games = _games_df(gameday="2026-09-13", gametime="13:00")
+        much_later = datetime(2026, 10, 4, 12, 0)  # 3 weeks after kickoff
+        eligible = picks_core.is_first_look_window(games, much_later)
+        assert eligible is False  # sanity check on the premise of this test
+
+        store.save_week(
+            conn, 2026, 1, games, _picks_df(), much_later,
+            first_snapshot_eligible=eligible, lock=True,
+        )
+
+        first = conn.execute(
+            "SELECT 1 FROM weekly_games WHERE game_id = 'g1' AND snapshot_type = 'first'"
+        ).fetchone()
+        current = conn.execute(
+            "SELECT 1 FROM weekly_games WHERE game_id = 'g1' AND snapshot_type = 'current'"
+        ).fetchone()
+        assert first is None
+        assert current is not None
 
 
 class TestActualPicks:
