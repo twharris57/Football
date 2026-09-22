@@ -441,13 +441,20 @@ def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
 @dataclass(frozen=True)
 class LockOutcome:
     """What to do about a week whose deadline has just passed and isn't
-    locked yet, from `resolve_week_lock`."""
+    locked yet, from `resolve_week_lock`.
+
+    `first_snapshot_eligible` is always `False` -- see `resolve_week_lock`'s
+    docstring for why a lock-time save can never legitimately claim the
+    week's `'first'` snapshot, regardless of how close to kickoff it
+    happens to land. The caller should pass this straight through to
+    `store.save_week()` rather than computing its own eligibility."""
 
     locked: bool
     games: pd.DataFrame
     picks: pd.DataFrame
     warning: str | None
     generated_at: datetime | None
+    first_snapshot_eligible: bool = False
 
 
 def resolve_week_lock(
@@ -490,6 +497,22 @@ def resolve_week_lock(
     an unfinalized kickoff is treated as "not yet started" for both of
     these warnings rather than crashing on it -- there's no way to
     confirm it started without a known kickoff time.
+
+    `first_snapshot_eligible` on the returned `LockOutcome` is always
+    `False` -- on *both* branches above. A save made here always locks the
+    week immediately, so it can never be followed by a second, differing
+    save to compare a `'first'` snapshot against: on the reused-snapshot
+    path, `'first'` was either already captured back when that snapshot
+    was originally generated (via the "Regenerate picks" button's own
+    `is_first_look_window()` check at that time) or never will be, since
+    nothing else was ever saved for this week; on the fresh-computation
+    path, this is definitionally the week's only save, so a `'first'` row
+    would be permanently identical to `'current'` regardless of how close
+    to kickoff it happened to land -- capturing one would waste a row and
+    imply a real comparison exists when it never will. `is_first_look_window()`'s
+    date window stays reserved for the "Regenerate picks" button, the only
+    call site where a later, differing save is actually still possible
+    before lock.
 
     The returned `generated_at` is what the caller should persist as this
     save's timestamp -- the *reused* snapshot's own original `captured_at`

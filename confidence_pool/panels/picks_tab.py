@@ -110,7 +110,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         if outcome.locked:
             store.save_week(
                 conn, season, week, outcome.games, outcome.picks, outcome.generated_at,
-                first_snapshot_eligible=pc.is_first_look_window(auto_games, outcome.generated_at),
+                first_snapshot_eligible=outcome.first_snapshot_eligible,
                 lock=True,
                 lock_warning=outcome.warning,
             )
