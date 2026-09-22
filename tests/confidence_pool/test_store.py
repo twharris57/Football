@@ -353,6 +353,7 @@ class TestFirstSnapshotEligibility:
         ).fetchone()
         assert first["confidence"] == pytest.approx(0.2)
 
+
 class TestActualPicks:
     """What the user actually submitted to the pool, tracked separately
     from the algorithm's recommendation (weekly_picks)."""
