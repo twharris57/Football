@@ -1,5 +1,6 @@
-"""Tests for dynasty/scripts/daily_check.py - SC-1's cloud-routine entry
-point (.claude/PROJECT_PLAN_DYNASTY.md).
+"""Tests for dynasty/scripts/daily_check.py - the automated daily scout's
+cloud-routine entry point (.claude/PROJECT_PLAN_DYNASTY.md's "Automated
+daily scout" section).
 
 `dynasty_core.gather_state` is monkeypatched with a synthetic result -
 this only exercises daily_check.py's own extraction/reporting logic, not

@@ -1,4 +1,4 @@
-"""Tests for dynasty/scout_api/finding_schema.py's SC-2 templated finding
+"""Tests for dynasty/scout_api/finding_schema.py's templated finding
 schema: parsing/validation and the JSON round-trip.
 """
 

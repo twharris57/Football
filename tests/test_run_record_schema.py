@@ -1,5 +1,5 @@
-"""Tests for dynasty/scout_api/run_record_schema.py's SC-4 run-record
-schema: parsing/validation and the JSON round-trip.
+"""Tests for dynasty/scout_api/run_record_schema.py's run-record schema:
+parsing/validation and the JSON round-trip.
 """
 
 from __future__ import annotations
