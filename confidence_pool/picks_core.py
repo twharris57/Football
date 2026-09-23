@@ -403,13 +403,24 @@ def is_locked(now: datetime, deadline: datetime) -> bool:
 # weeks in advance the season/week selector happens to let you browse to.
 FIRST_LOOK_WINDOW_DAYS = 3
 
+# How many days *after* a week's earliest kickoff a save can still land and
+# count as a first look -- covers checking in Monday morning about Sunday's
+# late games, not an unbounded allowance. Without this floor, a week nobody
+# manually reviewed before its deadline gets its "first" snapshot captured
+# by resolve_week_lock()'s post-deadline auto-lock instead -- at the exact
+# same moment as "current", from the identical data, making the Picks tab's
+# Current/First-look toggle show byte-identical output no matter how far
+# past kickoff that auto-lock happened to fire.
+FIRST_LOOK_LATE_GRACE_DAYS = 1
+
 
 def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
-    """Whether `now` is within `FIRST_LOOK_WINDOW_DAYS` of this week's
-    earliest kickoff -- used to decide whether a save is eligible to become
-    that week's immutable `'first'` snapshot (see `store.save_week`).
-    Comparing whole calendar days, not exact hours, since "Thursday" vs.
-    "the following Wednesday" is the distinction that actually matters here.
+    """Whether `now` is within `FIRST_LOOK_WINDOW_DAYS` before, or
+    `FIRST_LOOK_LATE_GRACE_DAYS` after, this week's earliest kickoff --
+    used to decide whether a save is eligible to become that week's
+    immutable `'first'` snapshot (see `store.save_week`). Comparing whole
+    calendar days, not exact hours, since "Thursday" vs. "the following
+    Wednesday" is the distinction that actually matters here.
 
     A game with an unfinalized kickoff is excluded from the
     earliest-kickoff computation rather than crashing it; `False` if that
@@ -423,19 +434,27 @@ def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
     if not known_kickoffs:
         return False
     earliest_kickoff = min(known_kickoffs)
-    return (earliest_kickoff.date() - now.date()).days <= FIRST_LOOK_WINDOW_DAYS
+    days_until_kickoff = (earliest_kickoff.date() - now.date()).days
+    return -FIRST_LOOK_LATE_GRACE_DAYS <= days_until_kickoff <= FIRST_LOOK_WINDOW_DAYS
 
 
 @dataclass(frozen=True)
 class LockOutcome:
     """What to do about a week whose deadline has just passed and isn't
-    locked yet, from `resolve_week_lock`."""
+    locked yet, from `resolve_week_lock`.
+
+    `first_snapshot_eligible` is always `False` -- see `resolve_week_lock`'s
+    docstring for why a lock-time save can never legitimately claim the
+    week's `'first'` snapshot, regardless of how close to kickoff it
+    happens to land. The caller should pass this straight through to
+    `store.save_week()` rather than computing its own eligibility."""
 
     locked: bool
     games: pd.DataFrame
     picks: pd.DataFrame
     warning: str | None
     generated_at: datetime | None
+    first_snapshot_eligible: bool = False
 
 
 def resolve_week_lock(
@@ -478,6 +497,22 @@ def resolve_week_lock(
     an unfinalized kickoff is treated as "not yet started" for both of
     these warnings rather than crashing on it -- there's no way to
     confirm it started without a known kickoff time.
+
+    `first_snapshot_eligible` on the returned `LockOutcome` is always
+    `False` -- on *both* branches above. A save made here always locks the
+    week immediately, so it can never be followed by a second, differing
+    save to compare a `'first'` snapshot against: on the reused-snapshot
+    path, `'first'` was either already captured back when that snapshot
+    was originally generated (via the "Regenerate picks" button's own
+    `is_first_look_window()` check at that time) or never will be, since
+    nothing else was ever saved for this week; on the fresh-computation
+    path, this is definitionally the week's only save, so a `'first'` row
+    would be permanently identical to `'current'` regardless of how close
+    to kickoff it happened to land -- capturing one would waste a row and
+    imply a real comparison exists when it never will. `is_first_look_window()`'s
+    date window stays reserved for the "Regenerate picks" button, the only
+    call site where a later, differing save is actually still possible
+    before lock.
 
     The returned `generated_at` is what the caller should persist as this
     save's timestamp -- the *reused* snapshot's own original `captured_at`

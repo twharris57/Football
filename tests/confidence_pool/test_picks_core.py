@@ -508,6 +508,39 @@ class TestResolveWeekLock:
         assert "BBB @ AAA" in outcome.warning
         assert "DDD @ CCC" not in outcome.warning  # hasn't kicked off yet
 
+    def test_fresh_snapshot_is_never_eligible_to_become_the_first_look(self):
+        # A resolve_week_lock() save always locks the week immediately, so
+        # it can never be followed by a second, differing save to compare
+        # a 'first' snapshot against -- capturing one here would always be
+        # permanently identical to 'current'. True regardless of how close
+        # to kickoff the save happens to land (unlike is_first_look_window(),
+        # which still gates the "Regenerate picks" button separately).
+        auto_games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", home_team="AAA", away_team="BBB")])
+        empty = pd.DataFrame()
+        before_kickoff = datetime(2026, 9, 13, 12, 0, tzinfo=pc.ET)
+        long_after_kickoff = datetime(2026, 10, 4, 12, 0, tzinfo=pc.ET)  # 3 weeks later
+
+        assert pc.resolve_week_lock(auto_games, {}, empty, empty, before_kickoff).first_snapshot_eligible is False
+        assert pc.resolve_week_lock(auto_games, {}, empty, empty, long_after_kickoff).first_snapshot_eligible is False
+
+    def test_reused_snapshot_is_also_never_eligible_to_become_the_first_look(self):
+        # 'first' was either already captured when this snapshot was
+        # originally generated (via the "Regenerate picks" button's own
+        # eligibility check at that time), or it never will be -- nothing
+        # else was ever saved for this week either way.
+        auto_games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00")])
+        saved_games = pd.DataFrame(
+            [{"game_id": "g1", "included": 1, "captured_at": "2026-09-10T09:00:00-04:00"}]
+        )
+        saved_picks = pd.DataFrame(
+            [{"game_id": "g1", "points": 1, "predicted_winner": "AAA", "confidence": 0.2}]
+        )
+        now = datetime(2026, 9, 14, 13, 0, tzinfo=pc.ET)
+
+        outcome = pc.resolve_week_lock(auto_games, {}, saved_games, saved_picks, now)
+
+        assert outcome.first_snapshot_eligible is False
+
     def test_no_stale_kickoff_warning_for_an_excluded_game_that_already_started(self):
         auto_games = pd.DataFrame(
             [_game("g1", 1, "Sunday", "13:00", home_team="AAA", away_team="BBB")]
@@ -625,6 +658,23 @@ class TestIsFirstLookWindow:
         monday = datetime(2026, 9, 14, 9, 0, tzinfo=pc.ET)
 
         assert pc.is_first_look_window(games, monday) is True
+
+    def test_two_days_after_kickoff_is_not_eligible(self):
+        # Regression guard: the late side of the window must have a real
+        # ceiling -- there's nothing in the implementation that special-
+        # cases a small gap differently from a large one (it's a single
+        # linear day-count comparison), so this boundary case is also
+        # representative of "weeks or months later", not just "2 days".
+        # A week nobody manually reviewed before its deadline gets locked
+        # by resolve_week_lock()'s post-deadline auto-lock instead --
+        # without this bound, that late save would still qualify as a
+        # "first look", capturing 'first' and 'current' from the identical
+        # data and making the Picks tab's Current/First-look toggle show
+        # no visible difference no matter how late it fired.
+        games = pd.DataFrame([_game("g1", 1, "Sunday", "13:00", gameday="2026-09-13")])
+        tuesday = datetime(2026, 9, 15, 9, 0, tzinfo=pc.ET)
+
+        assert pc.is_first_look_window(games, tuesday) is False
 
     def test_ignores_a_game_with_an_unset_gametime(self):
         # An unfinalized kickoff must not crash the earliest-kickoff
