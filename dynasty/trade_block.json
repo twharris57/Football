@@ -1,0 +1,28 @@
+{
+  "updated_at": "2026-09-22",
+  "entries": [
+    {"sleeper_id": "7523", "roster_id": 1, "added_date": "2026-09-22"},
+    {"sleeper_id": "8183", "roster_id": 1, "added_date": "2026-09-22"},
+    {"sleeper_id": "11564", "roster_id": 1, "added_date": "2026-09-22"},
+    {"sleeper_id": "12489", "roster_id": 1, "added_date": "2026-09-22"},
+    {"sleeper_id": "8112", "roster_id": 1, "added_date": "2026-09-22"},
+    {"sleeper_id": "7525", "roster_id": 1, "added_date": "2026-09-22"},
+    {"sleeper_id": "11620", "roster_id": 1, "added_date": "2026-09-22"},
+    {"sleeper_id": "8130", "roster_id": 1, "added_date": "2026-09-22"},
+    {"sleeper_id": "5927", "roster_id": 2, "added_date": "2026-09-22"},
+    {"sleeper_id": "5045", "roster_id": 2, "added_date": "2026-09-22"},
+    {"sleeper_id": "1166", "roster_id": 5, "added_date": "2026-09-22"},
+    {"sleeper_id": "13272", "roster_id": 5, "added_date": "2026-09-22"},
+    {"sleeper_id": "6768", "roster_id": 5, "added_date": "2026-09-22"},
+    {"sleeper_id": "8161", "roster_id": 5, "added_date": "2026-09-22"},
+    {"sleeper_id": "5892", "roster_id": 5, "added_date": "2026-09-22"},
+    {"sleeper_id": "8408", "roster_id": 5, "added_date": "2026-09-22"},
+    {"sleeper_id": "10229", "roster_id": 5, "added_date": "2026-09-22"},
+    {"sleeper_id": "8131", "roster_id": 5, "added_date": "2026-09-22"},
+    {"sleeper_id": "6797", "roster_id": 6, "added_date": "2026-09-22"},
+    {"sleeper_id": "8151", "roster_id": 6, "added_date": "2026-09-22"},
+    {"sleeper_id": "11584", "roster_id": 6, "added_date": "2026-09-22"},
+    {"sleeper_id": "12534", "roster_id": 6, "added_date": "2026-09-22"},
+    {"sleeper_id": "5022", "roster_id": 6, "added_date": "2026-09-22"}
+  ]
+}
