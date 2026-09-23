@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-31`, `VA-9`, `CQ-13`, `DL-9`, `SC-18`.
+below): `NB-2`, `RT-32`, `VA-9`, `CQ-13`, `DL-9`, `SC-18`.
 
 ## Short list — actively prioritized right now
 
@@ -65,7 +65,9 @@ notifies end to end; see "Automated daily scout" below):
    notification on the user's device. `SC-5`'s "stay quiet on a quiet
    night" guarantee holds.
 6. `SC-18` — trade-block list as a checked-in file, so `SC-3` has
-   something to read.
+   something to read. **Built** (2026-09-22): `dynasty/trade_block.json` +
+   `dynasty_core.trade_block.load_trade_block()`, 23 real entries hand-
+   entered from the current in-league trade-block chatter.
 7. `SC-3` — Claude Scout research pass, bounded scope.
 8. `SC-6` — the nightly orchestrator, tying `SC-1`/`SC-3`/`SC-4`/`SC-5`
    together and notifying.
@@ -235,18 +237,18 @@ notifications — not directly portable, but its dedup pattern informed
   waits for a Scout UI to exist.
 
 - [ ] **SC-18: Trade-block list — a checked-in file, not app state.**
-  Not started. Sleeper has no "on the trade block" concept — which
-  players are being shopped is purely user-declared intent, so it has to
-  live somewhere the cloud routine can actually read. A small
-  `trade_block.json` checked into `main`, edited directly by the user or
-  a local Claude Code session (already has working git/`gh` write
-  access, same capability `SC-7`'s fallback already leans on) rather
-  than an automated NAS-to-GitHub push — trade-block changes are
-  infrequent enough that this is simpler than giving the NAS app its own
-  GitHub write credential. `SC-3` reads it to prioritize research.
+  Built (2026-09-22): `dynasty/trade_block.json` (checked into `main`,
+  hand-maintained — Sleeper has no "on the trade block" concept, so
+  who's being shopped is purely user-declared) + `dynasty_core.trade_block.
+  load_trade_block()`, a strictly-validated reader (opaque `sleeper_id`/
+  `roster_id` pairs only, no cached name/team that could drift — see
+  module docstring). Seeded with the 4 rosters' real current block (23
+  players) resolved against live Sleeper data. Still open: nothing reads
+  it yet — `SC-3` is the intended consumer, to prioritize research scope,
+  once it exists.
 
 **Build order:** `scout-data` branch ✅ → `SC-1` ✅ → `SC-2` ✅ → `SC-4` ✅
-→ `SC-17` ✅ → `SC-18` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9`
+→ `SC-17` ✅ → `SC-18` ✅ → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9`
 → `SC-10`. `SC-15`'s remaining NAS deployment and `SC-16`'s staleness
 banner are decoupled from this chain — pick up whenever a Scout UI is
 built.
@@ -374,6 +376,21 @@ Deliberately out of v1, not forgotten:
   now that leaguewide scanning itself is built and the section's filter UI
   exists to extend (see `docs/rookie-draft-big-board.md`'s "Suggested
   Trades" section).
+- [ ] **RT-32: Wire `trade_block.json` into the trade explorer UI**
+  (user-flagged 2026-09-22, while scoping `SC-18`) — let the Trade tab
+  surface which of a candidate's players are on `SC-18`'s trade-block
+  list, and/or let the user filter/browse specifically for deals
+  involving a blocked player, rather than treating the list as
+  cloud-routine-only input. `find_trade_offers()`/`suggested_trades()`
+  already rank plausible offers leaguewide; this is a display/filter
+  layer on top (highlight a blocked player in results, or scope a search
+  to "who's shopping this player"), not a new valuation path — reuse the
+  existing ranking primitives per `valuation_principles.md`'s "one
+  valuation strategy, used everywhere" rule. `load_trade_block()` already
+  returns opaque `(sleeper_id, roster_id)` pairs; this item is purely
+  about consuming that from `trade_tab.py`, not extending the schema.
+  Not scoped in detail yet — revisit once there's a concrete UI shape in
+  mind.
 - [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
   (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
   unconfirmed) — a rare, explicitly user-triggered lookup (not a

@@ -134,6 +134,7 @@ from .trade import (
     sellable_players,
     suggested_trades,
 )
+from .trade_block import TRADE_BLOCK_PATH, TradeBlockEntry, load_trade_block
 from .waiver_bids import (
     COMPARABLE_MAX_DISTANCE_PCT,
     COMPARABLE_MIN_ABSOLUTE_DISTANCE,
@@ -171,6 +172,7 @@ __all__ = [
     "ROUND_ORDINAL",
     "SUGGESTED_TRADE_SCAN_TOP_K",
     "SUPERFLEX_ELIGIBLE_POSITIONS",
+    "TRADE_BLOCK_PATH",
     "TRADE_OFFER_MAX_COMBO_SIZE",
     "TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE",
     "TRADE_OFFER_PARTNER_TOLERANCE_PCT",
@@ -181,6 +183,7 @@ __all__ = [
     "YOUNG_CORE_MAX_YOE",
     "YOUNG_CORE_NEED_THRESHOLD",
     "DraftPickSlot",
+    "TradeBlockEntry",
     "_future_pick_owners",
     "_max_affordable_target_value",
     "_need_from_phase",
@@ -215,6 +218,7 @@ __all__ = [
     "league_team_summaries",
     "leaguewide_trade_candidates",
     "lineup_breakdown",
+    "load_trade_block",
     "multi_round_plan",
     "nearest_comparable_bids",
     "need_positions",
