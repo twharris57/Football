@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import sqlite3
+
 import dynasty_core
 import pandas as pd
 import streamlit as st
+import trade_block_store
 
 from .components import format_drop, team_selectbox
 
@@ -502,6 +506,106 @@ def _render_suggested_trades(state: dict) -> None:
     _render_leaguewide_scan(state, trade_players, trade_pick_values)
 
 
+def _trade_block_row_label(sleeper_id: str, players: dict) -> str:
+    info = players.get(sleeper_id, {})
+    return f"{info.get('full_name')} ({info.get('position')})"
+
+
+@st.cache_resource(show_spinner=False)
+def _get_trade_block_connection() -> sqlite3.Connection:
+    """Open the trade-block store once per running server process and reuse
+    it for every session/rerun - same rationale as
+    confidence_pool/streamlit_app.py's own `_get_connection()`: connecting
+    fresh on every widget interaction would let concurrent reruns race each
+    other for the SQLite write lock."""
+    trade_block_store.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return trade_block_store.connect(str(trade_block_store.DB_PATH))
+
+
+def _render_trade_block(state: dict) -> None:
+    with st.expander("How this works"):
+        st.caption(
+            "Which players other managers have declared available to trade — purely "
+            "user-declared intent (Sleeper's API has no trade-block concept of its own), "
+            "entered here and nowhere else.\n"
+            "- Auto-removed the moment a listed player is no longer on the roster they "
+            "were added under (traded elsewhere, or dropped outright) — checked fresh every "
+            "time this tab loads, against this refresh's live roster data.\n"
+            "- Adding a player already on the block is a no-op, not a duplicate."
+        )
+
+    conn = _get_trade_block_connection()
+    trade_players = state["players"]
+    entries = trade_block_store.get_trade_block(conn)
+
+    kept, pruned = dynasty_core.prune_stale_entries(entries, state["rosters_by_id"])
+    if pruned:
+        for p in pruned:
+            trade_block_store.remove_trade_block_entry(conn, p.entry.sleeper_id)
+        removed_labels = "; ".join(
+            f"{_trade_block_row_label(p.entry.sleeper_id, trade_players)} ({p.reason})" for p in pruned
+        )
+        st.info(f"Auto-removed (no longer on that roster): {removed_labels}")
+        entries = kept
+
+    st.markdown("**Add a player**")
+    add_team_id = team_selectbox(
+        "Team shopping the player", state["team_names"], state["user_roster_id"], "trade_block_add_team"
+    )
+    already_blocked = {e.sleeper_id for e in entries}
+    add_options = [
+        pid for pid in _trade_player_options(state["rosters_by_id"][add_team_id], trade_players)
+        if pid not in already_blocked
+    ]
+    # Keyed by add_team_id, not a fixed key - switching teams must not leave
+    # this pointed at a now-irrelevant (or, if already blocked elsewhere,
+    # no-longer-an-option) player from the previous team's list. Streamlit
+    # raises if a selectbox's persisted value isn't in its current options,
+    # which a stale cross-team selection would otherwise trigger.
+    player_select_key = f"trade_block_add_player_{add_team_id}"
+    add_player_id = st.selectbox(
+        "Player",
+        [None] + sorted(add_options, key=lambda pid: trade_players.get(pid, {}).get("full_name") or ""),
+        format_func=lambda pid: "(select a player)" if pid is None else _trade_block_row_label(pid, trade_players),
+        key=player_select_key,
+    )
+    if st.button("Add to trade block", key="trade_block_add_button", disabled=add_player_id is None):
+        try:
+            trade_block_store.add_trade_block_entry(conn, add_player_id, add_team_id, dt.date.today().isoformat())
+        except sqlite3.IntegrityError:
+            st.warning("Already on the trade block.")
+        else:
+            # The just-added player now drops out of add_options above on
+            # the next render (same team, shrunk list) - clear the stale
+            # selection rather than leave it pointed at a value no longer
+            # in its own options.
+            del st.session_state[player_select_key]
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Currently on the block**")
+    if not entries:
+        st.write("(nothing on the trade block right now)")
+        return
+
+    for roster_id in sorted({e.roster_id for e in entries}, key=lambda rid: state["team_names"].get(rid, "")):
+        st.caption(state["team_names"].get(roster_id, f"Roster {roster_id}"))
+        roster_entries = sorted(
+            (e for e in entries if e.roster_id == roster_id),
+            key=lambda e: trade_players.get(e.sleeper_id, {}).get("full_name") or "",
+        )
+        for entry in roster_entries:
+            name_col, date_col, remove_col = st.columns([3, 2, 1])
+            with name_col:
+                st.write(_trade_block_row_label(entry.sleeper_id, trade_players))
+            with date_col:
+                st.write(entry.added_date)
+            with remove_col:
+                if st.button("Remove", key=f"trade_block_remove_{entry.sleeper_id}"):
+                    trade_block_store.remove_trade_block_entry(conn, entry.sleeper_id)
+                    st.rerun()
+
+
 def render_trade_tab(state: dict) -> None:
     # Split into subtabs - these were two long sections stacked on
     # one page; they're already structurally independent (own team pickers
@@ -510,7 +614,7 @@ def render_trade_tab(state: dict) -> None:
     # the "Your team"/"Trade partner" selectors move inside the Manual Trade
     # subtab with the section that actually uses them, rather than staying
     # shared above both.
-    manual_tab, suggested_tab = st.tabs(["Manual Trade", "Suggested Trades"])
+    manual_tab, suggested_tab, block_tab = st.tabs(["Manual Trade", "Suggested Trades", "Trade Block"])
     with manual_tab:
         trade_team_names = state["team_names"]
         trade_user_roster_id = state["user_roster_id"]
@@ -546,3 +650,5 @@ def render_trade_tab(state: dict) -> None:
         )
     with suggested_tab:
         _render_suggested_trades(state)
+    with block_tab:
+        _render_trade_block(state)
