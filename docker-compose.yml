@@ -9,6 +9,7 @@ services:
       - "8501:8501"
     volumes:
       - nfl_data_cache:/app/.cache
+      - dynasty_data:/app/dynasty_data
     restart: unless-stopped
 
   confidence-pool:
@@ -39,5 +40,6 @@ services:
 
 volumes:
   nfl_data_cache:
+  dynasty_data:
   confidence_pool_data:
   scout_data:

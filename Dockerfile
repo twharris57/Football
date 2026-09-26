@@ -23,7 +23,7 @@ ENV GIT_SHA=$GIT_SHA
 # $HOME to.
 RUN groupadd --system --gid 1000 app \
  && useradd --system --uid 1000 --gid app --create-home --home-dir /home/app app \
- && mkdir -p /app/.cache && chown -R app:app /app
+ && mkdir -p /app/.cache /app/dynasty_data && chown -R app:app /app
 ENV HOME=/home/app
 USER app
 
