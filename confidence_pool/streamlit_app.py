@@ -1,11 +1,6 @@
-"""Streamlit dashboard for the Legion confidence pool's weekly picks.
+"""Legion confidence pool web app: Picks and Settings tabs.
 
     streamlit run confidence_pool/streamlit_app.py
-
-Two tabs: Picks (this week's Vegas-odds-ranked recommendation, regenerable
-until the pool's deadline, then locked read-only) and Settings (season
-configuration -- weeks 17/18's commissioner-announced cutoff, active
-season). See docs/confidence-pool-web-app.md for the full design.
 """
 
 from __future__ import annotations
@@ -31,12 +26,7 @@ st.set_page_config(page_title="Confidence Pool", layout="centered")
 
 @st.cache_resource(show_spinner=False)
 def _get_connection() -> sqlite3.Connection:
-    """Open the store once per running server process and reuse it for
-    every session/rerun. `streamlit_app.py`'s top level re-executes on
-    every widget interaction -- connecting (and re-running migrations)
-    fresh each time let concurrent reruns race each other for the SQLite
-    write lock, surfacing as `database is locked` at startup and on
-    later saves."""
+    """One connection per server process; per-rerun connections raced for the write lock."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = store.connect(str(DB_PATH))
     store.register_algorithm_version(

@@ -1,12 +1,4 @@
-"""Schema migration runner for the confidence-pool SQLite store.
-
-Applies every `*.sql` file under `migrations/` that `schema_migrations`
-doesn't already record as applied, in ascending numeric-prefix order.
-Named `db_schema`, not `schema`, to avoid ever colliding with the `schema`
-PyPI package (a validation library) if that's added as a dependency
-elsewhere -- see `docs/confidence-pool-data-model.md` for the schema's
-full design.
-"""
+"""Migration runner. Named `db_schema` to avoid clashing with the `schema` PyPI package."""
 
 from __future__ import annotations
 
@@ -18,8 +10,7 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 def apply_migrations(conn: sqlite3.Connection) -> None:
-    """Run any migration not yet recorded in `schema_migrations`, in
-    ascending numeric order, each as its own transaction."""
+    """Apply unrecorded `migrations/*.sql` files in numeric order, one transaction each."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (

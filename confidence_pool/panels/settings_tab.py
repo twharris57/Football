@@ -1,9 +1,4 @@
-"""Settings tab: which season is active, and the late-season
-commissioner-announced pick deadlines (see picks_core.week_deadline;
-which weeks these apply to is store.KNOWN_LATE_SEASON_WEEKS, since that
-set itself changes year to year) -- edited here instead of hardcoded so a
-year-to-year rule change is a form edit, not a code change/redeploy.
-"""
+"""Settings tab: active season, late-season deadlines, team display names."""
 
 from __future__ import annotations
 
@@ -15,12 +10,7 @@ import streamlit as st
 import picks_core as pc
 import store
 
-# The real 2026 Legion Pool late-season deadlines, confirmed against the
-# actual commissioner-issued rules document (2026-08-27). Used only as this
-# season's starting default for an unconfigured week -- so a first visit to
-# this tab after deploying is "review and save," not "look these up and
-# retype them." A real season_week_rules row, once saved, always overrides
-# this. Update (or drop) once a season's real dates change.
+# Announced 2026 deadlines, used as defaults until a week is saved. Update each season.
 KNOWN_2026_LATE_SEASON_DEADLINES: dict[int, datetime] = {
     16: datetime(2026, 12, 26, 13, 0, tzinfo=pc.ET),
     17: datetime(2027, 1, 2, 16, 30, tzinfo=pc.ET),

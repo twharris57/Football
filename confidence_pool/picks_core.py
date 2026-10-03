@@ -1,12 +1,4 @@
-"""Core confidence-pool picks logic: current-week detection, the Legion
-pool's game-selection rules, Vegas-odds ranking, and the pick-submission
-deadline.
-
-This is a fresh library, not a refactor of `football_enhanced.py` (which
-stays untouched as the proven, standalone reference implementation this
-reuses the math from) -- see `docs/confidence-pool-web-app.md` for the
-full game-selection rules and why they're shaped this way.
-"""
+"""Confidence-pool picks: week detection, game selection, ranking, deadline, lock, scoring."""
 
 from __future__ import annotations
 
@@ -20,18 +12,11 @@ import pandas as pd
 ET = ZoneInfo("America/New_York")
 SUNDAY_AFTERNOON_CUTOFF = "13:00"
 
-# Stamped onto every generated pick (see rank_games()) so a future methodology
-# change (CP-12) can tell exactly which formula produced a historical row.
-# Bump this string -- and add a row to store.py's algorithm_versions table
-# describing the change -- whenever this module's ranking math changes.
+# Stamped onto every pick. Bump it, and register a description in
+# store.algorithm_versions, whenever the ranking math changes.
 ALGORITHM_VERSION = "vig-proportional-v1"
 
-# The 32 team abbreviations nfl_data_py's schedule data actually uses (verified
-# against a real fetch, not guessed -- notably the Rams are "LA", not "LAR"). Lets
-# the Settings tab offer every team for a display-name override (see
-# `store.DEFAULT_TEAMS`) even before it's appeared in a fetched schedule this
-# session. Stable, but not permanent -- update by hand if a team relocates or
-# rebrands (rare; e.g. WAS's 2022 renaming).
+# nfl_data_py's abbreviations (note: the Rams are "LA", not "LAR").
 NFL_TEAM_ABBREVIATIONS = [
     "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN",
     "DET", "GB", "HOU", "IND", "JAX", "KC", "LA", "LAC", "LV", "MIA",
@@ -64,22 +49,12 @@ def get_schedule(year: int) -> pd.DataFrame:
 
 
 def default_season_year(today: date) -> int:
-    """The NFL season year most relevant to `today`.
-
-    nfl_data_py's `season` column is the year a season *started* in, even
-    for games played into the following January/February. Treat March
-    through December as "the season starting this calendar year" (correct
-    in-season, and a reasonable default in the summer before it starts);
-    January/February default to the previous calendar year's season, which
-    is still in its playoffs.
-    """
+    """The season most relevant to `today`; January/February belong to last year's season."""
     return today.year if today.month >= 3 else today.year - 1
 
 
 def current_week(schedule: pd.DataFrame, today: date) -> int:
-    """The earliest regular-season week whose games haven't all been played
-    as of `today`; falls back to the season's final week once they have.
-    """
+    """The earliest regular-season week not fully played, else the final week."""
     reg = schedule[schedule["game_type"] == "REG"].copy()
     reg["gameday"] = pd.to_datetime(reg["gameday"]).dt.date
     last_day_by_week = reg.groupby("week")["gameday"].max().sort_index()
@@ -90,10 +65,7 @@ def current_week(schedule: pd.DataFrame, today: date) -> int:
 
 
 def week_date_labels(schedule: pd.DataFrame) -> dict[int, str]:
-    """Map each of `schedule`'s regular-season weeks to a human date span
-    (e.g. `"Sep 13-14"`), for labeling a week selector -- so a bare week
-    number isn't the only way to tell what part of the calendar it covers.
-    """
+    """Map each regular-season week to its date span, e.g. `"Sep 13-14"`."""
     reg = schedule[schedule["game_type"] == "REG"].copy()
     reg["gameday"] = pd.to_datetime(reg["gameday"]).dt.date
     spans = reg.groupby("week")["gameday"].agg(["min", "max"])
@@ -110,15 +82,7 @@ def week_date_labels(schedule: pd.DataFrame) -> dict[int, str]:
 
 
 def _week_sunday(week_games: pd.DataFrame) -> date | None:
-    """The calendar date of this NFL week's Sunday -- the anchor for
-    `select_games()`'s standard-week selection window.
-
-    Prefers a real Sunday game's own date when one exists (true for the
-    overwhelming majority of weeks); otherwise rolls any other game's date
-    to that week's Sunday, since an NFL week runs Thursday through the
-    following Monday/Tuesday with exactly one Sunday in between. `None` if
-    there are no games to anchor from (bye week / invalid week number).
-    """
+    """The date of this NFL week's Sunday, or `None` if the week has no games."""
     if week_games.empty:
         return None
     gamedays = pd.to_datetime(week_games["gameday"]).dt.date
@@ -140,43 +104,12 @@ def select_games(
     sunday_afternoon_cutoff: str = SUNDAY_AFTERNOON_CUTOFF,
     configured_deadline: datetime | None = None,
 ) -> pd.DataFrame:
-    """Apply the Legion pool's game-selection rules (bylaws rule 14) for one
-    week.
+    """Apply the pool's game-selection rule (bylaws rule 14) for one week.
 
-    `selection_rule` (from `store.season_week_rules` -- only weeks whose
-    rule differs from the default get a row there, e.g. weeks 16-18):
-
-    - `'standard'` (the default): a game is selected if its kickoff falls
-      in the window from this week's Sunday at `sunday_afternoon_cutoff`
-      through the following Tuesday end-of-day. In practice that's
-      Sunday-afternoon and Monday-night games, but as a real datetime
-      comparison rather than a fixed weekday enumeration, it also catches
-      a rare Tuesday makeup game (a weather postponement has happened at
-      least once in NFL history) that a Monday/Sunday-only check would
-      silently miss. This window exists so the deadline (the earliest
-      *selected* kickoff) can't fall after an excluded early game
-      (Thursday, an early-Sunday international game) has already been
-      decided, which would leak information before picks are due.
-    - `'all_games'`: every game that week, if `configured_deadline` isn't
-      known yet -- there's nothing yet to compare kickoffs against, so
-      `'standard'`'s no-leak concern can't be evaluated either way. Once a
-      deadline is configured, only games kicking off at or after it count,
-      on the same reasoning as `'standard'`'s window, rather than assuming
-      the override always predates every kickoff that week. Used where the
-      deadline is a single early cutoff *before all* of that week's
-      kickoffs (see `week_deadline()`). Confirmed against real 2025-season
-      results: week 18's sheet included a Saturday game (Jan 3) alongside
-      the Sunday slate (Jan 4), which a Sunday/Monday-only filter would
-      have excluded.
-
-    A game whose `gametime` isn't finalized yet in the schedule data is
-    never a crash, but the two rules resolve "unknown" oppositely,
-    matching what each one's own no-leak guarantee actually needs:
-    `'standard'` excludes it (an unverifiable window match defaults to
-    "don't leak, don't include"), while `'all_games'` includes it (its
-    deadline is documented to predate every real kickoff that week
-    regardless, so an unknown time isn't evidence for dropping a real game
-    off the sheet).
+    - `'standard'`: kickoff from Sunday at `sunday_afternoon_cutoff` through Tuesday.
+      Unknown kickoffs are excluded.
+    - `'all_games'`: every game, or once `configured_deadline` is set, those kicking
+      off at or after it. Unknown kickoffs are included.
     """
     week_games = schedule[
         (schedule["season"] == year)
@@ -184,11 +117,6 @@ def select_games(
         & (schedule["week"] == week)
     ]
     def _kickoffs() -> pd.Series:
-        # A per-game unknown kickoff (nfl_data_py has no guarantee every
-        # game's gametime is finalized yet -- most likely for a
-        # late-season, flex-scheduling-eligible game) must not crash the
-        # whole week's comparison -- _try_kickoff_datetime returns None
-        # for that game instead of raising.
         return pd.Series(
             [_try_kickoff_datetime(row["gameday"], row["gametime"]) for _, row in week_games.iterrows()],
             index=week_games.index,
@@ -199,12 +127,6 @@ def select_games(
             selected = week_games
         else:
             kickoffs = _kickoffs()
-            # An unknown kickoff is presumed to belong, not excluded: this
-            # rule's own deadline is documented to predate every real
-            # kickoff that week (see docs/confidence-pool-web-app.md), so
-            # "we don't know the exact time yet" is not evidence a game
-            # should be dropped from the sheet -- only a *known* kickoff
-            # before the deadline is.
             selected = week_games[kickoffs.isna() | (kickoffs >= configured_deadline)]
     else:
         sunday = _week_sunday(week_games)
@@ -221,11 +143,7 @@ def select_games(
 
 @dataclass(frozen=True)
 class PickExplanation:
-    """The intermediate math behind one game's confidence score -- the raw
-    (pre-de-vig) implied probability from each side's moneyline, the
-    de-vigged probabilities actually used for ranking, and the resulting
-    confidence. Exposed so the UI can show a pick's real inputs and
-    working, not just the final points/confidence columns."""
+    """One game's raw and de-vigged probabilities and the resulting confidence."""
 
     home_moneyline: float
     away_moneyline: float
@@ -237,14 +155,7 @@ class PickExplanation:
 
 
 def explain_odds(home_moneyline: float, away_moneyline: float) -> PickExplanation:
-    """Convert one game's moneylines into a `PickExplanation`.
-
-    `rank_games` calls this for its own confidence score rather than
-    reimplementing the math inline, so the ranking and the UI's
-    per-pick detail view can never drift apart (see
-    `valuation_principles.md`'s "one valuation strategy" rule, mirrored
-    here for the confidence-pool side).
-    """
+    """Convert one game's moneylines into a `PickExplanation`."""
     home_prob_raw = compute_probability(home_moneyline)
     away_prob_raw = compute_probability(away_moneyline)
     total = home_prob_raw + away_prob_raw
@@ -265,17 +176,9 @@ def explain_odds(home_moneyline: float, away_moneyline: float) -> PickExplanatio
 
 
 def rank_games(games: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Rank games by Vegas-odds confidence and assign N..1 points, descending.
+    """Rank games by confidence and assign N..1 points.
 
-    Returns `(ranked, pending)` -- `pending` holds any game missing a
-    moneyline (odds not posted yet), kept separate rather than ranked, since
-    the confidence math can't run on NaN without silently producing NaN
-    comparisons downstream (see `valuation_principles.md`'s NaN-handling rule).
-
-    `ranked` carries an `algorithm_version` column (`ALGORITHM_VERSION`) on
-    every row -- callers persist it as-is rather than stamping it on
-    separately, so a pick's provenance travels with it even when a stored
-    snapshot is later reused verbatim (see `resolve_week_lock()`).
+    Returns `(ranked, pending)`; `pending` holds games still missing a moneyline.
     """
     has_odds = games["home_moneyline"].notna() & games["away_moneyline"].notna()
     pending = games[~has_odds].reset_index(drop=True)
@@ -309,14 +212,9 @@ def rank_games(games: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 def games_with_included_flags(
     auto_games: pd.DataFrame, included: dict[str, bool]
 ) -> pd.DataFrame:
-    """Attach a real `included` column to every auto-selected game, from the
-    per-game checkbox state (`included`) -- defaulting to `True` for any
-    game not present in the map (nothing has excluded it yet).
+    """Add an `included` column from the checkbox map, defaulting to `True`.
 
-    Callers must persist the *full* result via `store.save_week`, not just
-    the included subset -- saving only the included games silently drops a
-    user's exclusion the moment the week is next loaded (its `game_id`
-    would simply be absent from `included`, defaulting back to `True`).
+    Persist the full result, not just included rows, or exclusions are lost on reload.
     """
     return auto_games.assign(
         included=auto_games["game_id"].map(included).fillna(True).astype(bool)
@@ -324,15 +222,7 @@ def games_with_included_flags(
 
 
 def kickoff_datetime(gameday: str, gametime: str) -> datetime:
-    """Combine a schedule row's date/time strings into an ET-aware datetime.
-
-    Raises if `gametime` isn't a parseable "HH:MM" string -- nfl_data_py
-    doesn't guarantee one is set yet for a game whose kickoff hasn't been
-    finalized (most often a late-season, flex-scheduling-eligible game).
-    Callers comparing kickoffs across a whole week, where one game's
-    unknown time shouldn't crash the rest, should use
-    `_try_kickoff_datetime` instead.
-    """
+    """Combine schedule date/time strings into an ET datetime. Raises on a missing time."""
     return datetime.combine(
         pd.to_datetime(gameday).date(),
         datetime.strptime(gametime, "%H:%M").time(),
@@ -341,14 +231,7 @@ def kickoff_datetime(gameday: str, gametime: str) -> datetime:
 
 
 def _try_kickoff_datetime(gameday: str, gametime: str | None) -> datetime | None:
-    """`kickoff_datetime`, tolerant of a not-yet-finalized `gametime` --
-    `None` instead of raising, so one game's unknown kickoff doesn't crash
-    a comparison across its whole week. A `None` result means
-    "kickoff unknown," never "kicks off at the start of time": it compares
-    as `False` against any window/deadline check (a `None`/`NaT` value is
-    never `>=` or `<=` anything), so it naturally excludes itself from a
-    selection window rather than falsely matching one.
-    """
+    """`kickoff_datetime`, or `None` when the kickoff time isn't finalized."""
     try:
         return kickoff_datetime(gameday, gametime)
     except (TypeError, ValueError):
@@ -359,24 +242,7 @@ def week_deadline(
     games: pd.DataFrame,
     configured_deadline: datetime | None = None,
 ) -> datetime:
-    """The pick-submission cutoff for a week's selected games (bylaws rule 2).
-
-    Uses `configured_deadline` if given -- an explicit early cutoff from
-    `store.season_week_rules` (commissioner-announced each year for weeks
-    like 17-18, where the deadline sits before all of that week's kickoffs
-    rather than the earliest selected one). Otherwise falls back to the
-    earliest kickoff among the selected games -- picks are due "before
-    kick-off". The caller decides whether a configured override applies
-    (by looking up `season_week_rules` for this week), not this function.
-
-    Never parses a kickoff when `configured_deadline` already answers the
-    question -- `games` can still include a game whose kickoff
-    isn't finalized yet (`select_games`'s `'all_games'` rule lets one
-    through deliberately, see its docstring), and that game's unknown
-    gametime has no bearing on an already-known configured deadline. When
-    no override is given, a game with an unknown kickoff is excluded from
-    the earliest-kickoff computation rather than crashing it.
-    """
+    """Pick deadline (bylaws rule 2): `configured_deadline` if set, else the earliest known kickoff."""
     if configured_deadline is not None:
         return configured_deadline
 
@@ -396,37 +262,16 @@ def is_locked(now: datetime, deadline: datetime) -> bool:
     return now >= deadline
 
 
-# How close to a week's earliest kickoff a save has to be to count as a
-# real first look at that week, not a click-ahead preview of a future one.
-# Matches the actual usage pattern -- check a few days before kickoff
-# (Thursday/Friday, maybe re-check Saturday morning), not however many
-# weeks in advance the season/week selector happens to let you browse to.
+# A save counts as a week's "first look" only within this many days before its
+# earliest kickoff (so browsing ahead doesn't count) ...
 FIRST_LOOK_WINDOW_DAYS = 3
 
-# How many days *after* a week's earliest kickoff a save can still land and
-# count as a first look -- covers checking in Monday morning about Sunday's
-# late games, not an unbounded allowance. Without this floor, a week nobody
-# manually reviewed before its deadline gets its "first" snapshot captured
-# by resolve_week_lock()'s post-deadline auto-lock instead -- at the exact
-# same moment as "current", from the identical data, making the Picks tab's
-# Current/First-look toggle show byte-identical output no matter how far
-# past kickoff that auto-lock happened to fire.
+# ... or this many days after (a Monday check-in on Sunday's games).
 FIRST_LOOK_LATE_GRACE_DAYS = 1
 
 
 def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
-    """Whether `now` is within `FIRST_LOOK_WINDOW_DAYS` before, or
-    `FIRST_LOOK_LATE_GRACE_DAYS` after, this week's earliest kickoff --
-    used to decide whether a save is eligible to become that week's
-    immutable `'first'` snapshot (see `store.save_week`). Comparing whole
-    calendar days, not exact hours, since "Thursday" vs. "the following
-    Wednesday" is the distinction that actually matters here.
-
-    A game with an unfinalized kickoff is excluded from the
-    earliest-kickoff computation rather than crashing it; `False` if that
-    leaves no known kickoff to compare against, same as the "no games at
-    all" case -- there's nothing yet to call a first look at.
-    """
+    """Whether a save at `now` may claim the week's `'first'` snapshot."""
     kickoffs = [
         _try_kickoff_datetime(row["gameday"], row["gametime"]) for _, row in games.iterrows()
     ]
@@ -440,14 +285,7 @@ def is_first_look_window(games: pd.DataFrame, now: datetime) -> bool:
 
 @dataclass(frozen=True)
 class LockOutcome:
-    """What to do about a week whose deadline has just passed and isn't
-    locked yet, from `resolve_week_lock`.
-
-    `first_snapshot_eligible` is always `False` -- see `resolve_week_lock`'s
-    docstring for why a lock-time save can never legitimately claim the
-    week's `'first'` snapshot, regardless of how close to kickoff it
-    happens to land. The caller should pass this straight through to
-    `store.save_week()` rather than computing its own eligibility."""
+    """What to persist when a week's deadline passes. Pass every field to `store.save_week()`."""
 
     locked: bool
     games: pd.DataFrame
@@ -464,62 +302,13 @@ def resolve_week_lock(
     saved_picks: pd.DataFrame,
     now: datetime,
 ) -> LockOutcome:
-    """Decide what to lock in for a week whose deadline has just passed.
+    """Decide what to lock for a week whose deadline has passed.
 
-    Prefers the last manually-generated snapshot (`saved_picks`) so the
-    locked historical record matches what was actually reviewed and
-    submitted, rather than recomputing against whatever odds happen to be
-    live at the moment the lock is evaluated -- moneylines move over the
-    course of a week, so recomputing here could silently lock in different
-    picks than the ones actually generated and acted on earlier.
+    - Saved picks exist: lock them as-is, with their original timestamp.
+    - Otherwise compute from current odds, warning if any included game already started.
+    - Odds still missing: don't lock; warn (and name any game already started).
 
-    Only computes a fresh snapshot from `auto_games` if nothing was ever
-    generated for the week. If odds are still pending for a selected game
-    and there's no prior snapshot to fall back to, returns `locked=False`
-    with an explanatory `warning` instead of locking nothing silently --
-    that warning also names any included game that's already kicked off,
-    even though it's the *pending-odds* game(s) blocking the lock, not
-    that one: if the pending game's odds never post (its own moneyline may
-    simply never appear once a different game in the same slate has
-    already started), the week could otherwise stay unlocked indefinitely
-    with a message that never hints at the more consequential problem.
-
-    If that fresh computation succeeds (every included game has odds) but
-    happens after kickoff for one of the included games -- the app was
-    never opened for this week until well after its deadline, possibly
-    after games have already started or finished -- `warning` flags which
-    games, since their moneylines may no longer reflect the original
-    pregame line. Still locks in the computed result rather than refusing
-    to lock at all: there's no better data to fall back to, and leaving
-    the week unresolved forever would be worse than locking with a
-    caveat. This can't happen on the preferred, prior-snapshot path
-    above, since that path never recomputes odds. An included game with
-    an unfinalized kickoff is treated as "not yet started" for both of
-    these warnings rather than crashing on it -- there's no way to
-    confirm it started without a known kickoff time.
-
-    `first_snapshot_eligible` on the returned `LockOutcome` is always
-    `False` -- on *both* branches above. A save made here always locks the
-    week immediately, so it can never be followed by a second, differing
-    save to compare a `'first'` snapshot against: on the reused-snapshot
-    path, `'first'` was either already captured back when that snapshot
-    was originally generated (via the "Regenerate picks" button's own
-    `is_first_look_window()` check at that time) or never will be, since
-    nothing else was ever saved for this week; on the fresh-computation
-    path, this is definitionally the week's only save, so a `'first'` row
-    would be permanently identical to `'current'` regardless of how close
-    to kickoff it happened to land -- capturing one would waste a row and
-    imply a real comparison exists when it never will. `is_first_look_window()`'s
-    date window stays reserved for the "Regenerate picks" button, the only
-    call site where a later, differing save is actually still possible
-    before lock.
-
-    The returned `generated_at` is what the caller should persist as this
-    save's timestamp -- the *reused* snapshot's own original `captured_at`
-    (from `saved_games`) when locking in prior data verbatim, not `now`.
-    Reusing a snapshot's values but stamping the lock-evaluation moment
-    onto them would overwrite the true generation time the `'first'`/
-    `'current'` snapshot split exists to preserve.
+    A lock never claims the `'first'` snapshot — nothing can follow it to compare against.
     """
     if not saved_picks.empty:
         original_generated_at = datetime.fromisoformat(saved_games["captured_at"].iloc[0])
@@ -574,32 +363,10 @@ def check_actual_picks(
     team_names: dict[str, str] | None = None,
     late: bool = False,
 ) -> list[str]:
-    """Check an actual-submission entry (`game_id -> (predicted_winner,
-    points)`, `None` meaning left blank) for the real-world irregularities
-    the Legion pool bylaws themselves define a resolution for -- none of
-    which invalidate the submission, so this never blocks a save, only
-    explains what the bylaws say happens:
+    """Explain bylaws-defined irregularities in a submitted card; never blocks a save.
 
-    - Rule 2: the card was submitted late -- docked 10 points below that
-      week's lowest card. Not computable here (needs every other pool
-      entrant's score, which this app never tracks) -- this only flags the
-      fact; `store.set_reported_score()`/`check_reported_score()` are
-      where the pool's own officially reported score gets recorded and
-      cross-checked instead, once posted.
-    - Rule 16: an unmarked winning team -- that game's points are lost.
-    - Rule 15: a blank points box -- that number's points are lost.
-    - Rule 7: two games sharing the same points value -- the *lower*
-      value is the one that counts, whichever of the two (or both) was
-      correct. Resolved for real (not just flagged) by `score_picks()`.
-
-    (Rule 8's "forwarded to the rules committee" is the actual
-    invalidation path, for illegible paper cards -- not applicable to an
-    app-entered submission, which is always legible.)
-
-    Returns a human-readable issue per irregularity found, empty if the
-    submission is a clean `1..N` permutation with every game marked and
-    was not late. `team_names` is used only to make a message read
-    naturally; falls back to the raw abbreviation/game_id if omitted.
+    Covers late cards (rule 2), unmarked winners (16), blank points (15), and duplicate
+    points (7). `entries` maps `game_id -> (winner, points)`, with `None` for blank.
     """
     names = team_names or {}
     points_seen: dict[int, str] = {}
@@ -632,10 +399,7 @@ def check_actual_picks(
 
 @dataclass(frozen=True)
 class PickResult:
-    """One game's contribution to a `WeekScore` -- `correct` is the bare
-    fact of whether the pick matched the outcome; `points_awarded` is what
-    that pick actually nets after the bylaws rules below, which can differ
-    from `correct * points` (a duplicate-points game, rule 7)."""
+    """One game's score. `points_awarded` can differ from `correct * points` (rule 7)."""
 
     game_id: str
     predicted_winner: str | None
@@ -648,9 +412,7 @@ class PickResult:
 
 @dataclass(frozen=True)
 class WeekScore:
-    """A week's total score from a set of picks against real outcomes.
-    `games_decided < games_total` means the week isn't over yet -- treat
-    `total_points` as provisional, not final."""
+    """A week's score; provisional while `games_decided < games_total`."""
 
     total_points: int
     games_decided: int
@@ -661,33 +423,10 @@ class WeekScore:
 def score_picks(
     entries: dict[str, tuple[str | None, int | None]], outcomes: pd.DataFrame
 ) -> WeekScore:
-    """Score a set of picks (`game_id -> (predicted_winner, points)` -- the
-    same shape `check_actual_picks` takes, so this serves both the
-    algorithm's `weekly_picks` and the user's `actual_picks` without a
-    second parallel scoring path) against real per-game outcomes
-    (`outcomes`: `game_id`/`home_team`/`away_team`/`home_score`/`away_score`,
-    as returned by `store.get_game_outcomes`).
+    """Score `game_id -> (winner, points)` picks against `store.get_game_outcomes()`.
 
-    Applies the bylaws rules `check_actual_picks` only flags:
-
-    - Rule 6 (tie): a tied game awards no points to anyone, regardless of
-      pick.
-    - Rule 16 (blank winner) / Rule 15 (blank points): score as incorrect /
-      unawardable, same as any other wrong pick.
-    - Rule 7 (duplicate points): when more than one game shares the same
-      points value, that value is credited at most once for the whole
-      group -- only if at least one game in the group was correct (and
-      only once even if more than one was). Confirmed against the actual
-      2026 rules document: "If a card has two numbers of the same value,
-      the player receives the lower of the two numbers" whether one or
-      both choices were correct -- since the two numbers are equal by the
-      rule's own premise, "the lower" is trivially that shared value,
-      credited once.
-
-    A game with no known outcome yet (`home_score`/`away_score` still
-    `NULL`) is excluded from scoring but still counted in `games_total`, so
-    `games_decided` can flag a provisional mid-week total instead of
-    silently treating an undecided game as wrong.
+    Ties score nothing (rule 6). A shared points value is credited once if any of
+    its games was correct (rule 7). Undecided games count toward `games_total` only.
     """
     outcomes_by_id = {row["game_id"]: row for _, row in outcomes.iterrows()}
 
@@ -752,15 +491,10 @@ def score_picks(
 def check_reported_score(
     week_score: WeekScore, reported_score: int | None, late: bool
 ) -> str | None:
-    """Flag a mismatch between the pool's officially reported score and this
-    app's own `score_picks` total -- `None` if there's nothing to flag.
+    """A mismatch message if the reported score disagrees with ours, else `None`.
 
-    Silent (no flag) when: no reported score has been entered yet; the week
-    isn't fully decided (`games_decided < games_total`, so the computed
-    total is still provisional); or the card was late (bylaws rule 2's
-    penalty -- 10 points below the field's lowest card -- isn't verifiable
-    without every other entrant's score, which this app doesn't track, so a
-    mismatch there is expected, not a red flag).
+    Skipped when nothing's reported, the week isn't fully decided, or the card was
+    late (rule 2's penalty needs other entrants' scores).
     """
     if reported_score is None:
         return None
