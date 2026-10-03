@@ -574,6 +574,11 @@ def _render_trade_block(state: dict) -> None:
             trade_block_store.add_trade_block_entry(conn, add_player_id, add_team_id, dt.date.today().isoformat())
         except sqlite3.IntegrityError:
             st.warning("Already on the trade block.")
+            # Someone else just blocked this exact player, so it drops out
+            # of add_options above the same as the success path below -
+            # clear the stale selection here too, but skip the rerun so the
+            # warning stays visible until the next natural one.
+            del st.session_state[player_select_key]
         else:
             # The just-added player now drops out of add_options above on
             # the next render (same team, shrunk list) - clear the stale
@@ -595,15 +600,32 @@ def _render_trade_block(state: dict) -> None:
             key=lambda e: trade_players.get(e.sleeper_id, {}).get("full_name") or "",
         )
         for entry in roster_entries:
-            name_col, date_col, remove_col = st.columns([3, 2, 1])
+            name_col, date_col, remove_col = st.columns([3, 2, 2])
             with name_col:
                 st.write(_trade_block_row_label(entry.sleeper_id, trade_players))
             with date_col:
                 st.write(entry.added_date)
             with remove_col:
-                if st.button("Remove", key=f"trade_block_remove_{entry.sleeper_id}"):
-                    trade_block_store.remove_trade_block_entry(conn, entry.sleeper_id)
-                    st.rerun()
+                # One-click delete with no undo (trade_block_store has no
+                # soft-delete) needs a confirm step, per web_guidelines.md's
+                # "never lose data silently" rule - a misclick on the wrong
+                # row's Remove button would otherwise be unrecoverable.
+                confirm_key = f"trade_block_remove_confirm_{entry.sleeper_id}"
+                if st.session_state.get(confirm_key):
+                    confirm_col, cancel_col = st.columns(2)
+                    with confirm_col:
+                        if st.button("Confirm", key=f"trade_block_remove_yes_{entry.sleeper_id}", type="primary"):
+                            trade_block_store.remove_trade_block_entry(conn, entry.sleeper_id)
+                            del st.session_state[confirm_key]
+                            st.rerun()
+                    with cancel_col:
+                        if st.button("Cancel", key=f"trade_block_remove_no_{entry.sleeper_id}"):
+                            del st.session_state[confirm_key]
+                            st.rerun()
+                else:
+                    if st.button("Remove", key=f"trade_block_remove_{entry.sleeper_id}"):
+                        st.session_state[confirm_key] = True
+                        st.rerun()
 
 
 def render_trade_tab(state: dict) -> None:

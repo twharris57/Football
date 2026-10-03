@@ -57,13 +57,27 @@ def prune_stale_entries(
     treated the same as "player not on that roster" - stale, classified by
     the same traded/dropped rule.
 
+    A roster that *is* present in `rosters_by_id` but whose own player
+    list is empty is treated differently: this league keeps a full squad
+    on every team continuously, so a roster with zero players is far more
+    likely a transient/incomplete fetch than a real empty roster. Pruning
+    is a permanent delete with no undo (`trade_block_store` has no
+    soft-delete), so entries blocked under such a roster are kept rather
+    than risk mass-deleting real entries off of bad data for one refresh.
+
     Pure - no I/O, no `st.*` calls. Callers persist the removal themselves.
     """
     all_rostered = rostered_player_ids(list(rosters_by_id.values()))
+    suspect_roster_ids = {
+        roster_id for roster_id, roster in rosters_by_id.items() if not (roster.get("players") or [])
+    }
 
     kept = []
     removed = []
     for entry in entries:
+        if entry.roster_id in suspect_roster_ids:
+            kept.append(entry)
+            continue
         roster = rosters_by_id.get(entry.roster_id) or {}
         current_players = roster.get("players") or []
         if entry.sleeper_id in current_players:

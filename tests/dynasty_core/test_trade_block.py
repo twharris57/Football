@@ -67,3 +67,23 @@ class TestPruneStaleEntries:
 
     def test_no_entries_returns_empty_tuples(self):
         assert prune_stale_entries((), {}) == ((), ())
+
+    def test_roster_present_but_with_no_players_is_not_pruned(self):
+        entry = TradeBlockEntry(sleeper_id="a", roster_id=1, added_date="2026-09-22")
+        # Roster 1 exists but its player list came back empty this refresh -
+        # a likely transient/incomplete fetch, not a real empty roster.
+        rosters_by_id = {1: roster(1, []), 2: roster(2, ["b"])}
+
+        kept, removed = prune_stale_entries((entry,), rosters_by_id)
+
+        assert kept == (entry,)
+        assert removed == ()
+
+    def test_roster_with_none_players_is_not_pruned(self):
+        entry = TradeBlockEntry(sleeper_id="a", roster_id=1, added_date="2026-09-22")
+        rosters_by_id = {1: {"roster_id": 1, "players": None}}
+
+        kept, removed = prune_stale_entries((entry,), rosters_by_id)
+
+        assert kept == (entry,)
+        assert removed == ()
