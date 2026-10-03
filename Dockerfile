@@ -1,6 +1,4 @@
-# python:3.12-slim, not alpine: nfl_data_py pulls in fastparquet/cramjam, which
-# frequently lack prebuilt musl wheels and force a slow/fragile Rust source
-# build on alpine. Same call made in the sibling Finance-Dashboards project.
+# Not alpine: fastparquet/cramjam (via nfl_data_py) lack musl wheels.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -10,17 +8,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Baked in at build time so the running app can show which commit it's
-# actually running (see the Streamlit footer) - verifies a deploy actually
-# picked up the latest image instead of silently staying on a stale one.
+# Shown in the app footer to confirm a deploy picked up the new image.
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
 
-# --create-home/--home-dir: without a real home directory, Streamlit's
-# usage-stats machine-id write (~/.streamlit/...) fails at container
-# startup with PermissionError, since python:3.12-slim's /home is
-# root-owned and the "app" user otherwise has nowhere writable to resolve
-# $HOME to.
+# Streamlit writes ~/.streamlit at startup, so the user needs a writable home.
 RUN groupadd --system --gid 1000 app \
  && useradd --system --uid 1000 --gid app --create-home --home-dir /home/app app \
  && mkdir -p /app/.cache /app/dynasty_data && chown -R app:app /app

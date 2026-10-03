@@ -1,7 +1,7 @@
 # Confidence Pool Principles
 
 Domain rules for the confidence-pool app (`confidence_pool/`). Generic lessons live in
-`code_conventions.md`; the design itself is in `docs/confidence-pool-web-app.md`.
+`code_conventions.md`; the design itself is in `docs/confidence-pool.md`.
 
 The app exists as a reliable fallback for weeks the user can't check in. Behavior
 while nobody is watching is what matters most.

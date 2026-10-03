@@ -16,7 +16,7 @@ small-sample pitfalls. Hunt for domain mistakes, not style.
 ## Instructions
 
 1. **Scope.** PR mode: `git diff <base>...<branch>` and `git log <base>..<branch>`.
-   Full mode: read the modules and `docs/rookie-draft-big-board.md` end to end. Read
+   Full mode: read the modules and `docs/dynasty-methodology.md` end to end. Read
    enough context to know whether a helper is reused or a shortcut is deliberate.
 2. **Check each function against `valuation_principles.md` and `code_conventions.md`**,
    especially:

@@ -2,7 +2,7 @@
 
 Domain rules for dynasty valuation (`dynasty/dynasty_core/`, `player_scoring.py`,
 `fantasycalc_api.py`). Generic lessons live in `code_conventions.md`; the methodology
-itself is in `docs/rookie-draft-big-board.md`.
+itself is in `docs/dynasty-methodology.md`.
 
 - **One ranking path.** Reuse `rank_by_marginal_value`, `positional_strength_summary`'s
   `vor`, and `season_average_starter_value`. Extend them; never add a parallel scorer.
@@ -17,7 +17,7 @@ itself is in `docs/rookie-draft-big-board.md`.
   use an open taxi slot, but filled taxi slots still count as spent capacity.
 - **Draftable rookies aren't free agents** while the draft has picks left.
 - **Pull league rules live; document what you can't.** Hardcoded guesses (e.g.
-  `BASELINE_SCORING`) get a comment and a row in the big-board doc's Static assumptions
+  `BASELINE_SCORING`) get a comment and a row in the methodology doc's Static assumptions
   table, and keep the raw value beside the corrected one (`value` / `adj_value`).
 - **Mirror `_stat_points()` for position-conditional scoring.** A generic
   `stat × scoring_settings` sum misses weights like `bonus_rec_te` — but only add them

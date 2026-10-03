@@ -18,7 +18,7 @@ Domain review of the confidence-pool app (`confidence_pool/picks_core.py`, `stor
 ## Instructions
 
 1. **Scope.** PR mode: `git diff <base>...<branch>` and `git log <base>..<branch>`.
-   Full mode: read the modules and `docs/confidence-pool-web-app.md` end to end.
+   Full mode: read the modules and `docs/confidence-pool.md` end to end.
 2. **Check each function against `confidence_pool_principles.md` and
    `code_conventions.md`**, especially:
    - a second odds→ranking path instead of `rank_games`

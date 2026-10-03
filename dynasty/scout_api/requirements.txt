@@ -1,7 +1,2 @@
-# Deliberately separate from the root requirements.txt (shared by the
-# dynasty and confidence-pool Streamlit apps) - this script doesn't need
-# pandas/streamlit/nfl_data_py, and pulling those in would bloat an image
-# that's meant to stay small (docker_guidelines.md's "keep images small").
-# requests is pinned to match the root requirements.txt's copy (used to
-# run this script's tests) - keep both in sync if either is bumped.
+# Keep requests in sync with the root requirements.txt (used to run the tests).
 requests==2.32.3
