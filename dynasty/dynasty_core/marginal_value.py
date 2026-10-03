@@ -18,22 +18,10 @@ def recommend_drop(
     exclude_ids: frozenset[str] = frozenset(),
     ineligible_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any] | None:
-    """Recommend the single best player to drop: lowest-value bench player, over starters.
+    """Best player to drop: lowest-value bench player before any starter.
 
-    `exclude_ids` protects specific players (e.g. just picked earlier in the
-    same multi-round plan, or a trade's own incoming players) from being
-    *chosen* as the drop - it does not remove them from the starter
-    assignment itself. An excluded player still legitimately occupies a
-    real slot and can still push someone else down to bench; computing
-    `assign_starters()` on a `rows` list that already excluded them would
-    understate real competition for slots and let a droppable player who'd
-    actually be bench read as `is_starter: True` (see
-    `.claude/conventions/valuation_principles.md`'s "Exclusion filters
-    change the outcome for everyone else" rule). `ineligible_ids` (taxi/IR
-    players) are never eligible to be assigned a starting slot here -
-    Sleeper doesn't allow it - so they can't be wrongly protected from the
-    drop pool as a false "starter"; they still land in `rows` and so can
-    still be recommended for drop themselves.
+    `exclude_ids` can't be chosen but still compete for starting slots. `ineligible_ids`
+    (taxi/IR) never start but can be dropped.
     """
     all_rows = player_value_rows(player_ids, players, fc_by_sleeper_id)
     eligible_rows = [r for r in all_rows if r["player_id"] not in ineligible_ids]
@@ -66,47 +54,13 @@ def best_position_relevant_drop(
     league: dict,
     ineligible_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any] | None:
-    """For one specific candidate, search which drop actually maximizes marginal value.
+    """For one candidate, the drop among slot-sharing players that maximizes season value.
 
-    `recommend_drop()` (used by the main per-round ranking, for
-    performance) is a cheap heuristic — lowest-value bench player, full
-    stop — that can suggest the same drop for very different candidates.
-    This instead restricts the search to players who share a slot type
-    with the candidate (own position, plus FLEX/SUPER_FLEX-eligible
-    positions if the candidate qualifies), tries dropping each, and
-    returns whichever resulting roster has the highest season-average
-    starting value. Deliberately not used inside `rank_by_marginal_value`'s
-    per-round loop — evaluating every drop option for every candidate would
-    multiply that pass's cost by the search pool size. Meant for on-demand
-    lookup (one candidate at a time, e.g. a UI dropdown selection).
-
-    In a league with a `SUPER_FLEX` slot (this league, always -
-    `SUPERFLEX_ELIGIBLE_POSITIONS` is all four fantasy positions by
-    definition), the "restrict to a shared slot type" narrowing above is a
-    no-op for every candidate: `eligible_positions` always expands to every
-    fantasy position, so `drop_pool` is effectively the same as
-    `recommend_drop()`'s whole-roster pool (confirmed 2026-08-06). This
-    doesn't make the *result* wrong: the search still runs the real
-    `season_average_starter_value()` simulation
-    over that pool and returns whichever drop empirically maximizes
-    marginal value, so correctness rests entirely on the simulation, not on
-    the narrowing - the same way `assign_starters()` already lets the
-    highest-*value* eligible player win a SUPER_FLEX slot regardless of
-    position rather than a hardcoded rule. The cost is scope only: every
-    on-demand lookup in this league searches the whole bench instead of a
-    realistically narrowed one. Deliberately left as-is rather than adding
-    real SUPER_FLEX-aware narrowing - the search-space cost isn't
-    demonstrated to matter at this league's roster/bench sizes, and
-    building a narrowing rule for a cost that hasn't actually shown up
-    would be solving a hypothetical problem instead of a real one.
+    Too costly for the ranking loop; meant for one on-demand lookup. With SUPER_FLEX,
+    every position shares a slot, so this searches the whole roster.
     """
     candidate_position = players.get(candidate_id, {}).get("position")
-    # Gated on whether the league's actual roster_positions has that slot
-    # type at all - same condition assign_starters itself uses - not just
-    # on FLEX_ELIGIBLE_POSITIONS/SUPERFLEX_ELIGIBLE_POSITIONS membership,
-    # so a league without a FLEX or SUPER_FLEX slot doesn't get a
-    # meaningless expansion for a position that could never actually share
-    # a real slot with the candidate.
+    # Only expand for FLEX/SUPER_FLEX if the league actually has that slot.
     eligible_positions = {candidate_position}
     if "FLEX" in league["roster_positions"] and candidate_position in FLEX_ELIGIBLE_POSITIONS:
         eligible_positions |= FLEX_ELIGIBLE_POSITIONS
@@ -151,15 +105,7 @@ def season_average_starter_value(
     league: dict,
     ineligible_ids: frozenset[str] = frozenset(),
 ) -> float:
-    """Average optimal starting-lineup value across all 18 weeks, excluding bye'd players each week.
-
-    The season-long analog of `lineup_breakdown`'s single snapshot: every
-    player misses exactly one week (their own bye), so this captures the
-    *interaction* of a bye with positional depth, not a blanket bye
-    penalty. `ineligible_ids` (taxi/IR players) never win a starting slot
-    here, matching Sleeper's own rule. See docs/rookie-draft-big-board.md's
-    "Ranking" section for the full rationale.
-    """
+    """Optimal lineup value averaged over 18 weeks, skipping bye'd players. Taxi/IR never start."""
     rows = player_value_rows(player_ids, players, fc_by_sleeper_id)
     eligible_rows = [r for r in rows if r["player_id"] not in ineligible_ids]
 
@@ -189,22 +135,12 @@ def rank_by_marginal_value(
     taxi_eligible: bool = True,
     taxi_filled: int = 0,
 ) -> list[dict]:
-    """Rank candidates by season-average marginal starting-lineup value, not raw trade value.
+    """Rank candidates by how much they raise season-average lineup value.
 
-    For each candidate: simulate adding them (only forcing the resulting
-    `recommend_drop()` if the roster is already at total capacity — see
-    `roster_total_capacity`), and measure the delta to
-    `season_average_starter_value`. `exclude_from_drop` protects specific
-    players (e.g. picked in an earlier round of the same multi-round plan)
-    from being recommended for drop; `ineligible_ids` (current taxi/IR
-    players) are never assignable to a starting slot in the simulation.
-    `taxi_eligible`/`taxi_filled` pass straight through to
-    `roster_total_capacity` — `taxi_eligible=True` (default) for the rookie
-    draft plan, `False` (with `taxi_filled` set to the roster's actual taxi
-    headcount) for `free_agent_board`'s veteran candidates. Returns up to
-    `top_n` entries (player_id, marginal_value, drop), sorted best first —
-    the first is the recommended pick, the rest are backup alternates. Full
-    rationale in docs/rookie-draft-big-board.md's "Ranking" section.
+    Each candidate is added, with a `recommend_drop()` forced only at capacity.
+    `exclude_from_drop` protects players from the drop; `taxi_eligible`/`taxi_filled`
+    pass through to `roster_total_capacity`. Returns up to `top_n`
+    `{player_id, marginal_value, drop}`, best first.
     """
     if not candidate_ids:
         return []
@@ -243,45 +179,10 @@ def free_agent_board(
     league: dict,
     top_n: int = 25,
 ) -> pd.DataFrame:
-    """Rank available free agents by season-average marginal starting-lineup value against this roster.
+    """Free agents ranked by marginal lineup value for this roster, positive values only.
 
-    Reuses `rank_by_marginal_value` exactly like the draft plan does - not a
-    second valuation model (see `.claude/conventions/valuation_principles.md`).
-    Passes `taxi_eligible=False`: Sleeper's real accrued-experience taxi rule
-    isn't modeled here, so a candidate is only ever added to an open active
-    roster slot or via a drop, never assumed to fit an open taxi slot the
-    way a rookie safely can - a documented gap (`.claude/PROJECT_PLAN_DYNASTY.md`),
-    not a silent one. Also passes `taxi_filled` (this roster's actual current
-    taxi headcount) so an existing taxi stash - the norm for a rebuilding
-    roster in this league - isn't misread as already over capacity before
-    any candidate is even considered; only a *new* candidate is barred from
-    an open taxi slot, existing occupants still count toward the ceiling
-    the same way occupied reserve slots already do. `pool` is typically
-    `free_agent_pool()`'s output; accepting it as a plain parameter (rather
-    than recomputing it here) lets `gather_state` compute it once per
-    refresh, not once per team looked up through the Roster tab's team
-    selector.
-
-    Evaluates every candidate in `pool` (candidates × 18 `assign_starters`
-    calls, no per-round multiplication like the draft plan's ~20,000-call
-    pass has) before sorting and slicing to `top_n` - cheap enough even at
-    free-agent-pool scale (~350-450 players) to score everyone rather than
-    pre-filtering.
-
-    Filtered to a positive *rounded* marginal_value - matching this
-    project's "worth surfacing at all" convention everywhere else this
-    same ranking is consumed (`build_pickup_alerts`,
-    `leaguewide_trade_candidates`/`suggested_trades`). This function itself
-    did not actually apply that floor until a 2026-08-29 review found two
-    of those other callers' docstrings incorrectly describing a filter
-    this function never had (see
-    `.claude/conventions/valuation_principles.md`'s "worth surfacing"
-    rule). Rounds before filtering, not after, for the same
-    reason `build_pickup_alerts` already does - a raw value in (0, 0.05)
-    would otherwise pass a raw `> 0` check but still render as the
-    self-contradicting "would add +0.0 to your lineup" once formatted to
-    one decimal (see `valuation_principles.md`'s "a displayed number and
-    the filter gating its display must round on the same basis" rule).
+    Adds can't use an open taxi slot (`taxi_eligible=False`). Values are rounded before
+    the `> 0` filter so the display never shows "+0.0".
     """
     ineligible_ids = frozenset(roster.get("taxi") or []) | frozenset(roster.get("reserve") or [])
     reserve_filled = len(roster.get("reserve") or [])
@@ -309,11 +210,7 @@ def free_agent_board(
         drop = candidate["drop"]
         rows.append(
             {
-                # An internal join key for a caller that needs to act on a
-                # specific candidate (FAAB bid guidance looks up its
-                # current adj_value by this), not just display it - same
-                # pattern as sellable_players()'s own player_id column, drop
-                # it before rendering a table.
+                # Join key for callers (FAAB guidance); drop before rendering.
                 "player_id": candidate["player_id"],
                 "name": info.get("full_name"),
                 "pos": info.get("position"),

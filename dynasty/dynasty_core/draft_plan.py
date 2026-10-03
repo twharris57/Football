@@ -26,8 +26,7 @@ def hypothetical_needs_and_handcuffs(
     roster_positions: list[str],
     phase: str,
 ) -> tuple[frozenset[str], dict[str, str]]:
-    """Recompute the rebuild-phase-aware need_positions and handcuff targets
-    for a hypothetical (simulated) roster - see `phase_aware_need_positions()`."""
+    """Phase-aware need positions and handcuff targets for a simulated roster."""
     needs = phase_aware_need_positions(
         {"players": player_ids}, players, fc_by_sleeper_id, replacement_level, roster_positions, phase
     )
@@ -42,14 +41,7 @@ def alternate_gap_note(
     byes: dict[str, int],
     league: dict,
 ) -> str:
-    """Describe what picking this specific alternate would change about weekly gaps, if anything.
-
-    Compares against the hypothetical roster as it stood entering this
-    round (not the plan's final roster), so the note reflects what THIS
-    choice specifically does. Structured as a plain string so more note
-    types (e.g. injury history, once/if that data is available) can be
-    appended later without changing callers.
-    """
+    """How picking this alternate changes weekly gaps versus the roster entering the round."""
     with_candidate = hypothetical_ids + [candidate_id]
     roster_after = [pid for pid in with_candidate if drop is None or pid != drop["player_id"]]
     worsened = gap_delta({"players": hypothetical_ids}, {"players": roster_after}, players, byes, league)
@@ -75,60 +67,23 @@ def multi_round_plan(
     replacement_level: dict[str, float] | None = None,
     phase: str = "rebuilding",
 ) -> dict[str, Any]:
-    """Plan for every pick the user owns this draft — what to pick and drop, and why.
+    """What to pick and drop with each of the user's picks this draft.
 
-    `replacement_level`/`phase` (the user's own rebuild-vs-contend phase from
-    `team_power_timeline_scores()`) feed each round's `hypothetical_needs_and_handcuffs()`
-    call so its "also a flagged need" reasoning stays phase-aware the same
-    way `team_roster_analysis()`'s own `need` flag is - both default to the
-    original young-core-only behavior for a caller without a real phase handy.
-
-    Ranks candidates by season-average marginal starting-lineup value
-    (`rank_by_marginal_value`), not raw trade value. Rounds already played
-    (`overall_pick < current_pick_no`) show the real player Sleeper
-    recorded, scored the same way retroactively rather than a stale
-    recommendation. Each completed round's drop is labeled with one of four
-    `drop_status` values, from `draft_snapshot` (see draft_snapshots.py's
-    `_reconcile` for the mechanics): `"confirmed"` (a real drop, recovered
-    by diffing the roster across refreshes), `"confirmed_none"` (confirmed
-    no drop was needed - roster had room), `"ambiguous"` (two or more of the
-    user's own picks completed in the same refresh gap, so which drop paired
-    with which pick can't be isolated), or `"guessed"` (the frontier hasn't
-    reached this pick yet, or it's an upcoming round - the same cheap
-    heuristic guess as before). Once a pick's real post-drop roster is known
-    (`draft_snapshot["confirmed_through_pick"]`), later rounds simulate
-    forward from that real state instead of a chain of guesses, bounding
-    simulation drift to only the unconfirmed tail of the plan.
-
-    Returns up to `MAX_DISPLAYED_ALTERNATES` backup alternates per upcoming
-    round (`alternates_by_pick`, keyed by `overall_pick`), each noting
-    whether picking it instead would open a weekly gap the primary pick
-    doesn't. `all_candidates_by_pick` (same keys) holds every candidate
-    evaluated for that round, not just the displayed few — free to expose
-    since `rank_by_marginal_value` already scores all of them; its
-    `drop_name`/`drop_is_starter` come from the same cheap heuristic as the
-    ranking, not a per-candidate optimal search (a UI wanting that should
-    call `best_position_relevant_drop()` with `hypothetical_ids_by_pick`'s
-    snapshot for that round instead). Finally compares the resulting
-    hypothetical roster's weekly gaps against the current roster's,
-    flagging any week the full plan would newly break. Full rationale in
-    docs/rookie-draft-big-board.md's "Draft plan" section.
+    - Ranks by marginal lineup value.
+    - Completed rounds show the real pick, with `drop_status` from `draft_snapshot`:
+      confirmed, confirmed_none, ambiguous, or guessed.
+    - Later rounds simulate from the last confirmed roster.
+    - Returns up to `MAX_DISPLAYED_ALTERNATES` alternates per round, every scored candidate
+      (`all_candidates_by_pick`, heuristic drops), each round's starting roster
+      (`hypothetical_ids_by_pick`), and weekly gaps the plan would open.
     """
     own_picks = own_draft_picks(ownership, user_roster_id)
     replacement_level = replacement_level or {}
 
     available_ids = set(available.keys())
     hypothetical_ids = list(user_roster.get("players") or [])
-    # The roster's current taxi/IR players are never eligible for a starting
-    # slot in the simulation below - Sleeper doesn't allow it - regardless
-    # of how their value compares to the rest of the roster.
     ineligible_ids = frozenset(user_roster.get("taxi") or []) | frozenset(user_roster.get("reserve") or [])
-    # A drafted rookie can never actually be assigned to reserve/IR (that
-    # requires a real injury designation) - only the roster's *actual*
-    # current IR headcount should count toward total capacity, not the
-    # league's full reserve_slots setting (see roster_total_capacity).
-    # Reserve occupancy doesn't change across simulated rounds, since no
-    # simulated pick ever lands on it, so this is computed once.
+    # Only currently occupied IR slots count; simulated picks never land on IR.
     reserve_filled = len(user_roster.get("reserve") or [])
     just_picked: set[str] = set()
 
@@ -143,21 +98,13 @@ def multi_round_plan(
         needs, handcuff_targets = hypothetical_needs_and_handcuffs(
             hypothetical_ids, players, handcuffs, fc_by_sleeper_id, replacement_level, league["roster_positions"], phase
         )
-        # Snapshot the roster as it stands entering this round, so a UI can
-        # later look up best_position_relevant_drop() on demand for any
-        # candidate from this specific round's context, not just whichever
-        # one this loop happens to pick.
+        # Kept so the UI can run best_position_relevant_drop() for any candidate this round.
         hypothetical_ids_by_pick[pick.overall_pick] = list(hypothetical_ids)
 
         if is_completed and real_pick_id:
             candidate_ids, top_n = [real_pick_id], 1
         else:
-            # rank_by_marginal_value already evaluates every candidate before
-            # sorting/slicing - asking for all of them here costs nothing
-            # extra (see its docstring's ~20,000-call performance note,
-            # which already assumes every candidate is scored every round).
-            # This lets the UI offer a full player-projection lookup, not
-            # just the top few, for free.
+            # Free: rank_by_marginal_value already scores every candidate.
             candidate_ids, top_n = list(available_ids), len(available_ids)
 
         ranked = rank_by_marginal_value(
@@ -180,25 +127,19 @@ def multi_round_plan(
         drop = primary["drop"]
         picked_info = players.get(picked_id, {})
 
-        # Override the heuristic guess with real, recovered drop data when
-        # available (see draft_snapshots.py) - a completed round's key is
-        # only present once its gap has actually been reconciled.
+        # Replace the heuristic drop with the recovered one once this pick is reconciled.
         confirmed_key = str(pick.overall_pick)
         if is_completed and confirmed_key in draft_snapshot["confirmed_drops"]:
             confirmed_entry = draft_snapshot["confirmed_drops"][confirmed_key]
             if confirmed_entry == AMBIGUOUS:
                 drop_status = "ambiguous"
-                # keep the heuristic `drop` as the displayed (uncertain) guess
+                # keep the heuristic drop as the displayed guess
             elif confirmed_entry is None:
                 drop_status, drop = "confirmed_none", None
             else:
                 drop_status = "confirmed"
                 drop_info = players.get(confirmed_entry, {})
-                # is_starter: was this player a starter in the roster as it
-                # stood entering this round (hypothetical_ids, still
-                # accurate at this point in the loop)? Taxi/IR players are
-                # filtered out first - Sleeper doesn't allow them to occupy
-                # a starting slot, same as recommend_drop()'s eligible_rows.
+                # Was the dropped player starting entering this round? Taxi/IR can't start.
                 pre_round_rows = player_value_rows(hypothetical_ids, players, fc_by_sleeper_id)
                 pre_round_eligible_rows = [r for r in pre_round_rows if r["player_id"] not in ineligible_ids]
                 pre_round_starters = {
@@ -259,14 +200,7 @@ def multi_round_plan(
                 )
             alternates_by_pick[pick.overall_pick] = pd.DataFrame(alt_rows)
 
-            # Every other evaluated candidate, for on-demand lookup (a
-            # dropdown in the web UI) rather than the fixed top few above -
-            # no extra scoring cost, since rank_by_marginal_value already
-            # evaluates all of them before sorting (see the top_n comment
-            # above). Deliberately omits alternate_gap_note - fine for a
-            # couple of backups above, but a per-candidate weekly-gap
-            # comparison for the whole ~200-player pool isn't worth the cost
-            # for a lookup table most entries in which nobody will ever open.
+            # Every other candidate, for the UI lookup. No gap note: too costly for ~200 rows.
             candidate_rows = []
             for candidate in ranked:
                 info = players.get(candidate["player_id"], {})
@@ -285,10 +219,7 @@ def multi_round_plan(
 
         available_ids.discard(picked_id)
         if pick.overall_pick == draft_snapshot["confirmed_through_pick"]:
-            # The real post-drop roster is now known for every pick up
-            # through this one - jump straight to it instead of carrying
-            # forward a chain of guesses (including any "ambiguous" ones),
-            # so simulation drift never extends past the unconfirmed tail.
+            # Continue from the real post-drop roster rather than a chain of guesses.
             hypothetical_ids = list(draft_snapshot["confirmed_roster"])
         else:
             if drop:

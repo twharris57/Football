@@ -208,9 +208,7 @@ def _render_free_agents(state: dict, analysis: dict, selected_roster_id: int) ->
 
 
 def _render_faab_bid_guidance(state: dict, board: pd.DataFrame) -> None:
-    """Real comparable FAAB bids for one selected free-agent candidate,
-    computed on demand rather than for every board row every refresh - most
-    rows are never looked at this closely."""
+    """Comparable FAAB bids for one selected free agent, computed on demand."""
     if board.empty or "player_id" not in board.columns:
         return
 
@@ -308,8 +306,7 @@ def _render_bye_impact(state: dict, analysis: dict) -> None:
         st.write("(none)")
         return
 
-    # league["settings"]["leg"] is Sleeper's current-week counter for the season - not
-    # otherwise used anywhere yet, but exactly what "already happened vs. still ahead" needs.
+    # Sleeper's current-week counter.
     current_week = state["league"]["settings"].get("leg", 1)
     for _, row in bye_impact.iterrows():
         is_actual = row["week"] < current_week
@@ -375,12 +372,7 @@ def render_roster_tab(state: dict) -> None:
     selected_roster_id = team_selectbox(
         "Viewing team", team_names_by_id, user_roster_id, "roster_tab_team_select"
     )
-    # Reuse the already-computed bundle for your own team (free); any other
-    # team's analysis is computed fresh here on selection - team_roster_analysis
-    # is the exact same per-roster logic gather_state already ran for you,
-    # just pointed at a different team's roster dict. Passing that team's own
-    # phase (not the viewer's) so their Need flag reflects their own
-    # rebuild-vs-contend read, not whoever happens to be looking.
+    # Other teams are analyzed on selection, using their own phase for the Need flag.
     if selected_roster_id == user_roster_id:
         analysis = state
     else:
@@ -397,11 +389,6 @@ def render_roster_tab(state: dict) -> None:
             phase=str(state["team_power_timeline"].loc[selected_roster_id, "phase"]),
         )
 
-    # Split into subtabs - a Roster visit used to render all nine sections
-    # below as one long scrolling page; grouped by theme so only the active
-    # group's content is on screen at once. Draft pick trade values moved
-    # out entirely - it was already league-wide, not team-scoped, so it now
-    # lives on the League tab instead (see docs/dynasty-draft-web-app.md).
     overview_tab, value_tab, free_agents_tab, schedule_tab = st.tabs(
         ["Overview", "Value & Handcuffs", "Free Agents", "Schedule"]
     )

@@ -1,12 +1,4 @@
-"""FAAB bid guidance from this league's own real waiver transaction history.
-
-Sleeper's transaction log records every waiver claim, win or lose, with the
-actual dollar amount bid (`settings.waiver_bid`) - a real, this-league-
-specific market signal, not an invented formula. `status == "complete"`
-means that bid actually won the player; a `"failed"` bid (outbid, over
-budget) never cleared the market, so it isn't a real clearing price and is
-excluded from the calibration sample.
-"""
+"""FAAB bid guidance from this league's real winning waiver bids (`status == "complete"`)."""
 
 from __future__ import annotations
 
@@ -17,22 +9,9 @@ import pandas as pd
 
 from .constants import FANTASY_POSITIONS
 
-# Judgment calls, not derived from any league rule - same status as the
-# trade-search bounds in trade.py. k=5 keeps the comparable set small
-# enough that "recent winning bids for similar players" reads as a short,
-# concrete list, not a wall of numbers. min_same_position=3 is the point
-# below which "closest same-position bids" stops being a meaningful sample
-# and broadening to every position (still nearest-by-value) is more honest
-# than pretending 1-2 points says something about this position
-# specifically. MIN_COMPARABLE_SAMPLE=3 is the floor below which no
-# guidance is shown at all, rather than a range computed from 1-2 points.
-# COMPARABLE_MAX_DISTANCE_PCT/MIN_ABSOLUTE_DISTANCE bound how far (in
-# adj_value) a "nearest" row is allowed to be before it stops counting as a
-# real comparable - nearest-K alone has no such floor, so on a sparse or
-# value-skewed sample it will happily return the closest rows even when
-# "closest" is still a wildly different tier of player. Same
-# max(pct * value, absolute_floor) shape as trade.py's
-# TRADE_OFFER_PARTNER_TOLERANCE_PCT/TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE.
+# Judgment calls. K comparables, the same-position minimum before broadening, the
+# minimum sample before showing anything, and a max value distance of
+# max(pct * value, absolute floor).
 COMPARABLE_NEAREST_K = 5
 MIN_SAME_POSITION = 3
 MIN_COMPARABLE_SAMPLE = 3
@@ -43,18 +22,10 @@ COMPARABLE_MIN_ABSOLUTE_DISTANCE = 50.0
 def won_bid_sample(
     transactions: list[dict[str, Any]], players: dict[str, dict], fc_by_sleeper_id: dict[str, dict]
 ) -> pd.DataFrame:
-    """Every real FAAB bid that actually won a player, with that player's
-    position and *current* `adj_value` - not value at the time of the bid,
-    which isn't reconstructable without historical roster/value snapshots
-    this project doesn't keep (a documented simplification, reasonable for
-    the short in-season windows this covers; gets materially less accurate
-    over a longer, multi-season lookback and needs revisiting before this
-    extends that far).
+    """Winning bids with the player's position and *current* `adj_value`.
 
-    A player with no resolvable current position or `adj_value` is
-    excluded - their bid amount is still real, but not usable as a
-    value-based comparable without a value to compare against. Columns:
-    `player_id`, `position`, `adj_value`, `bid`.
+    Current value stands in for value at bid time, which isn't stored. Players without a
+    position or value are dropped. Columns: `player_id`, `position`, `adj_value`, `bid`.
     """
     rows = []
     for txn in transactions:
@@ -83,46 +54,12 @@ def nearest_comparable_bids(
     k: int = COMPARABLE_NEAREST_K,
     min_same_position: int = MIN_SAME_POSITION,
 ) -> tuple[list[dict[str, float]], bool]:
-    """Up to `k` real historical winning bids nearest to `candidate_adj_value`
-    by value distance - not a fixed percentage band, which can return
-    nothing at all on a thin sample; nearest-K always returns something as
-    long as `sample` has any rows within tolerance.
+    """Up to `k` winning bids nearest `candidate_adj_value`, within the distance floor.
 
-    Same-position rows preferred; broadens to every row in `sample`
-    (still nearest-by-value) only when the same-position count is below
-    `min_same_position`, since bidding behavior plausibly differs
-    meaningfully by position - **except for QB, which never broadens in
-    either direction**. This is a confirmed superflex league (`SUPER_FLEX`
-    is a real roster slot), so a QB can draw a real bidding premium purely
-    from 2-QB-startable scarcity that a same-`adj_value` RB/WR/TE never
-    faces - mixing a thin QB sample into RB/WR/TE comparables *or the
-    reverse* would present a calibrated-looking range built from a
-    different demand curve than the one the candidate is actually being
-    bid into. Both directions are guarded: a QB candidate's own pool never
-    broadens out past same-position QB rows, and a non-QB candidate's
-    broadened pool has QB rows excluded before ranking, so a QB bid can
-    never surface as an unlabeled comparable for a TE/WR/RB candidate
-    either. A live check of this league's own transaction history found
-    only 2 real QB winning bids to date - too few to confirm or rule out
-    the premium empirically, so this stays a small-sample "no guidance
-    yet" for QB (via `bid_guidance`'s `MIN_COMPARABLE_SAMPLE` floor)
-    rather than a mismatched-demand-curve range; revisit once a real QB
-    sample exists to check against. Whichever pool gets selected, a row
-    only counts as a real comparable if its `adj_value` is within
-    `max(COMPARABLE_MAX_DISTANCE_PCT * candidate_adj_value,
-    COMPARABLE_MIN_ABSOLUTE_DISTANCE)` of the candidate's - nearest-K alone
-    has no such floor, so on a sparse or value-skewed sample it would
-    otherwise return whatever's closest even when "closest" is still a
-    wildly different tier of player.
-
-    Returns `(comparables, same_position)` - `comparables` is each row's
-    `bid` alongside its own `adj_value` (not just the bid amount), so a
-    caller can show the real player value each bid came from rather than
-    asking the reader to trust an unverifiable "similar" claim.
-    `same_position` is `False` when broadening happened, so a caller can
-    say so honestly rather than implying a position-specific comparison
-    that isn't really there. Always `True` for QB, since QB never
-    broadens (an empty/thin QB pool means no guidance, not a broadened one).
+    Same position preferred, broadening to all positions below `min_same_position`. QB
+    never mixes with other positions in either direction (superflex prices QBs
+    differently). Returns `(comparables, same_position)`; comparables include each bid's
+    `adj_value`.
     """
     if sample.empty:
         return [], True
@@ -142,19 +79,10 @@ def nearest_comparable_bids(
 
 
 def bid_guidance(candidate_adj_value: float, candidate_position: str, sample: pd.DataFrame) -> dict[str, Any] | None:
-    """Real comparable historical bids for a free-agent candidate, plus a
-    low/median/high computed directly from that same list - never an
-    independently invented number.
+    """Comparable bids plus low/median/high from that same list.
 
-    `None` if fewer than `MIN_COMPARABLE_SAMPLE` comparables were found
-    close enough in value (see `nearest_comparable_bids`'s distance
-    tolerance) - too thin, or too far away in value, to say anything
-    useful yet (matches this project's existing small-sample-guard
-    pattern, e.g. `_sane_ratio`/`QUALIFYING_VOLUME`): an honest gap, not a
-    fabricated figure from too few or too-mismatched real data points.
-    `low`/`high` are the min/max of the comparable set itself, not a
-    percentile calculation - a percentile implies more statistical rigor
-    than a sample this small (3-5 points) actually supports.
+    `None` below `MIN_COMPARABLE_SAMPLE` close comparables. Low/high are min/max, not
+    percentiles.
     """
     comparables, same_position = nearest_comparable_bids(candidate_adj_value, candidate_position, sample)
     if len(comparables) < MIN_COMPARABLE_SAMPLE:

@@ -1,14 +1,6 @@
-"""Streamlit dashboard for the rookie draft big board (see dynasty_core/).
+"""Dynasty league dashboard, built for use from a phone during a live draft.
 
     streamlit run streamlit_app.py
-
-Meant to be usable from a phone during the live draft: sidebar inputs for
-league ID / username, a Refresh button (re-pulls league/rosters/draft/picks —
-cheap, always live), and an "Advanced refresh" section (players/values cache
-bust, plus a scoring-multiplier prewarm) split out separately so the slow
-multiplier recompute (1-2 min) is never an accidental side effect of a
-routine refresh, but is still reachable from a phone if the user needs to
-prewarm it.
 """
 
 from __future__ import annotations
@@ -42,16 +34,8 @@ league_id = st.sidebar.text_input("League ID", value=dynasty_core.DEFAULT_LEAGUE
 username = st.sidebar.text_input("Username", value=dynasty_core.DEFAULT_USERNAME)
 
 if "refresh_token" not in st.session_state:
-    # "Now, rounded down to the minute" - not a fixed 0 (see below for why
-    # 0 was a bug, not just a stylistic choice). Streamlit resets
-    # session_state on every new/reconnected session (a page reload, a
-    # phone backgrounding and reconnecting the websocket), so a session
-    # that hasn't clicked Refresh yet always falls back to this default.
-    # Minute-bucketing keeps the one property a shared default is for -
-    # concurrent sessions loading within the same minute (e.g. two of your
-    # own devices opening the page at once) still share one fetch - while
-    # guaranteeing a reconnect after that window gets a real, unseen cache
-    # key instead of an arbitrarily old one.
+    # Before any click: the current minute, so sessions opened together share one fetch
+    # and reconnects later get a fresh key.
     st.session_state.refresh_token = dt.datetime.now().timestamp() // 60
 if "force_refresh_pending" not in st.session_state:
     st.session_state.force_refresh_pending = False
@@ -70,65 +54,25 @@ with st.sidebar.expander("Advanced refresh"):
     apply_advanced = st.button("Apply advanced refresh")
 
 if refresh or apply_advanced:
-    # A raw, full-precision timestamp - not an incrementing counter, and not
-    # bucketed like the pre-click default above. st.cache_data's cache is
-    # shared across the whole server process, not per-session; a click is a
-    # deliberate "get me current data now," so its key must be unique enough
-    # to never collide with any prior click's value or a stale default
-    # bucket. A counter restarting at 0 on each new session could land on a
-    # small integer some *other* session already used earlier in the draft,
-    # silently hitting that session's stale cached snapshot instead of
-    # re-fetching (found live, 2026-08-08). A sub-second timestamp can't
-    # collide that way.
+    # A full timestamp: the cache is shared across sessions, so a click's key must never
+    # repeat an earlier one.
     st.session_state.refresh_token = dt.datetime.now().timestamp()
-    # A widget button/checkbox's value is only current on the exact run it
-    # was clicked - any later rerun (e.g. opening an expander) can see a
-    # stale/default value again. load_state's cache key must not depend on
-    # that raw, one-run-only value (it did before - see PROJECT_PLAN_DYNASTY.md),
-    # or the very next rerun after a refresh click gets a different key,
-    # misses cache, and silently re-fetches for no reason. These two flags
-    # are durable session_state instead, stable across reruns until the
-    # next actual button click changes refresh_token again.
+    # Button values only last one run; persist the flags so later reruns keep the same key.
     st.session_state.force_refresh_pending = apply_advanced and refresh_players
     st.session_state.force_scoring_pending = apply_advanced and refresh_scoring
 
 
 @st.cache_data(show_spinner="Loading draft state...", ttl="1h")
-# ttl is a backstop, not the primary freshness mechanism (that's the minute-
-# bucketed default token above) - without it, a NAS deployment that stays up
-# for a whole multi-week draft would accumulate one cache entry per distinct
-# minute bucket / click forever, since st.cache_data never evicts on its own
-# with no ttl set.
+# ttl only bounds cache growth on a long-running server.
 def load_state(
     league_id: str, username: str, force_full_refresh: bool, force_scoring_refresh: bool, token: float
 ) -> dict:
-    # `token` must NOT be named `_token` (or any other leading-underscore
-    # name) - Streamlit's st.cache_data silently excludes any argument whose
-    # name starts with "_" from the cache key entirely (verified directly
-    # against the installed streamlit source, 2026-08-16). A prior version of
-    # this parameter was named `_token`, which meant its value never actually
-    # affected caching - a plain Refresh click looked like it was cache-busting
-    # (the button, the session_state write, the spinner all "worked") but
-    # silently kept returning whatever was cached under the first-ever
-    # (league_id, username, force_full_refresh, force_scoring_refresh) call in
-    # the process's lifetime. This is the actual root cause of the "Refresh
-    # doesn't pick up new picks" bug two earlier fixes (see PROJECT_PLAN_DYNASTY.md)
-    # attempted and failed to fix, since both only changed the *value* being
-    # passed in, never the fact that the name made the value irrelevant.
+    # Must not start with "_": st.cache_data leaves underscore args out of the key,
+    # which would make Refresh a no-op. Guarded by test_streamlit_refresh_cache.py.
     state = dynasty_core.gather_state(league_id, username, force_full_refresh, force_scoring_refresh)
-    # Captured here, inside the cached function, so it's frozen at the
-    # moment this data was actually fetched and reused verbatim on every
-    # cache hit - reading dt.datetime.now() anywhere outside this function
-    # would just report "now" on every rerun (tab switches, expanders),
-    # not when the underlying data was last pulled.
+    # Stamped inside the cached function so it shows fetch time, not rerun time.
     state["loaded_at"] = dt.datetime.now()
-    # A cheap, already-unique identity for "this particular fetch" - token is
-    # only ever a fresh, real timestamp on a genuine refetch (see above), so
-    # it doubles as a version stamp any on-demand, session_state-cached UI
-    # result can carry alongside itself and compare against later, to detect
-    # "this was computed against an earlier state" rather than silently
-    # displaying it as current (see trade_tab.py's suggested-trades scan for
-    # the first consumer of this, docs/dynasty-data-model.md for the pattern).
+    # Version stamp for on-demand results cached in session_state.
     state["version"] = token
     return state
 
@@ -150,8 +94,6 @@ try:
         st.session_state.refresh_token,
     )
 except requests.RequestException as exc:
-    # gather_state() names which of the two services (Sleeper/FantasyCalc)
-    # actually failed.
     st.error(f"{exc}. Hit Refresh to try again.")
     st.stop()
 except ValueError as exc:
@@ -240,13 +182,7 @@ def _render_lineup_tab() -> None:
     show_df(ir, "(empty)", column_config=bench_cols)
 
 
-# Tab order shifts with the season rather than staying fixed: Draft Plan is
-# the tab checked right before a live pick, so it leads while a
-# draft is ongoing/upcoming; Summary is more useful once the draft is behind
-# you, so it leads instead once draft_complete (same condition already
-# driving the "Draft complete."/on-the-clock banner above - both "before any
-# picks" and "mid-draft" fall under draft_complete=False, exactly the
-# "ongoing/upcoming" grouping this is meant to capture).
+# Draft Plan leads during a draft; Summary leads once it's complete.
 tab_specs: list[tuple[str, Callable[[], None]]] = [
     ("Draft Plan", lambda: render_plan_tab(state)),
     ("Lineup", _render_lineup_tab),
