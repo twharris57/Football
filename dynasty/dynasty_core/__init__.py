@@ -134,6 +134,7 @@ from .trade import (
     sellable_players,
     suggested_trades,
 )
+from .trade_block import PrunedEntry, TradeBlockEntry, prune_stale_entries
 from .waiver_bids import (
     COMPARABLE_MAX_DISTANCE_PCT,
     COMPARABLE_MIN_ABSOLUTE_DISTANCE,
@@ -168,6 +169,7 @@ __all__ = [
     "NFL_WEEKS",
     "PHASE_THRESHOLDS",
     "POSITION_VALUE_MULTIPLIER",
+    "PrunedEntry",
     "ROUND_ORDINAL",
     "SUGGESTED_TRADE_SCAN_TOP_K",
     "SUPERFLEX_ELIGIBLE_POSITIONS",
@@ -181,6 +183,7 @@ __all__ = [
     "YOUNG_CORE_MAX_YOE",
     "YOUNG_CORE_NEED_THRESHOLD",
     "DraftPickSlot",
+    "TradeBlockEntry",
     "_future_pick_owners",
     "_max_affordable_target_value",
     "_need_from_phase",
@@ -227,6 +230,7 @@ __all__ = [
     "player_value_rows",
     "position_replacement_levels",
     "positional_strength_summary",
+    "prune_stale_entries",
     "rank_by_marginal_value",
     "recent_complete_seasons_weekly_data",
     "reconcile_pickup_snapshot",

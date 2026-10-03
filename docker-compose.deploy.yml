@@ -16,6 +16,7 @@ services:
       - "${DYNASTY_HOST_PORT:-8501}:8501"
     volumes:
       - nfl_data_cache:/app/.cache
+      - dynasty_data:/app/dynasty_data
     restart: unless-stopped
 
   confidence-pool:
@@ -46,6 +47,9 @@ services:
 
 volumes:
   nfl_data_cache:
+  # The trade-block store (SC-18) -- survives container restarts/redeploys,
+  # unlike the rest of the dynasty image which is baked in at build time.
+  dynasty_data:
   # Weekly picks/games history -- see docs/confidence-pool-web-app.md and
   # .claude/PROJECT_PLAN_CONFIDENCE_POOL.md's CP-2: confirm this volume is
   # actually covered by the NAS's offsite backup (it's durable across

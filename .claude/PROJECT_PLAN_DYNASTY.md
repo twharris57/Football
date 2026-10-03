@@ -36,7 +36,7 @@ nothing outlives it to cross-reference) but still uses plain bullets.
 
 **ID tracker** (last number assigned per prefix — bump this the moment a new
 item is filed, whether or not any item with that prefix still appears
-below): `NB-2`, `RT-31`, `VA-9`, `CQ-13`, `DL-9`, `SC-18`.
+below): `NB-2`, `RT-32`, `VA-9`, `CQ-13`, `DL-10`, `SC-18`.
 
 ## Short list — actively prioritized right now
 
@@ -64,8 +64,15 @@ notifies end to end; see "Automated daily scout" below):
    zero tool calls (no `PushNotification`, nothing else) produced no
    notification on the user's device. `SC-5`'s "stay quiet on a quiet
    night" guarantee holds.
-6. `SC-18` — trade-block list as a checked-in file, so `SC-3` has
-   something to read.
+6. `SC-18` — trade-block list, so `SC-3` has something to read. **Built**
+   (2026-09-26): a SQLite-backed store (`dynasty/trade_block_store.py`) +
+   a "Trade Block" subtab on Trade Evaluator (add/view/remove, plus
+   auto-prune the moment a listed player is traded away or dropped) —
+   revised from the original checked-in-file design once the user asked
+   for real in-app editing instead of hand-maintaining JSON. Still open:
+   `SC-3` (cloud sandbox, no network path into the NAS) has no way to
+   read this live NAS-side data yet — a real gap, not solved by this
+   change, to be answered when `SC-3` is actually built.
 7. `SC-3` — Claude Scout research pass, bounded scope.
 8. `SC-6` — the nightly orchestrator, tying `SC-1`/`SC-3`/`SC-4`/`SC-5`
    together and notifying.
@@ -234,19 +241,38 @@ notifications — not directly portable, but its dedup pattern informed
   `scout-data` under GitHub's 1,000-entry listing cap). Staleness banner
   waits for a Scout UI to exist.
 
-- [ ] **SC-18: Trade-block list — a checked-in file, not app state.**
-  Not started. Sleeper has no "on the trade block" concept — which
-  players are being shopped is purely user-declared intent, so it has to
-  live somewhere the cloud routine can actually read. A small
-  `trade_block.json` checked into `main`, edited directly by the user or
-  a local Claude Code session (already has working git/`gh` write
-  access, same capability `SC-7`'s fallback already leans on) rather
-  than an automated NAS-to-GitHub push — trade-block changes are
-  infrequent enough that this is simpler than giving the NAS app its own
-  GitHub write credential. `SC-3` reads it to prioritize research.
+- [ ] **SC-18: Trade-block list — live, in-app, SQLite-backed.** Built
+  (2026-09-26): Sleeper has no "on the trade block" concept of its own —
+  which players are being shopped is purely user-declared intent — so
+  this is tracked in a new small SQLite store
+  (`dynasty/trade_block_store.py`, a `trade_block` table: `sleeper_id`
+  primary key, `roster_id`, `added_date`) persisted via a
+  `dynasty_data` Docker volume (mirrors `confidence_pool_data`'s existing
+  pattern — the only other precedent in this repo for "the app needs to
+  persist its own live state across container restarts"). Managed
+  through a new "Trade Block" subtab on Trade Evaluator
+  (`dynasty/tabs/trade_tab.py`): add/view/remove a player directly, no
+  more hand-editing a file. `dynasty_core.trade_block.prune_stale_entries()`
+  (pure, unit-tested) auto-removes an entry the moment its player is no
+  longer on the roster it was added under — classified as "traded" (still
+  rostered elsewhere) or "dropped" (not rostered anywhere), reusing
+  `player_pools.rostered_player_ids` — checked fresh every time the tab
+  loads, against that refresh's live roster data.
+
+  Originally scoped as a checked-into-`main` JSON file for `SC-3` to
+  read directly off GitHub; revised once the user asked for a real
+  in-app editing UI instead, which needs a live, writable store, not a
+  hand-edited file. **Still open, not solved by this change**: `SC-3`
+  runs in a cloud sandbox with no network path into the NAS at all
+  (confirmed via live debugging, see this section's own "Why GitHub, not
+  the NAS, holds state" note) — it can only ever read this repo via
+  GitHub, and this store lives only on the NAS. When `SC-3` is actually
+  built, it needs its own answer to "how does the cloud routine see this
+  live NAS state" (an export back to GitHub? read it a different way
+  entirely?) — a real, unresolved question, not a rubber-stamped detail.
 
 **Build order:** `scout-data` branch ✅ → `SC-1` ✅ → `SC-2` ✅ → `SC-4` ✅
-→ `SC-17` ✅ → `SC-18` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9`
+→ `SC-17` ✅ → `SC-18` ✅ → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9`
 → `SC-10`. `SC-15`'s remaining NAS deployment and `SC-16`'s staleness
 banner are decoupled from this chain — pick up whenever a Scout UI is
 built.
@@ -374,6 +400,19 @@ Deliberately out of v1, not forgotten:
   now that leaguewide scanning itself is built and the section's filter UI
   exists to extend (see `docs/rookie-draft-big-board.md`'s "Suggested
   Trades" section).
+- [ ] **RT-32: Surface trade-block status inside Manual Trade/Suggested
+  Trades results, not just the standalone Trade Block subtab**
+  (user-flagged 2026-09-22, while scoping `SC-18`) — `SC-18`'s Trade
+  Block subtab covers add/view/remove directly; this is the next layer,
+  a display/filter pass on top: tag a player already on the block when
+  they show up as a Manual Trade selection or a Suggested Trades
+  candidate, and/or let a leaguewide scan scope specifically to "who's
+  shopping this player." Not a new valuation path — reuse
+  `find_trade_offers()`/`suggested_trades()`'s existing ranking per
+  `valuation_principles.md`'s "one valuation strategy, used everywhere"
+  rule; `trade_block_store.get_trade_block()` already returns the
+  `(sleeper_id, roster_id)` pairs this would key off. Not scoped in
+  detail yet — revisit once there's a concrete UI shape in mind.
 - [ ] **RT-6: Contextual research check for news/hype beyond Sleeper's data**
   (user-flagged 2026-07-31, possibly via "Claude Scout" or similar — name
   unconfirmed) — a rare, explicitly user-triggered lookup (not a
@@ -719,3 +758,25 @@ assumption changes.
   to a single ingest-time (or single shared-helper) filter if a new
   consumer of raw `players` is ever added; not urgent since nothing is
   broken today.
+- [ ] **DL-10: Auto-detect the trade block by scraping Sleeper's own web
+  UI, instead of managing entries through the app's own Trade Block
+  subtab** (user-flagged 2026-09-22, considered and set aside while
+  scoping `SC-18`) — Sleeper's team page (`sleeper.com/leagues/{id}/team`)
+  tags trade-block players in its trade modal, but that's client-rendered
+  by its React app from an internal, undocumented JSON endpoint the modal
+  calls on open, not present in the page's raw HTML — "scraping the HTML"
+  isn't actually viable; the real target would be reverse-engineering
+  that private endpoint via browser devtools. It also sits behind a
+  logged-in league member's session, so this would need real
+  session-cookie auth, a meaningfully different and more fragile
+  dependency than every other Sleeper integration in this project
+  (`sleeper_api.py` is deliberately public/read-only/unauthenticated),
+  with no ToS/stability guarantee and a real risk of silently breaking on
+  any Sleeper frontend change. Set aside for now — `SC-18` already solves
+  the "no more hand-editing" problem with a real in-app UI, so this would
+  only save the trivial cost of a few clicks in exchange for a
+  meaningfully more fragile dependency. Revisit only if that trade-off
+  ever looks different; if picked up, the first real step is capturing
+  that endpoint's request/response from devtools to see whether its
+  shape is stable enough to build against at all, before any
+  implementation work.
