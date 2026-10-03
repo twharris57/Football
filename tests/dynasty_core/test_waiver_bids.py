@@ -92,9 +92,7 @@ class TestNearestComparableBids:
         assert 50.0 in {c["bid"] for c in comparables}  # the RB row is now eligible since no TE rows exist at all
 
     def test_qb_never_broadens_even_when_same_position_sample_is_too_thin(self):
-        # Superflex scarcity means a QB bid isn't comparable to a same-value
-        # RB/WR/TE bid - QB should stay on its own thin pool (empty here)
-        # rather than broadening into the WR/RB rows, per RT-28.
+        # QB stays on its own (empty) pool rather than broadening.
         sample = self._sample()  # no QB rows at all
 
         comparables, same_position = dc.nearest_comparable_bids(100.0, "QB", sample, min_same_position=3)
@@ -114,9 +112,7 @@ class TestNearestComparableBids:
         assert {c["bid"] for c in comparables} == {40.0}  # only the 1 real QB row, never the WR/RB rows
 
     def test_qb_row_is_excluded_from_a_non_qb_candidates_broadened_pool(self):
-        # RT-29: broadening isn't just one-directional - a QB's superflex-
-        # inflated bid must not surface as an unlabeled comparable for a
-        # non-QB candidate either, even when it's the nearest-by-value row.
+        # A QB bid can't be a comparable for a non-QB candidate either.
         sample = pd.DataFrame(
             [
                 {"player_id": "qb1", "position": "QB", "adj_value": 100.0, "bid": 45.0},
@@ -150,9 +146,7 @@ class TestNearestComparableBids:
         assert by_bid[8.0] == 90.0
 
     def test_excludes_comparables_too_far_in_value_even_though_the_pool_is_nonempty(self):
-        # Same-position count clears min_same_position, so the pool selection
-        # itself succeeds - but every row is a wildly different tier of
-        # player than the candidate, so none should count as "comparable."
+        # Enough same-position rows, but all far away in value: none count.
         sample = self._sample()
 
         comparables, same_position = dc.nearest_comparable_bids(2000.0, "WR", sample, min_same_position=3)
@@ -197,9 +191,7 @@ class TestBidGuidance:
         assert guidance["same_position"] is True
 
     def test_returns_none_when_comparables_exist_but_are_all_too_far_in_value(self):
-        # 3 real comparables clear MIN_COMPARABLE_SAMPLE on count alone, but
-        # the candidate is a far higher tier of player than any of them -
-        # a count floor with no distance floor would wrongly show guidance here.
+        # Three rows pass the count floor but not the distance floor.
         sample = pd.DataFrame(
             [
                 {"player_id": "wr1", "position": "WR", "adj_value": 50.0, "bid": 5.0},
@@ -225,9 +217,7 @@ class TestBidGuidance:
         assert guidance["same_position"] is False
 
     def test_qb_gets_no_guidance_rather_than_a_broadened_range(self):
-        # A same-value RB sample clears MIN_COMPARABLE_SAMPLE easily, but a
-        # QB candidate should never be shown a range built from non-QB bids
-        # (RT-28) - "no guidance yet" is the honest outcome here.
+        # A QB candidate gets no guidance from non-QB bids.
         sample = pd.DataFrame(
             [
                 {"player_id": "rb1", "position": "RB", "adj_value": 100.0, "bid": 10.0},
@@ -239,9 +229,7 @@ class TestBidGuidance:
         assert dc.bid_guidance(100.0, "QB", sample) is None
 
     def test_non_qb_candidate_never_gets_a_qb_bid_folded_into_its_guidance(self):
-        # RT-29: a QB row that's nearest-by-value must not count toward a
-        # non-QB candidate's comparable sample or its low/median/high, even
-        # when including it would otherwise clear MIN_COMPARABLE_SAMPLE.
+        # A nearest QB row doesn't count toward a non-QB sample.
         sample = pd.DataFrame(
             [
                 {"player_id": "qb1", "position": "QB", "adj_value": 100.0, "bid": 999.0},

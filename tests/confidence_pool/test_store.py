@@ -17,9 +17,7 @@ TEST_ALGORITHM_VERSION = "test-v1"
 @pytest.fixture
 def conn():
     c = store.connect(":memory:")
-    # weekly_picks.algorithm_version FKs to algorithm_versions -- register one
-    # so save_week() fixtures below satisfy the constraint, same as the real
-    # app does once at startup (see streamlit_app.py).
+    # Register an algorithm version so weekly_picks' foreign key is satisfied, as the app does.
     store.register_algorithm_version(c, TEST_ALGORITHM_VERSION, "test algorithm")
     return c
 
@@ -53,10 +51,7 @@ def _picks_df(game_id="g1", predicted_winner="KC", **overrides):
 
 
 def _save(conn, season_year, week, games, picks, generated_at, first_snapshot_eligible=True, **kwargs):
-    """save_week() wrapper defaulting first_snapshot_eligible=True -- most
-    tests here aren't exercising the first-look-window gate (see
-    TestFirstSnapshotWindow), so this keeps them focused on what they
-    actually test."""
+    """`save_week()` with `first_snapshot_eligible=True`, for tests not about the first-look gate."""
     store.save_week(conn, season_year, week, games, picks, generated_at, first_snapshot_eligible, **kwargs)
 
 
@@ -111,9 +106,7 @@ class TestWeekRules:
         assert store.get_week_rule(conn, 2026, 5) is None
 
     def test_unconfigured_known_late_season_weeks_default_to_all_games(self, conn):
-        # CP-24: the "every game counts" half of the late-season exception
-        # must apply even before a human ever visits Settings -- only the
-        # deadline *value* genuinely needs yearly configuration.
+        # Late-season weeks select every game before anyone configures a deadline.
         for week in store.KNOWN_LATE_SEASON_WEEKS:
             rule = store.get_week_rule(conn, 2026, week)
             assert rule["selection_rule"] == "all_games"
@@ -126,9 +119,7 @@ class TestWeekRules:
         assert rule["deadline_override"] == datetime(2026, 12, 26, 13, 0).isoformat()
 
     def test_late_season_deadline_accepts_any_week_in_range(self, conn):
-        # Deliberately not restricted to a hardcoded pair -- which weeks
-        # carry this exception changes year to year (2025: 17-18; 2026
-        # added week 16), confirmed against the real 2026 bylaws.
+        # Any week can be configured; the late-season set changes yearly.
         store.set_late_season_deadline(conn, 2026, 16, datetime(2026, 12, 26, 13, 0))
 
         assert store.get_week_rule(conn, 2026, 16)["selection_rule"] == "all_games"
@@ -240,8 +231,7 @@ class TestSaveAndLoadWeek:
         assert status["locked_at"] == "2026-09-13T13:00:00"
 
     def test_locking_persists_a_lock_warning(self, conn):
-        # CP-15: a caveat from resolve_week_lock() (e.g. "computed after
-        # kickoff") must survive reload, not just the moment it's set.
+        # The lock warning survives reload.
         _save(
             conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0),
             lock=True, lock_warning="odds computed after kickoff",
@@ -274,9 +264,7 @@ class TestSaveAndLoadWeek:
         assert current["confidence"] == pytest.approx(0.9)
 
     def test_load_week_can_load_the_first_snapshot_instead_of_current(self, conn):
-        # CP-26: a caller (the Picks tab's snapshot toggle) needs to see the
-        # frozen 'first' look separately from whatever 'current' has since
-        # become, not just 'current' as load_week always returned before.
+        # 'first' loads separately from 'current'.
         _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.2), datetime(2026, 9, 10, 9, 0))
         _save(conn, 2026, 1, _games_df(), _picks_df(confidence=0.9), datetime(2026, 9, 12, 9, 0))
 
@@ -303,9 +291,7 @@ class TestSaveAndLoadWeek:
 
 
 class TestFirstSnapshotEligibility:
-    """A save made while previewing a future week (first_snapshot_eligible=False,
-    from picks_core.is_first_look_window()) must not get permanently recorded
-    as that week's 'first' look -- only the first *eligible* save can."""
+    """Only an eligible save may claim the week's 'first' snapshot."""
 
     def test_an_ineligible_save_does_not_capture_a_first_snapshot(self, conn):
         store.save_week(
@@ -486,8 +472,7 @@ class TestGameOutcomesAndReportedScore:
         assert status["reported_score"] is None
 
     def test_a_reported_score_of_zero_round_trips_as_a_real_value(self, conn):
-        # A week where every pick was wrong genuinely scores 0 -- must be
-        # distinguishable from "nothing entered" (see CP-31).
+        # 0 is a real score, distinct from nothing entered.
         _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True)
 
         store.set_reported_score(conn, 2026, 1, 0, datetime(2026, 9, 15, 9, 0))
@@ -497,9 +482,7 @@ class TestGameOutcomesAndReportedScore:
         assert status["reported_score_entered_at"] is not None
 
     def test_a_negative_reported_score_round_trips(self, conn):
-        # Bylaws rule 2's late-card penalty (10 points below the field's
-        # lowest card) can go negative when that week's lowest card is
-        # itself under 10.
+        # Late-card penalties can push a score negative.
         _save(conn, 2026, 1, _games_df(), _picks_df(), datetime(2026, 9, 13, 13, 0), lock=True)
 
         store.set_reported_score(conn, 2026, 1, -3, datetime(2026, 9, 15, 9, 0))

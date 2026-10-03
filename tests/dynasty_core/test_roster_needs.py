@@ -10,9 +10,7 @@ from tests.dynasty_core.helpers import fc_entry, make_player
 
 
 class TestPositionStarterDemand:
-    """SUPER_FLEX demand should count as extra QB demand specifically - the
-    confirmed fix for the review-flagged QB VOR undercount - not applied to
-    any other position (FLEX-for-RB/WR/TE stays a deliberately unmodeled gap)."""
+    """SUPER_FLEX adds QB demand only; FLEX isn't modeled."""
 
     def test_super_flex_adds_to_qb_demand_only(self):
         roster_positions = ["QB", "SUPER_FLEX", "WR", "BN"]
@@ -25,9 +23,7 @@ class TestPositionStarterDemand:
 
 
 class TestPositionReplacementLevels:
-    """Replacement level should be an external, league-wide baseline - the Nth-best
-    rostered player at a position, N = starter demand * number of teams - not
-    anything relative to a single roster."""
+    """Replacement level is the league-wide Nth-best rostered player at a position."""
 
     def test_replacement_level_is_the_nth_best_player_leaguewide(self):
         # 1 dedicated WR slot * 2 teams = rank 2 - the 2nd-best WR leaguewide.
@@ -57,11 +53,8 @@ class TestPositionReplacementLevels:
         assert levels["TE"] == 0.0
 
     def test_super_flex_deepens_qb_replacement_rank(self):
-        # 1 dedicated QB slot + 1 SUPER_FLEX * 2 teams = rank 4, not rank 2 -
-        # the review-flagged bug this test guards against regressing.
-        # position deliberately omitted from fc_entry - passing "QB" would
-        # trigger the real POSITION_VALUE_MULTIPLIER fallback (1.175x) and
-        # break this test's hand-computed values below.
+        # (1 QB + 1 SUPER_FLEX) × 2 teams = 4th-best QB. No position on fc_entry, so the
+        # position multiplier doesn't change the hand-computed values.
         league_roster_positions = ["QB", "SUPER_FLEX", "BN"]
         players = {f"qb{i}": make_player("QB", full_name=f"QB{i}") for i in range(5)}
         fc_by_id = dc.fc_value_by_sleeper_id(
@@ -109,8 +102,7 @@ class TestPositionalStrengthSummary:
         assert summary.loc["WR", "weak"]
 
     def test_super_flex_counts_a_second_qb_toward_starter_value(self):
-        # 1 dedicated QB + 1 SUPER_FLEX = top 2 QBs count toward starter_value,
-        # not just the top 1 - the review-flagged bug this test guards against.
+        # 1 QB + 1 SUPER_FLEX: the top 2 QBs count toward starter_value.
         league_roster_positions = ["QB", "SUPER_FLEX", "BN"]
         players = {
             "qb1": make_player("QB", full_name="QB One"),
@@ -127,9 +119,7 @@ class TestPositionalStrengthSummary:
 
 
 class TestNeedFromPhase:
-    """The rebuild-phase-aware "need" switch: young-core count while
-    rebuilding, the VOR-based "weak" read otherwise - binary, not a
-    three-way blend across the three phase labels."""
+    """`need` = young-core count while rebuilding, else `weak`."""
 
     def test_rebuilding_uses_young_core_threshold(self):
         young_core = pd.Series([0, 3], index=["QB", "WR"])

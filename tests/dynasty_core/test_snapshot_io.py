@@ -91,10 +91,7 @@ class TestWriteIfChanged:
         assert not path.exists()
 
     def test_force_writes_even_when_content_is_identical(self, tmp_path):
-        # A migrated file must be persisted at its new schema the moment
-        # it's touched, even if the reconcile logic itself found nothing
-        # new to record - otherwise it could sit indefinitely on disk at
-        # an old/missing stamp despite being read correctly every time.
+        # A migrated file is written back even when nothing else changed.
         path = tmp_path / "out.json"
 
         write_if_changed(path, {"a": 1}, {"a": 1}, schema_version=2, force=True)

@@ -1,10 +1,4 @@
-"""Shared synthetic-data builders for dynasty_core package tests.
-
-Everything here uses synthetic players/league/values, never a real Sleeper
-or FantasyCalc call — per testing.md ("mock only external services you do
-not control"), but these are pure functions over plain data structures, so
-there's nothing to mock in the first place, just data to construct.
-"""
+"""Synthetic data builders for dynasty_core tests."""
 
 from __future__ import annotations
 
@@ -15,9 +9,7 @@ SIMPLE_LEAGUE = {
     "settings": {"taxi_slots": 2},
 }
 
-# find_trade_offers() always builds a pick pool from a pick-value table, even
-# when a test's scenario doesn't involve any picks - an empty table with the
-# right columns keeps those tests from needing to fabricate irrelevant rows.
+# An empty pick-value table for tests that don't involve picks.
 EMPTY_PICKS = pd.DataFrame(columns=["pick", "owner", "owner_roster_id", "value"])
 
 

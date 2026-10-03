@@ -1,8 +1,4 @@
-"""Tests for player_scoring.py's real-vs-baseline scoring formula and long-play bonuses.
-
-Synthetic stat rows only, no real nfl_data_py calls — these are pure
-functions over plain data structures, matching test_dynasty_core.py's style.
-"""
+"""Tests for player_scoring's scoring formula and bonuses, on synthetic stat rows."""
 
 from __future__ import annotations
 
@@ -133,9 +129,7 @@ class TestLongPlayBonusPoints:
 
 
 class TestPickSixPenaltyPoints:
-    """pass_int_td is a penalty on top of the flat per-interception rate, only
-    when the interception itself gets returned for a touchdown - found during
-    a one-time scoring_settings audit, not covered by _stat_points."""
+    """`pass_int_td` applies only to interceptions returned for a TD, on top of `pass_int`."""
 
     def test_penalizes_the_passer_on_an_interception_return_touchdown(self):
         pbp = pd.DataFrame(
@@ -174,9 +168,7 @@ class TestPickSixPenaltyPoints:
 
 
 class TestShrunkRatio:
-    """A player's own ratio should blend toward the position average by
-    volume, replacing the old all-or-nothing QUALIFYING_VOLUME cutoff with
-    a smooth ramp - same shape as power_timeline.py's _shrunk_win_pct()."""
+    """Own ratio blends toward the position average by volume."""
 
     def test_at_k_volume_own_ratio_gets_exactly_half_weight(self):
         # k = 200 (QB's QUALIFYING_VOLUME) - at volume == k, weight = 200/400 = 0.5.
@@ -199,11 +191,7 @@ class TestShrunkRatio:
 
 
 class TestDeriveMultipliersShrinkageK:
-    """_derive_multipliers must scale QUALIFYING_VOLUME's single-season bar by
-    LOOKBACK_SEASONS before using it as _shrunk_ratio()'s k - k weights a
-    player's *lookback-window* (multi-season) volume, not a single season's,
-    so using the bar unscaled would give a thin-career player far more
-    trust than the bar was ever calibrated to justify (VA-9)."""
+    """k is the single-season bar × LOOKBACK_SEASONS, since it weights multi-season volume."""
 
     def _weekly_row(self, player_id: str, season: int, position: str, carries: int, rushing_yards: float,
                      rushing_tds: int, rushing_first_downs: int) -> dict:
@@ -234,9 +222,7 @@ class TestDeriveMultipliersShrinkageK:
         }
 
     def test_shrinkage_k_is_qualifying_volume_scaled_by_lookback_seasons(self, monkeypatch):
-        # One qualifying RB season (carries >= 100) anchors position_average.
-        # One thin RB spread 34 carries/season across 3 seasons (102 total -
-        # barely over the single-season bar, nowhere near it per season).
+        # One qualifying RB season anchors the average; a thin RB has 34 carries × 3 seasons.
         weekly = pd.DataFrame(
             [
                 self._weekly_row("qual1", 2023, "RB", carries=200, rushing_yards=800, rushing_tds=8,
@@ -304,9 +290,7 @@ class TestBucketMetric:
 
 
 def _qb_season_row(player_id: str, real_points: float, baseline_points: float) -> dict:
-    # season_totals always carries every position's volume column (see
-    # _season_totals_by_player's groupby), even for a QB-only test fixture -
-    # _derive_rookie_buckets loops over every position in QUALIFYING_VOLUME.
+    # season_totals always has every position's volume column.
     return {
         "player_id": player_id,
         "position": "QB",
@@ -319,10 +303,7 @@ def _qb_season_row(player_id: str, real_points: float, baseline_points: float) -
 
 
 class TestDeriveRookieBuckets:
-    """_derive_rookie_buckets should classify this year's rookies into a play-style
-    bucket via combine data and assign that bucket's pooled ratio - explicitly
-    rescoped to rookies only (valuation step A), with historical/veteran players
-    only ever used to compute the bucket averages, never assigned one themselves."""
+    """Rookies get their combine bucket's pooled ratio; veterans only feed the averages."""
 
     def _patch_combine(self, monkeypatch, historical: pd.DataFrame, rookie: pd.DataFrame, crosswalk: pd.DataFrame):
         def fake_combine_data(years):
@@ -338,9 +319,7 @@ class TestDeriveRookieBuckets:
             [_qb_season_row(f"gsis_low_{i}", 120.0, 100.0) for i in range(12)]
             + [_qb_season_row(f"gsis_high_{i}", 150.0, 100.0) for i in range(12)]
         )
-        # Real combine data always carries every position's columns (wt, forty, ...)
-        # regardless of position - included here even though QB doesn't bucket on wt,
-        # since _derive_rookie_buckets' RB/WR/TE loop iterations read this same frame.
+        # Real combine data has every column for every position.
         historical = pd.DataFrame(
             [{"pos": "QB", "pfr_id": f"low_{i}", "forty": 4.5, "wt": 220.0} for i in range(12)]
             + [{"pos": "QB", "pfr_id": f"high_{i}", "forty": 5.0, "wt": 220.0} for i in range(12)]
@@ -395,10 +374,7 @@ class TestDeriveRookieBuckets:
 
 
 class TestSaneRatio:
-    """A ratio computed from a near-zero/negative baseline, or landing outside
-    MULTIPLIER_BOUNDS, must be rejected rather than feeding a nonsense number
-    into adj_value - a real risk for a qualifying-volume player with a
-    genuinely bad season (heavy INTs, low yardage)."""
+    """Ratios from a near-zero baseline or outside MULTIPLIER_BOUNDS are rejected."""
 
     def test_normal_ratio_is_returned(self):
         assert ps._sane_ratio(120.0, 100.0) == pytest.approx(1.2)

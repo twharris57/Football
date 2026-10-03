@@ -37,9 +37,7 @@ class TestWeightedAverageAge:
 
 
 class TestTeamPowerTimelineScores:
-    """power_score should combine roster strength (VOR), timeline (weighted
-    age), and actual record into one league-wide z-scored signal, recomputed
-    fresh from current state - not any one signal alone, and not cached."""
+    """power_score combines strength, value-weighted age, and record, z-scored league-wide."""
 
     def test_stronger_older_winning_team_scores_higher(self):
         league = {"roster_positions": ["WR", "BN"]}
@@ -95,9 +93,7 @@ class TestTeamPowerTimelineScores:
         assert scores.loc[2, "games_played"] == 0
 
     def test_a_tie_earns_half_win_credit_not_a_full_loss(self):
-        # A 1-1-1 record (1 win, 1 loss, 1 tie) should read as 50%, not the
-        # 33% it would read as if the tie contributed zero to the numerator
-        # while still counting toward games_played in the denominator.
+        # 1-1-1 is 50%: a tie counts as half a win.
         league = {"roster_positions": ["WR", "BN"]}
         players = {"a_wr": make_player("WR", full_name="A WR")}
         players["a_wr"]["age"] = 25
@@ -111,10 +107,7 @@ class TestTeamPowerTimelineScores:
         assert scores.loc[1, "win_pct"] == pytest.approx(0.5)
 
     def test_early_record_is_shrunk_toward_neutral(self):
-        # Three identical rosters differing only in record: 0 games, a 1-0
-        # start, and a settled 10-0 finish. Without shrinkage, 1-0 and 10-0
-        # would both compute a raw win_pct of 1.0 and score identically -
-        # the exact bug this test guards against.
+        # 0 games, 1-0, and 10-0: without shrinkage, 1-0 and 10-0 would score the same.
         league = {"roster_positions": ["WR", "BN"]}
         players = {
             "a_wr": make_player("WR", full_name="A WR"),
@@ -135,11 +128,7 @@ class TestTeamPowerTimelineScores:
 
         scores = dc.team_power_timeline_scores(rosters, players, fc_by_id, replacement_level, league)
 
-        # win_pct is the RAW, unshrunk record - both the 1-0 and 10-0 teams
-        # are a real 100% record and must display as such, not as the
-        # statistical prior fed to the score (see valuation_principles.md's
-        # "a field used as both an internal score input and a user-facing
-        # label needs two names" rule).
+        # win_pct is the real record, shown as-is.
         assert scores.loc[2, "win_pct"] == pytest.approx(1.0)
         assert scores.loc[3, "win_pct"] == pytest.approx(1.0)
         # win_pct_shrunk is what actually feeds the z-scoring: a 1-0 start
@@ -166,10 +155,7 @@ class TestTeamPowerTimelineScores:
         assert scores.loc[1, "phase"] == "treading_water"
 
     def test_quality_and_timeline_axes_can_disagree_within_one_team(self):
-        # A young, strong, winning roster is exactly the case power_score
-        # alone hides: it's "quality strong" (high VOR + winning) but
-        # "timeline rebuild-pointed" (young) at the same time - two signals
-        # a trade evaluator needs to tell apart, not average together.
+        # Young, strong, and winning: high quality but rebuild-pointed timeline.
         league = {"roster_positions": ["WR", "BN"]}
         players = {
             "a_wr": make_player("WR", full_name="A WR"),
@@ -188,9 +174,6 @@ class TestTeamPowerTimelineScores:
 
         # Team 1: strong quality (high VOR + winning) ...
         assert scores.loc[1, "quality_score"] > 0
-        # ... but timeline says rebuild (young), not win-now - the opposite
-        # sign from quality_score, which power_score's single blended
-        # number can't surface.
         assert scores.loc[1, "timeline_score"] < 0
         assert scores.loc[2, "quality_score"] < 0
         assert scores.loc[2, "timeline_score"] > 0

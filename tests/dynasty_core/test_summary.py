@@ -13,9 +13,7 @@ EMPTY_SELLABLE = pd.DataFrame(columns=["player_id", "name", "pos", "age", "value
 EMPTY_FREE_AGENTS = pd.DataFrame(columns=["name", "pos", "team", "marginal_value", "drop_name", "drop_is_starter"])
 EMPTY_PICKUP_ALERTS: list[dict] = []
 
-# Week 1 as "current" in most tests below means every fixture week (1..18)
-# passes the current-week filter unchanged, so it doesn't interfere with
-# tests targeting a different behavior.
+# Week 1 as current keeps every fixture week in play.
 WEEK_1 = 1
 
 
@@ -79,10 +77,7 @@ class TestBuildAttentionDigest:
         assert digest == {"needs": [], "weekly_gaps": [], "sellable": [], "free_agents": [], "pickup_alerts": []}
 
     def test_free_agent_board_with_no_columns_at_all_does_not_crash(self):
-        # free_agent_board() returns a columnless pd.DataFrame([]) (not just
-        # zero rows of the real columns) when its ranked pool is empty -
-        # filtering by column name on that would raise KeyError rather than
-        # just finding nothing.
+        # An empty free_agent_board has no columns.
         digest = dc.build_attention_digest(
             frozenset(), EMPTY_WEEKLY_GAPS, EMPTY_SELLABLE, pd.DataFrame([]), EMPTY_PICKUP_ALERTS, WEEK_1
         )
@@ -106,10 +101,7 @@ class TestBuildAttentionDigest:
         assert digest["weekly_gaps"] == ["Week 2: gap at RB"]
 
     def test_weekly_gaps_excludes_weeks_already_in_the_past(self):
-        # RT-19 fix-before-merge finding: gap weeks that have already
-        # happened have nothing left to act on and must not occupy a capped
-        # slot ahead of a real upcoming gap - mirrors roster_tab.py's
-        # _render_bye_impact() "already happened" vs. "still ahead" split.
+        # Past gap weeks don't take capped slots from upcoming ones.
         gaps = pd.DataFrame([_gap_row(2, "RB"), _gap_row(4, "RB"), _gap_row(6, "RB"), _gap_row(14, "WR")])
 
         digest = dc.build_attention_digest(
@@ -133,9 +125,7 @@ class TestBuildAttentionDigest:
         ]
 
     def test_weekly_gaps_caps_after_excluding_past_weeks_not_before(self):
-        # A past-week gap must not count against top_n at all - capping
-        # before filtering would still let a stale week silently displace a
-        # real upcoming one.
+        # Filter before capping.
         gaps = pd.DataFrame(
             [_gap_row(2, "RB"), _gap_row(11, "RB"), _gap_row(12, "RB"), _gap_row(13, "RB"), _gap_row(14, "WR")]
         )
@@ -277,10 +267,7 @@ class TestBuildAttentionDigest:
         ]
 
     def test_pickup_alerts_notes_a_required_drop_and_whether_its_a_starter(self):
-        # Same "what this would replace" phrasing free_agent_board() rows
-        # already show - pickup_alerts carries the same drop_name/
-        # drop_is_starter fields (state.py stamps them from the same
-        # rank_by_marginal_value() call), not just a bare marginal_value.
+        # Pickup alerts use the same "what this replaces" wording as free agents.
         alerts = [
             _alert(
                 "New Guy", "WR", "team", old=None, new="KC", marginal_value=8.0,
@@ -298,10 +285,7 @@ class TestBuildAttentionDigest:
         ]
 
     def test_pickup_alerts_preserves_caller_order_when_capped(self):
-        # The caller (state.py) is responsible for ranking pickup_alerts by
-        # marginal value before passing them in - this function must only
-        # format and cap, never re-sort, or the caller's ranking would be
-        # silently undone.
+        # Format and cap only; never re-sort the caller's ranking.
         alerts = [_alert(f"Player {i}", "RB", "team", old=None, new="KC", marginal_value=1.0) for i in range(5)]
 
         digest = dc.build_attention_digest(

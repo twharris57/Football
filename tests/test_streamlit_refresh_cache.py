@@ -1,25 +1,9 @@
-"""Regression test for load_state's cache-busting key (dynasty/streamlit_app.py).
+"""Refresh must actually re-fetch.
 
-Streamlit's `st.cache_data` silently excludes any argument whose name starts
-with "_" from the cache key entirely - a real, documented convention for
-genuinely unhashable arguments (e.g. DB connections), but `load_state`'s
-cache-busting token is a plain `float`, which was always hashable and never
-needed it. A prior version of this parameter was named `_token`: the Refresh
-button, the session_state write, and the spinner all "worked," but the
-token's value never actually affected caching, so a plain Refresh silently
-kept returning whatever was cached under the first-ever call in the
-process's lifetime (found live on the Synology deployment, 2026-08-16 - see
-PROJECT_PLAN_DYNASTY.md). Two earlier fixes changed the token's *value* without
-renaming it, so neither actually fixed the bug.
-
-Drives the real app via Streamlit's AppTest, monkeypatching
-dynasty_core.gather_state to a call counter instead of hitting Sleeper/
-FantasyCalc (testing.md: mock only external services this project doesn't
-control). The fake state only needs the fields streamlit_app.py reads before
-the tabs render (current_pick_no <= 0 picks means "Draft complete," skipping
-the on-the-clock lookup) - AppTest captures any later tab-rendering
-exception in `at.exception` without failing `.run()`, so an intentionally
-incomplete fake state doesn't need to satisfy every tab.
+`st.cache_data` ignores arguments whose names start with "_", so a `_token` parameter
+would silently make Refresh a no-op. Drives the real app with AppTest and a counting
+`gather_state` stub. The fake state only covers what renders before the tabs; tab
+errors land in `at.exception` without failing `.run()`.
 """
 
 from __future__ import annotations

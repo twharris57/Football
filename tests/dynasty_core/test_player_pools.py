@@ -9,10 +9,7 @@ from tests.dynasty_core.helpers import fc_entry, make_player
 
 
 class TestFantasyRelevantTeamedPlayers:
-    """fantasy_relevant_teamed_players should be every fantasy-relevant, real-NFL-team
-    player regardless of fantasy-roster status - the broader population free_agent_pool
-    narrows down further, and what pickup_snapshots.py tracks so a fantasy-roster drop
-    can't masquerade as a real NFL-team signing (see RT-22 in PROJECT_PLAN_DYNASTY.md)."""
+    """Every fantasy-position player on an NFL team, rostered or not."""
 
     def test_includes_rostered_players_unlike_free_agent_pool(self):
         players = {
@@ -82,10 +79,7 @@ class TestFreeAgentPool:
         assert set(pool.keys()) == {"wr"}
 
     def test_excludes_draft_eligible_rookies_mid_draft(self):
-        # An undrafted rookie mid-startup-draft is a draft prospect, not a
-        # waiver-wire pickup - not in rostered_player_ids either, but must
-        # still be excluded via draft_eligible_rookie_ids (gather_state's
-        # own undrafted-rookie pool for the draft plan itself).
+        # Undrafted rookies are excluded while the draft is live.
         players = {
             "rookie_wr": make_player("WR", full_name="Undrafted Rookie"),
             "veteran_wr": make_player("WR", full_name="Veteran FA"),
@@ -96,9 +90,7 @@ class TestFreeAgentPool:
         assert set(pool.keys()) == {"veteran_wr"}
 
     def test_undrafted_rookie_becomes_a_real_free_agent_once_draft_is_complete(self):
-        # gather_state passes an empty draft_eligible_rookie_ids once the
-        # draft has no picks remaining - the same rookie is a real free
-        # agent again with no special-casing needed at that point.
+        # Once the draft ends, the same rookie is a free agent.
         players = {"rookie_wr": make_player("WR", full_name="Undrafted Rookie")}
 
         pool = dc.free_agent_pool(players, [], draft_eligible_rookie_ids=frozenset())

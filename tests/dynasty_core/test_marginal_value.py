@@ -9,13 +9,7 @@ from tests.dynasty_core.helpers import SIMPLE_LEAGUE, fc_entry, make_player
 
 
 class TestCapacityAwareDrop:
-    """rank_by_marginal_value should only force a drop when the roster is genuinely full.
-
-    Regression coverage for the pre-draft-review bug: recommend_drop() used
-    to be called unconditionally for every candidate, even with open
-    active/taxi capacity, understating marginal value and risking an
-    unnecessary cut.
-    """
+    """A drop is forced only when the roster is genuinely full."""
 
     def test_no_drop_forced_when_roster_has_open_capacity(self):
         # SIMPLE_LEAGUE's total capacity is 7 roster_positions + 2 taxi = 9;
@@ -58,10 +52,7 @@ class TestCapacityAwareDrop:
         assert ranked[0]["drop"]["player_id"] == "p0"
 
     def test_occupied_reserve_slots_count_toward_total_capacity(self):
-        # roster_total_capacity() used to omit reserve_slots entirely, so an
-        # existing IR occupant's headcount silently ate into active/taxi
-        # capacity instead of its own bucket - understating true room and
-        # forcing an unnecessary drop even with a genuinely open taxi slot.
+        # Occupied IR slots count toward capacity in their own bucket.
         league = {"roster_positions": ["WR"], "settings": {"taxi_slots": 1, "reserve_slots": 1}}
         assert dc.roster_total_capacity(league, reserve_filled=1) == 3  # 1 active + 1 taxi + 1 occupied reserve
 
@@ -93,13 +84,7 @@ class TestCapacityAwareDrop:
         assert ranked[0]["drop"] is None
 
     def test_empty_reserve_slots_do_not_count_toward_total_capacity(self):
-        # Live-draft bug report: a league with 2 unused reserve_slots (nobody
-        # on IR) let the first 2 picks skip a drop entirely, since the old
-        # roster_total_capacity() always added the full reserve_slots
-        # setting regardless of actual IR occupancy - even though a drafted
-        # rookie can never actually be assigned to reserve (that requires a
-        # real injury designation). reserve_filled=0 here (its default)
-        # should give the same capacity as if reserve_slots didn't exist.
+        # Empty IR slots aren't room for a rookie: reserve_filled=0 matches no reserve slots.
         league = {"roster_positions": ["WR"], "settings": {"taxi_slots": 1, "reserve_slots": 2}}
         assert dc.roster_total_capacity(league) == 2  # 1 active + 1 taxi + 0 occupied reserve
 
@@ -131,13 +116,7 @@ class TestCapacityAwareDrop:
         assert ranked[0]["drop"]["player_id"] == "taxi_wr"
 
     def test_taxi_eligible_false_does_not_count_open_taxi_slots_as_room(self):
-        # SIMPLE_LEAGUE: 7 active + 2 taxi = 9 total capacity with the
-        # default taxi_eligible=True. 7 existing players + 1 candidate = 8,
-        # which fits under 9 (taxi counted) but exceeds 7 (active-only) -
-        # exactly the gap free_agent_board's taxi_eligible=False closes,
-        # since Sleeper's real accrued-experience taxi rule isn't modeled
-        # and a veteran free agent can't be assumed to fit an open taxi
-        # slot the way a rookie safely can.
+        # 7 active + 2 taxi = 9. Eight players fit with taxi, but not with taxi_eligible=False (7).
         players = {f"p{i}": make_player("WR") for i in range(7)}
         players["new_fa"] = make_player("WR")
         fc_values = [fc_entry(f"p{i}", 100 + i) for i in range(7)] + [fc_entry("new_fa", 500)]
@@ -170,15 +149,8 @@ class TestCapacityAwareDrop:
         assert ranked_default[0]["drop"] is None
 
     def test_taxi_filled_credits_an_existing_taxi_occupant_as_room_already_spent(self):
-        # SIMPLE_LEAGUE: 7 active + 2 taxi. Roster already has 6 "regular"
-        # players plus 1 existing taxi stash (7 total) - a normal state for
-        # this league's rebuild strategy, not an edge case. +1 candidate = 8.
-        # Without crediting the existing taxi occupant via taxi_filled,
-        # taxi_eligible=False's capacity (7, active-only) would read this as
-        # already over before the candidate is even considered - the exact
-        # bug found reviewing the trade evaluator. With taxi_filled=1
-        # correctly credited, capacity is 8 (7 active + 1 already-spent taxi
-        # slot) and no drop should be forced.
+        # 6 regular players + 1 taxi stash + 1 candidate = 8. Crediting taxi_filled=1 makes
+        # capacity 8, so no drop.
         players = {f"p{i}": make_player("WR") for i in range(6)}
         players["taxi_stash"] = make_player("WR", full_name="Taxi Stash")
         players["new_fa"] = make_player("WR")
@@ -242,12 +214,7 @@ class TestFreeAgentBoard:
         assert board.iloc[0]["drop_name"] == "Low Value WR"
 
     def test_existing_taxi_occupant_does_not_force_an_unnecessary_drop(self):
-        # A roster with one active starter and one existing taxi stash - the
-        # normal state for this league's rebuild strategy, not an edge case.
-        # Bug found reviewing the trade evaluator: taxi_eligible=False used
-        # to zero taxi capacity entirely, so the existing taxi occupant
-        # alone made the roster read as already over capacity, forcing a
-        # drop on every single candidate regardless of real open bench room.
+        # One starter plus one taxi stash must not read as over capacity.
         league = {"roster_positions": ["WR", "BN", "BN"], "settings": {"taxi_slots": 2}}
         roster = {"players": ["starter_wr", "taxi_stash"], "taxi": ["taxi_stash"], "reserve": []}
         players = {
@@ -265,11 +232,7 @@ class TestFreeAgentBoard:
         assert board.iloc[0]["drop_name"] is None
 
     def test_zero_or_negative_marginal_value_candidates_are_excluded(self):
-        # VA-8: free_agent_board() used to show every candidate regardless
-        # of sign. A candidate too weak to win the roster's one WR slot
-        # gets added and then immediately recommended for its own drop by
-        # the capacity-forced cut - a self-canceling, marginal_value 0.0
-        # non-recommendation that used to still appear on the board.
+        # A candidate too weak to start nets 0.0 after its own forced cut, so it's filtered out.
         league = {"roster_positions": ["WR"]}
         roster = {"players": ["starter_wr"], "taxi": [], "reserve": []}
         players = {
@@ -288,9 +251,7 @@ class TestFreeAgentBoard:
 
 
 class TestRecommendDropIneligibility:
-    """A taxi/IR player must never be misclassified as a "starter", even if its
-    value alone would otherwise win a starting slot - Sleeper doesn't allow
-    starting them, so they can't be wrongly protected from the drop pool."""
+    """Taxi/IR players can't count as starters, whatever their value."""
 
     def test_high_value_taxi_player_is_never_marked_a_starter(self):
         players = {"starter": make_player("WR"), "taxi_wr": make_player("WR")}
@@ -301,26 +262,16 @@ class TestRecommendDropIneligibility:
             ["starter", "taxi_wr"], players, fc_by_id, league, ineligible_ids=frozenset({"taxi_wr"})
         )
 
-        # Without the fix, taxi_wr's 500 value would win the WR slot and get
-        # misclassified as a starter, leaving "starter" (50) as the only
-        # bench candidate - recommending a cut to the real active starter
-        # while the taxi player sat falsely "protected".
+        # Otherwise taxi_wr (500) would take the WR slot and the real starter (50) would be cut.
         assert drop["player_id"] == "taxi_wr"
         assert drop["is_starter"] is False
 
 
 class TestRecommendDropExcludedCompetition:
-    """exclude_ids protects a player from being *chosen* as the drop, but must not
-    remove them from the starter-assignment competition itself - otherwise a
-    droppable player can misread as a "starter" just because the excluded
-    player(s) who'd actually win that slot were filtered out first."""
+    """Excluded players can't be chosen, but still compete for starting slots."""
 
     def test_excluded_players_still_count_as_competition_for_starter_status(self):
-        # Only one WR slot. "c" and "d" (both 200) are excluded from being
-        # the recommended cut, but they still legitimately win the lone WR
-        # slot over "b" (100). Before the fix, filtering c/d out before
-        # assign_starters ran would let "b" trivially win that slot by
-        # default and misread as is_starter: True.
+        # One WR slot: excluded c and d (200) still beat b (100), so b isn't a starter.
         players = {
             "b": make_player("WR", full_name="B"),
             "c": make_player("WR", full_name="C"),
@@ -336,15 +287,10 @@ class TestRecommendDropExcludedCompetition:
 
 
 class TestBestPositionRelevantDrop:
-    """Unlike recommend_drop's cheap lowest-raw-value heuristic, this should
-    (a) only ever consider players who actually share a slot type with the
-    candidate, and (b) search for the drop that maximizes the resulting
-    marginal value, not just the one with the lowest raw adj_value."""
+    """Searches slot-sharing players for the drop that maximizes value, not the lowest value."""
 
     def test_only_considers_players_sharing_a_slot_type_with_the_candidate(self):
-        # No FLEX/SUPER_FLEX in this league, so a WR candidate should only
-        # ever consider other WRs as a drop - never the bench QB, even
-        # though it has the lowest raw value on the whole roster.
+        # No FLEX/SUPER_FLEX: a WR candidate only considers WRs, never the cheap bench QB.
         league = {"roster_positions": ["QB", "WR", "BN"], "settings": {}}
         players = {
             "starter_qb": make_player("QB", full_name="Starter QB"),
@@ -369,13 +315,8 @@ class TestBestPositionRelevantDrop:
         assert best["player_id"] == "bench_wr"
 
     def test_picks_the_drop_with_the_greatest_marginal_gain_not_the_lowest_raw_value(self):
-        # bench_B has a higher raw value than bench_A, but shares its bye
-        # week with both the current starter AND the incoming candidate -
-        # keeping it provides zero unique bye coverage. bench_A, despite a
-        # lower raw value, is the only player available the one week
-        # starter and candidate are both out, so dropping bench_B (and
-        # keeping bench_A) yields a strictly better season average - the
-        # opposite of what a lowest-raw-value heuristic would choose.
+        # bench_B outvalues bench_A but shares everyone's bye; bench_A covers the week both
+        # starters are out, so dropping bench_B is better.
         league = {"roster_positions": ["WR"], "settings": {}}
         players = {
             "starter": make_player("WR", team="T1", full_name="Starter"),
@@ -399,19 +340,9 @@ class TestBestPositionRelevantDrop:
         assert best["player_id"] == "bench_b"
 
     def test_superflex_league_still_finds_the_correct_cross_position_drop(self):
-        # RT-17: with a SUPER_FLEX slot (this league, always),
-        # SUPERFLEX_ELIGIBLE_POSITIONS is all four fantasy positions, so the
-        # "restrict to a shared slot type" narrowing is a no-op - a WR
-        # candidate's search pool includes a bench QB too, not just other
-        # WRs. Confirmed correctness (not just a no-op) rests on the real
-        # simulation: same bye-overlap trick as the test above (a lower-raw-
-        # value bench player who uniquely covers a week the higher-value one
-        # doesn't), but across positions - bench_qb (not another WR) is the
-        # one worth keeping. starter_flex fills the SUPER_FLEX slot on its
-        # own, ahead of both bench_qb/bench_wr, so both genuinely start on
-        # the bench before the candidate is even considered - otherwise
-        # bench_wr (60 > 40) would already be a real starter itself and
-        # never enter the drop search in the first place.
+        # With SUPER_FLEX, the pool spans positions; the simulation still finds the right
+        # drop. starter_flex fills SUPER_FLEX so both bench players begin on the bench, and
+        # bench_qb's unique bye coverage beats bench_wr's higher value.
         league = {"roster_positions": ["WR", "SUPER_FLEX"], "settings": {}}
         players = {
             "starter_wr": make_player("WR", team="T1", full_name="Starter WR"),
@@ -429,11 +360,7 @@ class TestBestPositionRelevantDrop:
                 fc_entry("candidate", 1000, position="WR"),
             ]
         )
-        # T1/T2/T4/T5 share bye week 1 (bench_wr provides zero unique
-        # coverage that week - it's out right alongside everyone else); T3
-        # (bench_qb) is out a different week (5), when the others are
-        # already covering both slots anyway. Keeping bench_qb strictly
-        # beats keeping bench_wr on season-average value.
+        # T1/T2/T4/T5 share bye week 1; bench_qb (T3) covers week 5.
         byes = {"T1": 1, "T2": 1, "T3": 5, "T4": 1, "T5": 1}
         hypothetical_ids = ["starter_wr", "starter_flex", "bench_qb", "bench_wr"]
 

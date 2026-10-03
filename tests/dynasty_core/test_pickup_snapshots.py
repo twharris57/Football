@@ -15,10 +15,7 @@ def pool_player(team: str | None, depth_chart_order: int | None = None, status: 
 
 
 def tracked_player(team: str | None, depth_chart_order: int | None = None, status: str | None = None) -> dict:
-    # Same shape as pool_player - separate name in the tests below that are
-    # specifically about the *tracked universe* being broader than "the
-    # current free-agent pool" (see RT-22 in PROJECT_PLAN_DYNASTY.md), so the two
-    # concepts don't read as interchangeable just because they share a shape.
+    # Same shape as pool_player; named for tests about the tracked population being broader than the pool.
     return pool_player(team, depth_chart_order, status)
 
 
@@ -32,17 +29,8 @@ class TestDiff:
         assert changes == [{"player_id": "a", "kind": "team", "old": "KC", "new": "BUF"}]
 
     def test_first_appearance_in_an_already_initialized_snapshot_is_a_flaggable_team_change(self):
-        # The central fix this design exists for: a player absent from
-        # `previous` (but the snapshot as a whole is already established -
-        # other players have real prior entries) is a real "just signed with
-        # a team" event, not silently skipped. Skipping would permanently
-        # miss this scenario, since there's no later point where the player
-        # would suddenly acquire a "prior entry" to compare against. This
-        # reading is only safe because the caller (reconcile_pickup_snapshot,
-        # via fantasy_relevant_teamed_players) is expected to pass the *full*
-        # teamed population, not just the free-agent subset - see
-        # test_a_player_only_newly_available_but_already_tracked_is_not_a_false_signing
-        # below for the case this would otherwise get wrong.
+        # No prior entry in an established snapshot is a real signing, not skipped. Safe because
+        # the caller tracks the whole teamed population.
         previous = {"other_player": {"team": "SF", "depth_chart_order": 1, "status": "Active"}}
         pool = {"other_player": pool_player("SF", 1, "Active"), "new_player": pool_player("DAL")}
 
@@ -51,22 +39,9 @@ class TestDiff:
         assert changes == [{"player_id": "new_player", "kind": "team", "old": None, "new": "DAL"}]
 
     def test_a_player_only_newly_available_but_already_tracked_is_not_a_false_signing(self):
-        # RT-22 (2026-08-08 valuation review): a veteran who's been on the
-        # same NFL team the whole time, but only just got dropped by a
-        # fantasy manager, must NOT read as "just signed with {team}" - that
-        # claim would be flatly wrong. The fix is at the wiring level
-        # (reconcile_pickup_snapshot is now given the full
-        # fantasy_relevant_teamed_players() population, not just the current
-        # free-agent pool - see the module docstring), so this player already
-        # has a real `previous` entry here even though they'd be "new" from a
-        # free-agent-pool-only point of view. `_diff` itself doesn't know or
-        # care about roster/pool status at all - only whether a prior entry
-        # exists - which is exactly what makes tracking the right population
-        # upstream the actual fix.
+        # A veteran dropped by a fantasy manager, same NFL team: not a signing, because they
+        # already have a prior entry from the full-population tracking.
         previous = {"vet": tracked_player("KC", 4, "Active")}
-        # "vet" was rostered by some fantasy team when last tracked and has
-        # just been dropped - same real NFL team, nothing about their NFL
-        # situation changed.
         universe = {"vet": tracked_player("KC", 4, "Active")}
 
         assert _diff(previous, universe) == []
@@ -106,9 +81,7 @@ class TestDiff:
         assert _diff(previous, pool) == []
 
     def test_player_who_left_and_returned_diffs_against_retained_prior_values(self):
-        # Retained from before they left the pool (see reconcile's merge
-        # behavior) - a real change is still detectable, not treated as a
-        # fresh first-sighting just because they were briefly off-pool.
+        # Kept from before they left the population, so the change is still detected.
         previous = {"a": {"team": "KC", "depth_chart_order": 4, "status": "Active"}}
         pool = {"a": pool_player("KC", 1, "Active")}
 

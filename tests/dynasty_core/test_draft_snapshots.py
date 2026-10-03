@@ -134,9 +134,7 @@ class TestReconcileSnapshot:
         )
 
         assert updated == {"confirmed_through_pick": 5, "confirmed_roster": ["a", "b"], "confirmed_drops": {"5": None}}
-        # Nothing new was reconciled (no picks completed since pick 5), but
-        # the file must still be rewritten with the current schema_version
-        # rather than staying unstamped indefinitely.
+        # Nothing new, but an unstamped file is still rewritten with the current version.
         on_disk = json.loads(path.read_text(encoding="utf-8"))
         assert on_disk["schema_version"] == ds.SCHEMA_VERSION
 
@@ -173,9 +171,7 @@ class TestMarkOrphanedSnapshots:
         assert recent_path.exists()
 
     def test_never_touches_the_current_draft_even_if_old(self, tmp_path, monkeypatch):
-        # Shouldn't happen in practice (an active draft's own file gets
-        # rewritten on every real pick), but the current-draft file must
-        # never be marked regardless of its age.
+        # The current draft's file is never marked, whatever its age.
         monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
         current_path = _snapshot_path("current_draft")
         current_path.write_text("{}", encoding="utf-8")
@@ -218,10 +214,7 @@ class TestMarkOrphanedSnapshots:
         assert (tmp_path / "draft_snapshots_old_draft.json.orphaned").exists()
 
     def test_marking_stamps_the_orphaned_files_mtime_to_now(self, tmp_path, monkeypatch):
-        # _delete_orphaned_snapshots()'s cooldown reads this mtime as "when
-        # was this marked" - if marking didn't restamp it, an old
-        # snapshot's already-90-day-stale mtime would let it slip past the
-        # cooldown immediately, defeating the whole point of the cooldown.
+        # Marking restamps mtime, or the cooldown would pass immediately for an old file.
         monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
         old_path = _snapshot_path("old_draft")
         old_path.write_text("{}", encoding="utf-8")
@@ -245,9 +238,7 @@ class TestDeleteOrphanedSnapshots:
         assert not orphaned_path.exists()
 
     def test_leaves_a_freshly_marked_file_alone(self, tmp_path, monkeypatch):
-        # A file that was *just* marked (mtime ~= now) must survive - the
-        # cooldown is what gives a human a real window to notice and
-        # rename a wrongly-marked file back, not just "one prior call."
+        # A just-marked file survives the cooldown.
         monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
         orphaned_path = tmp_path / "draft_snapshots_old_draft.json.orphaned"
         orphaned_path.write_text("{}", encoding="utf-8")
@@ -273,11 +264,7 @@ class TestDeleteOrphanedSnapshots:
     def test_a_file_marked_orphaned_this_call_is_not_deleted_by_a_later_call_within_the_cooldown(
         self, tmp_path, monkeypatch
     ):
-        # Two reconcile_snapshot() calls seconds apart (e.g. two quick
-        # Refresh-button clicks - streamlit_app.py's cache-busting token
-        # has no debounce) must not be enough to delete a just-marked file.
-        # "Survived one prior call" alone isn't a real time buffer; the
-        # cooldown is.
+        # Two quick refreshes can't delete a just-marked file.
         monkeypatch.setattr(ds, "CACHE_DIR", tmp_path)
         old_path = _snapshot_path("old_draft")
         old_path.write_text("{}", encoding="utf-8")

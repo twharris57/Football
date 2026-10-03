@@ -13,9 +13,7 @@ from tests.dynasty_core.helpers import EMPTY_PICKS, fc_entry, make_player
 
 
 class TestSellablePlayers:
-    """Sellable candidates are a surplus position's own bench depth beyond
-    its starters, not the starters themselves and not rookies - and only
-    if dropping them wouldn't open a weekly-depth hole."""
+    """Sellable = surplus-position bench depth; never starters or rookies, and never a weekly-gap risk."""
 
     def test_flags_depth_beyond_starters_excludes_starter_and_rookie(self):
         league = {"roster_positions": ["WR", "BN", "BN"]}
@@ -35,9 +33,7 @@ class TestSellablePlayers:
 
         sellable = dc.sellable_players(roster, players, fc_by_id, replacement_level, league, byes={})
 
-        # wr1 is the position's 1 starter (excluded even though it's the
-        # most valuable) - wr3 is depth but a rookie (excluded) - only wr2
-        # is real, sellable veteran depth.
+        # wr1 starts, wr3 is a rookie; only wr2 is sellable.
         assert list(sellable["name"]) == ["Depth WR"]
         assert list(sellable["player_id"]) == ["wr2"]
         assert sellable.iloc[0]["position_vor"] == pytest.approx(450.0)  # 500 - 50
@@ -97,9 +93,7 @@ class TestSellablePlayers:
 
 
 class TestEvaluateTrade:
-    """evaluate_trade should compute an independent lineup-value read and asset-value
-    read for one side of an arbitrary multi-asset (players + picks) trade, and be
-    reusable as-is for the other side of the identical trade with roster/assets swapped."""
+    """Independent lineup and asset reads per side; the other side is the same call swapped."""
 
     def test_clearly_better_incoming_player_raises_lineup_value(self):
         league = {"roster_positions": ["WR", "BN"]}
@@ -153,14 +147,8 @@ class TestEvaluateTrade:
         assert result["over_capacity"]
 
     def test_recommends_a_drop_when_over_capacity_and_never_the_incoming_players(self):
-        # Same setup as the over-capacity test above: roster ["a", "b"]
-        # (both 100), receiving ["c", "d"] (both 200) for "a" - one over.
-        # The only eligible drop is "b" (the sole pre-existing player left
-        # after excluding the newly-incoming c/d from consideration). Both
-        # b's value and the real post-trade competition (c and d both
-        # outscore b for the 2 slots) agree b was never starting anyway, so
-        # lineup_delta_after_drops equals the raw lineup_delta here -
-        # covered separately below where they *do* diverge.
+        # Roster a, b (100 each) gets c, d (200 each) for a: one over. b is the only
+        # eligible drop and wasn't starting, so both lineup deltas match.
         league = {"roster_positions": ["WR", "BN"]}
         roster = {"players": ["a", "b"], "taxi": [], "reserve": []}
         players = {
@@ -178,12 +166,8 @@ class TestEvaluateTrade:
         assert [d["player_id"] for d in result["recommended_drops"]] == ["b"]
 
     def test_lineup_delta_after_drops_can_diverge_from_raw_lineup_delta(self):
-        # Only 1 roster slot, no bench. Roster keeps "a" (value 100);
-        # receives "c" (value 50, lower) with nothing given up - 1 over
-        # capacity. The only player eligible to be the forced cut is "a"
-        # (c is protected as incoming), even though "a" is worth more and
-        # was the one actually winning the real slot in the raw after-trade
-        # comparison - a real cost the raw lineup_delta alone hides.
+        # One slot. Keep a (100), receive c (50): the forced cut must be a, since c is
+        # incoming — a real loss the raw lineup_delta hides.
         league = {"roster_positions": ["WR"]}
         roster = {"players": ["a"], "taxi": [], "reserve": []}
         players = {
@@ -198,16 +182,11 @@ class TestEvaluateTrade:
         # Raw trade result: "a" (100) still wins the lone slot over "c" (50)
         # before any forced cut, so lineup_delta is 0 (no real change yet).
         assert result["lineup_delta"] == pytest.approx(0.0)
-        # Once forced to cut someone and "a" is the only eligible option,
-        # the real post-cut lineup is just "c" (50) - a real loss the raw
-        # number above doesn't capture.
+        # After cutting a, the lineup is just c (50).
         assert result["lineup_delta_after_drops"] == pytest.approx(-50.0)
 
     def test_recommends_multiple_drops_when_over_capacity_by_more_than_one(self):
-        # Capacity 2; roster starts with 3 pre-existing players (a=100,
-        # b=90, x=80) plus 1 incoming (c=500) - roster_after size 4, 2 over.
-        # Both drops must come from the pre-existing players, lowest value
-        # first, never c (the just-acquired player).
+        # Capacity 2: a=100, b=90, x=80 plus incoming c=500. Two cuts, lowest first, never c.
         league = {"roster_positions": ["WR", "BN"]}
         roster = {"players": ["a", "b", "x"], "taxi": [], "reserve": []}
         players = {
@@ -254,11 +233,7 @@ class TestEvaluateTrade:
         assert with_picks["lineup_delta"] == pytest.approx(no_picks["lineup_delta"])
 
     def test_existing_taxi_occupant_does_not_cause_a_false_over_capacity(self):
-        # A roster with one active starter and one existing taxi stash -
-        # normal for this league's rebuild strategy. Bug found reviewing
-        # this feature: taxi_eligible=False used to zero taxi capacity
-        # entirely, so the existing taxi occupant alone made a plain 1-for-1
-        # swap (no net roster-size change) read as already over capacity.
+        # One starter plus one taxi stash: a 1-for-1 swap must not read as over capacity.
         league = {"roster_positions": ["WR", "BN", "BN"], "settings": {"taxi_slots": 2}}
         roster = {"players": ["starter_wr", "taxi_stash"], "taxi": ["taxi_stash"], "reserve": []}
         players = {
@@ -275,9 +250,7 @@ class TestEvaluateTrade:
         assert not result["over_capacity"]
 
     def test_trading_away_a_reserve_player_frees_that_slot_post_trade(self):
-        # reserve_filled/taxi_filled must reflect the roster AFTER the trade,
-        # not before - trading away a player currently on IR genuinely frees
-        # that slot, so it must not still count as spoken-for capacity.
+        # Trading away an IR player frees that slot.
         league = {"roster_positions": ["WR"], "settings": {"taxi_slots": 0}}
         roster = {
             "players": ["active_wr", "ir_wr"],
@@ -299,11 +272,7 @@ class TestEvaluateTrade:
             ]
         )
 
-        # Trading away the IR player itself for 2 incoming: roster_size_after
-        # = 1 (active_wr) + 2 (incoming) = 3. Capacity = 1 active slot + 0
-        # reserve_filled (the only IR occupant is the one being traded away)
-        # = 1 - so this SHOULD read over capacity (3 > 1), but reserve_filled
-        # must be 0, not 1, since ir_wr is leaving.
+        # Size after = 1 + 2 = 3 against capacity 1 (IR freed): over capacity, reserve_filled 0.
         result = dc.evaluate_trade(
             roster, ["ir_wr"], ["incoming_a", "incoming_b"], players, fc_by_id, {}, league
         )
@@ -311,10 +280,7 @@ class TestEvaluateTrade:
         assert result["capacity"] == 1
 
     def test_the_other_side_of_the_same_trade_mirrors_asset_value_delta(self):
-        # Calling evaluate_trade again with the partner's own roster and the
-        # two asset lists swapped is the whole "two-sided" evaluation - not
-        # a second implementation, so the asset-value deltas must be exact
-        # negatives of each other for the identical trade.
+        # The swapped call's asset delta is the exact negative.
         league = {"roster_positions": ["WR", "BN"]}
         my_roster = {"players": ["low"], "taxi": [], "reserve": []}
         partner_roster = {"players": ["high"], "taxi": [], "reserve": []}
@@ -331,18 +297,10 @@ class TestEvaluateTrade:
 
 
 class TestEvaluateTradeCallouts:
-    """RT-18: evaluate_trade() should surface non-obvious value beyond the lineup/asset
-    deltas - a bye-week gap opened or closed, a handcuff to a kept RB, a buried bench
-    player given up or an instant starter received, and a traded pick's rank in its
-    own class - each composed from an existing primitive, not a new signal."""
+    """Callouts: weekly gaps, handcuffs to kept RBs, bench-to-starter swaps, pick rank in class."""
 
     def test_omitting_handcuffs_and_pick_context_means_no_error_and_no_such_callouts(self):
-        # Omitting handcuffs/pick names/pick_value_table (the pre-RT-18 call
-        # shape, still used by every other existing test in this file) must
-        # not error - it just means those two specific callouts can't fire.
-        # (The bye-gap/buried-bench/instant-starter callouts don't depend on
-        # this optional context, so they're exercised in their own tests
-        # below rather than asserted away here.)
+        # Without handcuff/pick context, those callouts simply don't fire.
         league = {"roster_positions": ["WR", "BN"]}
         roster = {"players": ["old_wr"], "taxi": [], "reserve": []}
         players = {"old_wr": make_player("WR"), "new_wr": make_player("WR")}
@@ -391,9 +349,7 @@ class TestEvaluateTradeCallouts:
         assert result["weekly_gaps_opened"] == []
 
     def test_weekly_gap_fields_are_populated_even_when_compute_callouts_is_false(self):
-        # find_trade_offers()'s search loop runs with compute_callouts=False
-        # for cost, but still needs weekly_gaps_opened/closed to rank offers
-        # - unlike the text callouts, these must not be gated behind it.
+        # Gap lists are computed even with compute_callouts=False; offer ranking needs them.
         league = {"roster_positions": ["WR", "BN"]}
         players = {
             "wr_keep": make_player("WR", team="AAA", full_name="Keep WR"),
@@ -473,13 +429,7 @@ class TestEvaluateTradeCallouts:
         )
 
     def test_pick_context_callout_handles_next_seasons_round_only_pick_name_format(self):
-        # pick_trade_values() names next-season picks "{season} {round}st/nd/..."
-        # (e.g. "2027 1st") since there's no real draft object yet to assign
-        # a slot - no " Pick " substring, unlike this season's slot-specific
-        # "2026 Pick R.SS" names. Splitting on " Pick " to derive "season"
-        # would leave a next-season pick's season as its own full name,
-        # stranding it alone in a one-pick class that always ranks #1 with a
-        # garbled season label - this locks in the leading-year-based fix.
+        # Next-season names ("2027 1st") have no " Pick "; the class comes from the leading year.
         league = {"roster_positions": ["WR", "BN"]}
         roster = {"players": [], "taxi": [], "reserve": []}
         players: dict[str, dict] = {}
@@ -505,11 +455,7 @@ class TestEvaluateTradeCallouts:
         )
 
     def test_pick_context_callout_does_not_crash_on_a_pick_name_with_no_leading_year(self):
-        # A pick name with nothing matching the leading-year pattern (never
-        # a real pick_trade_values() output, but shouldn't be able to crash
-        # this) must fall back gracefully - its own name as an isolated
-        # "season" - rather than leaving a NaN season that breaks the
-        # int-cast rank column for every other pick's callout too.
+        # A name without a leading year forms its own group instead of breaking the rank cast.
         league = {"roster_positions": ["WR", "BN"]}
         roster = {"players": [], "taxi": [], "reserve": []}
         players: dict[str, dict] = {}
@@ -527,11 +473,7 @@ class TestEvaluateTradeCallouts:
 
 
 class TestFindTradeOffers:
-    """find_trade_offers should answer 'is this target worth pursuing' by direct reuse of
-    evaluate_trade(), then search the caller's own sellable players/picks for offers a
-    partner would plausibly accept (their own asset_value_delta staying within tolerance
-    of the target's value) - ranked best-for-the-caller first, need-matches preferred among
-    ties, never forcing a suggestion when nothing clears the partner's bar."""
+    """Offer search: partner tolerance is the only gate; need match only breaks ties."""
 
     def test_worth_pursuing_matches_a_direct_zero_outgoing_evaluate_trade_call(self):
         league = {"roster_positions": ["WR", "BN"]}
@@ -593,14 +535,8 @@ class TestFindTradeOffers:
         assert [asset["id"] for asset in result["offers"][0]["combo"]] == ["depth_wr"]
 
     def test_returned_offers_carry_real_callouts_not_the_stripped_search_pass(self):
-        # The search loop evaluates every prefiltered combo with
-        # compute_callouts=False (computing callouts for combos that get
-        # filtered out or don't make top_n was ~90% of this search's cost
-        # for value no caller ever saw) and only re-evaluates the final
-        # top_n combos with callouts on. This locks in that a returned
-        # offer carries real callouts, not the stripped search-pass ones -
-        # depth_wr is pure bench here (never a starter in a 1-WR league),
-        # so giving it up should surface the "wasn't even starting" callout.
+        # Returned offers are re-evaluated with callouts; depth_wr never starts, so giving it
+        # up shows "wasn't even starting".
         league = {"roster_positions": ["WR", "BN"]}
         your_roster = {"roster_id": 1, "players": ["starter_wr", "depth_wr"], "taxi": [], "reserve": []}
         partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
@@ -627,10 +563,7 @@ class TestFindTradeOffers:
         )
 
     def test_lopsided_combo_is_filtered_even_when_cheap_for_you(self):
-        # cheap_wr (120) for target_wr (200) looks great for you in
-        # isolation (evaluate_trade's own asset_value_delta is positive),
-        # but it lowballs the partner well past tolerance - it must not
-        # surface as a suggested offer despite being attractive one-sided.
+        # cheap_wr (120) for target_wr (200) is great for you but outside the partner's tolerance.
         league = {"roster_positions": ["WR", "BN"]}
         your_roster = {"roster_id": 1, "players": ["starter_wr", "cheap_wr"], "taxi": [], "reserve": []}
         partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
@@ -681,11 +614,7 @@ class TestFindTradeOffers:
         assert result["combos_evaluated"] > 0  # it searched - it just found nothing plausible
 
     def test_combo_touching_a_partner_need_is_ranked_first_among_equally_plausible_options(self):
-        # Two equally-valued single-asset combos (a WR and an RB, both 100)
-        # against a 100-value target - identical asset_value_delta on your
-        # side. The partner has real WR depth but only one, old RB - RB is
-        # their flagged need, WR isn't - so the RB combo should rank first
-        # even though the two are otherwise tied.
+        # Two tied 100-value combos; the partner needs RB, so the RB combo ranks first.
         league = {"roster_positions": ["WR", "RB", "BN", "BN"]}
         your_roster = {
             "roster_id": 1,
@@ -734,9 +663,7 @@ class TestFindTradeOffers:
         assert best["partner_need_positions"] == frozenset({"RB"})
 
     def test_pool_and_combo_size_bounds_cap_the_search_regardless_of_pool_size(self):
-        # 30 owned picks, no sellable players at all - the pool must still
-        # cap to TRADE_OFFER_POOL_CAP before combos are generated, so the
-        # combo count stays fixed regardless of how many candidates exist.
+        # 30 picks, no players: the pool still caps before combos are built.
         league = {"roster_positions": ["WR", "BN"]}
         your_roster = {"roster_id": 1, "players": [], "taxi": [], "reserve": []}
         partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
@@ -758,15 +685,8 @@ class TestFindTradeOffers:
         assert result["combos_considered"] == expected_combo_count
 
     def test_pool_prunes_out_of_band_candidates_before_capping_so_a_low_value_target_still_finds_a_match(self):
-        # 15 expensive picks (500 each) plus 5 cheap picks (20-28) that
-        # actually match a 30-value target. Capping the pool by raw
-        # descending value alone (the old behavior) would keep only the 15
-        # expensive picks - none of which could ever land in-band, since
-        # adding more assets only raises combo_value further - starving the
-        # search of the genuinely matching cheap ones entirely. The pre-cap
-        # prune (drop anything already over TRADE_OFFER_PREFILTER_HIGH of
-        # the target's value) must remove the out-of-band picks first so
-        # the cheap ones survive into the capped pool.
+        # 15 picks at 500 plus 5 cheap picks near a 30-value target: pruning out-of-band assets
+        # before the cap keeps the cheap ones.
         league = {"roster_positions": ["WR", "BN"]}
         your_roster = {"roster_id": 1, "players": [], "taxi": [], "reserve": []}
         partner_roster = {"players": ["target_wr"], "taxi": [], "reserve": []}
@@ -786,11 +706,7 @@ class TestFindTradeOffers:
         assert all(asset["id"].startswith("cheap_") for offer in result["offers"] for asset in offer["combo"])
 
     def test_unresolved_player_target_returns_no_offers_without_a_fabricated_zero_baseline(self):
-        # unranked_target has no FantasyCalc entry at all - a real data gap,
-        # not a genuinely-worthless player. The search must not treat that
-        # as "worth $0" and go looking for a plausible offer against a
-        # fabricated baseline (which would make literally any throwaway
-        # asset look like a clearing offer).
+        # An unranked target isn't worth $0; no search should run.
         league = {"roster_positions": ["WR", "BN"]}
         your_roster = {"roster_id": 1, "players": ["depth_wr"], "taxi": [], "reserve": []}
         partner_roster = {"players": ["unranked_target"], "taxi": [], "reserve": []}
@@ -813,11 +729,7 @@ class TestFindTradeOffers:
         assert result["combos_evaluated"] == 0
 
     def test_unresolved_pick_target_does_not_propagate_nan(self):
-        # A pick present in the table but with an unmatched FantasyCalc
-        # name (pick_trade_values()'s own documented naming-mismatch gap)
-        # carries a real NaN, not a missing key - `NaN or 0.0` would
-        # otherwise leave target_value as NaN and poison every comparison
-        # built from it (tolerance, the acceptance gate) without raising.
+        # An unmatched pick name carries NaN, which `or 0.0` wouldn't catch.
         league = {"roster_positions": ["WR", "BN"]}
         your_roster = {"roster_id": 1, "players": [], "taxi": [], "reserve": []}
         partner_roster = {"players": [], "taxi": [], "reserve": []}
@@ -837,12 +749,7 @@ class TestFindTradeOffers:
         assert not math.isnan(result["target_read"]["asset_value_delta"])
 
     def test_unmatched_sellable_player_falls_back_to_zero_value_not_nan(self):
-        # unmatched_wr has no FantasyCalc entry, so sellable_players()'s
-        # adj_value for it comes back as real NaN once its row goes through
-        # a DataFrame (not a None a bare `or 0.0` would catch - NaN is
-        # truthy in Python). The pool must fall back to 0.0 for it, like
-        # every other possibly-missing-value spot in this codebase, rather
-        # than letting a NaN combo value slip into a displayed offer.
+        # An unranked sellable player's NaN value falls back to 0.0.
         league = {"roster_positions": ["WR", "BN"]}
         your_roster = {
             "roster_id": 1,
@@ -873,9 +780,7 @@ class TestFindTradeOffers:
         assert not any(math.isnan(a["value"]) for offer in result["offers"] for a in offer["combo"])
 
     def test_handcuffs_and_pick_value_table_pass_through_to_target_read_callouts(self):
-        # RT-18: find_trade_offers() should thread its own handcuffs/
-        # pick_value_table into evaluate_trade()'s callouts, not just use
-        # them for the offer search itself.
+        # Handcuffs and pick values reach the returned offers' callouts.
         league = {"roster_positions": ["RB", "BN"]}
         your_roster = {"roster_id": 1, "players": ["rb_starter"], "taxi": [], "reserve": []}
         partner_roster = {"players": ["hc_backup"], "taxi": [], "reserve": []}
@@ -902,9 +807,7 @@ def _sellable_of(*values: float) -> pd.DataFrame:
 
 
 class TestMaxAffordableTargetValue:
-    """_max_affordable_target_value should estimate a rough ceiling from this roster's own
-    top TRADE_OFFER_MAX_COMBO_SIZE assets by value, scaled by TRADE_OFFER_PREFILTER_HIGH -
-    the same tolerance find_trade_offers() itself already enforces, not a new one."""
+    """Ceiling = top `TRADE_OFFER_MAX_COMBO_SIZE` assets × `TRADE_OFFER_PREFILTER_HIGH`."""
 
     def test_ceiling_is_top_combo_size_assets_scaled_by_prefilter_high(self):
         sellable = _sellable_of(100, 80, 60, 10)  # only the top 3 count
@@ -936,20 +839,14 @@ class TestMaxAffordableTargetValue:
         assert ceiling == pytest.approx(100 * dc.TRADE_OFFER_PREFILTER_HIGH)
 
     def test_columnless_empty_sellable_pool_does_not_crash(self):
-        # sellable_players() returns a columnless pd.DataFrame([]) (not zero
-        # rows of the real columns) when nothing is sellable at all -
-        # indexing "adj_value" directly would raise KeyError on that shape
-        # (same trap noted in summary.py's _sellable_lines).
+        # An empty sellable frame has no columns.
         ceiling = dc._max_affordable_target_value(pd.DataFrame([]), EMPTY_PICKS, roster_id=1)
 
         assert ceiling == 0.0
 
 
 class TestLeaguewideTradeCandidates:
-    """leaguewide_trade_candidates should rank every OTHER roster's fantasy-relevant
-    players by marginal value to the user's own roster (reusing rank_by_marginal_value,
-    not a new valuation model), pre-filtered to what the user's own sellable pool could
-    plausibly afford."""
+    """Other teams' players ranked by marginal value, filtered to what you can afford."""
 
     LEAGUE = {"roster_positions": ["WR", "BN", "BN"]}
 
@@ -973,9 +870,7 @@ class TestLeaguewideTradeCandidates:
             "user_wr": make_player("WR", full_name="User WR"),
             "expensive_wr": make_player("WR", full_name="Expensive WR"),
         }
-        # expensive_wr (1000) is a huge marginal-value upgrade over user_wr (100),
-        # but the user's own sellable pool (top combo 100) caps affordability at
-        # 100 * TRADE_OFFER_PREFILTER_HIGH = 200 - nowhere near reachable.
+        # expensive_wr (1000) is a big upgrade but over the 200 affordability cap.
         fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("user_wr", 100), fc_entry("expensive_wr", 1000)])
         sellable = _sellable_of(100)
 
@@ -1045,11 +940,7 @@ class TestLeaguewideTradeCandidates:
 
 
 class TestSuggestedTrades:
-    """suggested_trades should search only the given (already-capped) candidates via the
-    existing find_trade_offers() - no new valuation logic - drop any with no viable offer
-    or a non-positive best-offer lineup gain (find_trade_offers()'s only hard gate is the
-    partner's own tolerance, nothing about whether the trade actually helps the user), and
-    rank survivors by their best offer's lineup-value gain."""
+    """Stage 2: keep candidates with a positive-lineup best offer, ranked by that gain."""
 
     LEAGUE = {"roster_positions": ["WR", "BN", "BN", "BN"]}
 
@@ -1067,15 +958,9 @@ class TestSuggestedTrades:
 
     def test_drops_candidates_with_no_viable_offer_or_non_positive_lineup_gain(self):
         your_roster, players, replacement_level = self._base_roster_and_players()
-        # target_a (100): matches depth_wr (100) almost exactly and stays
-        # below starter_wr (150) - a viable, but no-op-for-your-lineup offer
-        # (lineup_delta_after_drops == 0, since it never beats the starter) -
-        # dropped despite being viable, since it wouldn't actually help.
-        # target_c (220): only depth_wr+depth_wr2 combined (100+110=210) is
-        # close enough to clear target_c's tolerance band - and 220 beats
-        # starter_wr (150), a real +70 lineup gain - the only real survivor.
-        # target_huge (100000): no combo of the user's 2-asset sellable pool
-        # could ever be within its tolerance band - no viable offer at all.
+        # target_a (100): viable but no lineup gain (never beats starter_wr), dropped.
+        # target_c (220): depth_wr + depth_wr2 (210) clears tolerance, +70 lineup, kept.
+        # target_huge: nothing is in range, no offer.
         partner_a = {"roster_id": 2, "players": ["target_a"]}
         partner_c = {"roster_id": 3, "players": ["target_c"]}
         partner_huge = {"roster_id": 4, "players": ["target_huge"]}
@@ -1103,9 +988,6 @@ class TestSuggestedTrades:
             your_roster, rosters_by_id, players, fc_by_id, {}, self.LEAGUE, replacement_level, EMPTY_PICKS, candidates
         )
 
-        # target_huge dropped (no viable offer); target_a also dropped
-        # (viable, but a zero-gain offer isn't worth suggesting); only
-        # target_c (a real +70 lineup gain) survives.
         assert [r["target_player_id"] for r in results] == ["target_c"]
         assert results[0]["offers"][0]["your_side"]["lineup_delta_after_drops"] == pytest.approx(70.0)
         assert results[0]["roster_id"] == 3
@@ -1113,10 +995,7 @@ class TestSuggestedTrades:
     def test_respects_top_n(self):
         your_roster, players, replacement_level = self._base_roster_and_players()
         rosters_by_id = {1: your_roster}
-        # Same shape as target_c above (starter_wr=150, depth_wr=100,
-        # depth_wr2=110, target=220): a viable offer with a real +70
-        # lineup gain, so the positive-lineup-gain filter doesn't wipe out
-        # every candidate before top_n even gets a chance to matter.
+        # Same as target_c above: a viable +70 offer.
         fc_entries = [fc_entry("starter_wr", 150), fc_entry("depth_wr", 100), fc_entry("depth_wr2", 110)]
         candidates = []
         for i in range(2, 6):  # 4 viable, equally-easy targets
@@ -1143,11 +1022,7 @@ class TestSuggestedTrades:
         assert len(results) == 2
 
     def test_ties_on_lineup_gain_are_broken_by_net_weekly_gap_improvement(self, monkeypatch):
-        # find_trade_offers() itself already has full coverage elsewhere
-        # (TestFindTradeOffers) - stubbing it here isolates suggested_trades()'s
-        # own ranking/tie-break logic from having to hand-derive a real bye/value
-        # scenario that produces an exact lineup_delta_after_drops tie, which
-        # would be fragile given how many interacting parts evaluate_trade() has.
+        # Stubbed to isolate the ranking and tiebreak; find_trade_offers has its own tests.
         your_roster, players, replacement_level = self._base_roster_and_players()
         rosters_by_id = {
             1: your_roster,
@@ -1158,11 +1033,8 @@ class TestSuggestedTrades:
             {"player_id": "target_a", "roster_id": 2, "marginal_value": 1.0, "drop": None},
             {"player_id": "target_b", "roster_id": 3, "marginal_value": 2.0, "drop": None},
         ]
-        # Both targets give an identical +70 lineup gain - target_a also closes
-        # a real weekly gap, target_b opens one - so the tie-break should favor
-        # target_a despite the identical primary number, and despite target_b's
-        # higher Stage 1 marginal_value (irrelevant here - suggested_trades()
-        # ranks its own results, not the incoming candidate order).
+        # Equal +70 gains: target_a closes a gap, target_b opens one, so a ranks first
+        # regardless of input order.
         gaps_by_target = {
             "target_a": {"weekly_gaps_opened": [], "weekly_gaps_closed": [5]},
             "target_b": {"weekly_gaps_opened": [9], "weekly_gaps_closed": []},
@@ -1195,19 +1067,9 @@ class TestSuggestedTrades:
 
 
 def _scripted_evaluate_trade(script):
-    """Build a fake evaluate_trade() for TestImproveIncomingOffer, keyed by
-    (roster_id, sorted outgoing players, sorted outgoing picks, sorted
-    incoming players, sorted incoming picks) -> {"lineup_delta_after_drops",
-    "asset_value_delta"}. Isolates improve_incoming_offer()'s own move
-    generation/gating/verdict logic from evaluate_trade()'s real lineup
-    simulation (already covered by TestEvaluateTrade) - hand-deriving exact
-    lineup-value outcomes for every generated neighbor variant would be
-    fragile given how many interacting parts evaluate_trade() has (byes,
-    capacity/drops, positional starter logic).
+    """Fake `evaluate_trade()` keyed by (roster_id, sorted assets each way).
 
-    Any unscripted key defaults to a neutral (0.0, 0.0) result - "no real
-    effect" - which correctly fails _is_good's strict > 0 bar without
-    needing every generated variant explicitly scripted.
+    Unscripted variants return (0.0, 0.0), which fails `_is_good`.
     """
 
     def fake(
@@ -1249,10 +1111,7 @@ def _scripted_evaluate_trade(script):
 
 
 class TestAssetPool:
-    """_asset_pool() is the candidate-pool builder find_trade_offers()'s combo
-    search and improve_incoming_offer()'s neighbor search both draw from -
-    sellable players plus every pick a roster owns, merged, value-sorted, and
-    capped."""
+    """Sellable players plus owned picks, merged, value-sorted, and capped."""
 
     def test_merges_sellable_players_and_owned_picks_sorted_by_value(self):
         league = {"roster_positions": ["WR", "BN"]}
@@ -1295,11 +1154,7 @@ class TestAssetPool:
 
 
 class TestImproveIncomingOffer:
-    """A partner has already proposed a specific trade to us (RT-14) - unlike
-    find_trade_offers()'s from-scratch combo search against a single target,
-    this generates single-move (drop/swap/add) neighbors of the *actual*
-    proposal and returns a three-way verdict (accept/counter/reject) rather
-    than just a list."""
+    """Single-move tweaks to a real proposal, with an accept/counter/reject verdict."""
 
     LEAGUE = {"roster_positions": ["WR", "BN"]}
 
@@ -1426,9 +1281,7 @@ class TestImproveIncomingOffer:
         script = {
             (1, ("wr_a",), (), ("target_wr",), ()): {"lineup_delta_after_drops": -50.0, "asset_value_delta": -50.0},
             (2, ("target_wr",), (), ("wr_a",), ()): {"asset_value_delta": 50.0},
-            # Swap: less bad than baseline (asset value improves -50 -> -5)
-            # but still not a genuinely good trade (lineup impact <= 0) -
-            # must not be surfaced as an "improvement."
+            # Less bad than baseline but still no lineup gain: not an improvement.
             (1, ("wr_b",), (), ("target_wr",), ()): {"lineup_delta_after_drops": 0.0, "asset_value_delta": -5.0},
             (2, ("target_wr",), (), ("wr_b",), ()): {"asset_value_delta": 5.0},
         }
@@ -1496,13 +1349,8 @@ class TestImproveIncomingOffer:
         assert any(imp["move"] == "add" and imp["added"]["kind"] == "player" for imp in result["improvements"])
 
     def test_theirs_side_tolerance_is_anchored_on_outgoing_value_not_the_stale_incoming_ask(self, monkeypatch):
-        # Regression test for a tolerance-anchor bug found in review: a
-        # "theirs" variant (what you'd receive changes) must be judged
-        # against your *fixed* outgoing value, not the baseline's original
-        # (much larger) incoming ask - otherwise a shrunk incoming side
-        # gets an unrealistically generous tolerance sized for the ask it
-        # replaced. incoming_value=300 puts the percentage term (0.15*300=45)
-        # above the $25 floor, so the two anchors genuinely disagree here.
+        # A "theirs" variant anchors tolerance on the fixed outgoing value. incoming=300
+        # makes the two anchors disagree (45 vs. 25).
         your_roster = {"roster_id": 1, "players": ["wr_a"], "taxi": [], "reserve": []}
         partner_roster = {"roster_id": 2, "players": ["big_target", "cheap_swap"], "taxi": [], "reserve": []}
         players = {
@@ -1522,11 +1370,7 @@ class TestImproveIncomingOffer:
             # generous to the partner.
             (1, ("wr_a",), (), ("big_target",), ()): {"lineup_delta_after_drops": -10.0, "asset_value_delta": -10.0},
             (2, ("big_target",), (), ("wr_a",), ()): {"asset_value_delta": 200.0},
-            # "theirs" swap: ask for cheap_swap (130) instead of big_target.
-            # Real deal is now wr_a (100) for cheap_swap (130) - correctly
-            # anchored tolerance is max(0.15*100, 25)=25; the partner's
-            # delta here (100-130=-30) must fail that, not the stale
-            # max(0.15*300,25)=45 anchor a pre-fix version would have used.
+            # wr_a (100) for cheap_swap (130): delta -30 fails the correct 25 tolerance.
             (1, ("wr_a",), (), ("cheap_swap",), ()): {"lineup_delta_after_drops": 5.0, "asset_value_delta": 5.0},
             (2, ("cheap_swap",), (), ("wr_a",), ()): {"asset_value_delta": -30.0},
         }

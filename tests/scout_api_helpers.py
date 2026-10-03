@@ -1,8 +1,4 @@
-"""Shared synthetic payloads for scout_api tests (test_finding_schema.py,
-test_run_record_schema.py, and test_scout_api.py) - kept in one place so a
-schema change only needs updating here rather than in independently-
-drifting copies.
-"""
+"""Shared synthetic payloads for the scout_api tests."""
 
 from __future__ import annotations
 
