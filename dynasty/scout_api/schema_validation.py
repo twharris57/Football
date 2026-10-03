@@ -1,10 +1,4 @@
-"""Shared strict-field validators for scout_api's templated JSON schemas
-(finding_schema.py, run_record_schema.py) - both parse content committed
-to the `scout-data` branch with the same all-or-nothing posture: no
-defaults, no coercion, exact field sets, and a tz-aware requirement on
-every timestamp (see finding_schema.py's own module docstring for why
-that requirement exists).
-"""
+"""Strict validators for scout JSON: no defaults, no coercion, exact keys, tz-aware timestamps."""
 
 from __future__ import annotations
 
@@ -23,10 +17,7 @@ def require_nullable_str(payload: dict, key: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value:
-        # Reject "" alongside non-strings: a nullable field means "null, or
-        # a real value" - letting "" through as a third, distinct state
-        # only invites disagreement downstream between an `is None` check
-        # and a truthy check on the same stored value.
+        # "" would be a third state alongside null and a real value.
         raise ValueError(f"{key} must be a non-empty string or null, got {value!r}")
     return value
 
@@ -43,13 +34,7 @@ def require_iso8601(payload: dict, key: str) -> str:
 
 
 def require_exact_keys(payload: dict, required_keys: frozenset[str], label: str) -> None:
-    """Raise ValueError unless payload's keys exactly match required_keys.
-
-    label names the thing being validated in the error message (e.g.
-    "finding", "items[0]", "reflection") - both missing and unexpected
-    keys are equally a sign of schema drift, per this module's own
-    all-or-nothing posture.
-    """
+    """Raise ValueError unless the keys match exactly; `label` names the object in the error."""
     keys = set(payload.keys())
     if keys != required_keys:
         missing = required_keys - keys

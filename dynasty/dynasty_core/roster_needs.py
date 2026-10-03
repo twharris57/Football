@@ -11,16 +11,9 @@ YOUNG_CORE_MAX_YOE = 2
 
 
 def roster_needs_summary(roster: dict, players: dict[str, dict]) -> pd.DataFrame:
-    """Summarize the roster by position: depth, average age, and young-core count.
+    """Per position: depth, average age, young-core count, and the young-core `need` flag.
 
-    `need` flags a position where fewer than YOUNG_CORE_NEED_THRESHOLD players
-    have YOUNG_CORE_MAX_YOE years of experience or less — a rough signal for
-    where a rebuild still needs young talent, not a full needs model. This is
-    the young-core-only reading; a caller that knows the team's current
-    rebuild-vs-contend phase should prefer `_need_from_phase()`/
-    `phase_aware_need_positions()` below instead, which only fall back to
-    this flag while phase == "rebuilding" - a mid/upper-table team's "need"
-    is a roster-hole question, not a youth-accumulation one.
+    Phase-aware callers should use `_need_from_phase()` instead.
     """
     rows = [
         {"pos": info.get("position"), "age": info.get("age"), "years_exp": info.get("years_exp")}
@@ -49,20 +42,7 @@ def need_positions(roster_needs: pd.DataFrame) -> frozenset[str]:
 
 
 def _need_from_phase(young_core: pd.Series, weak: pd.Series, phase: str) -> pd.Series:
-    """The rebuild-phase-aware "need" flag itself: young-core accumulation
-    while the team is genuinely rebuilding, VOR-based `weak` (a roster-hole
-    question) once it isn't. A binary switch, not a three-way blend -
-    "treading_water" and "contending" (the other two labels
-    `team_power_timeline_scores()` can produce) both get the roster-hole
-    reading, matching how a rebuild is usually framed as "bottom-of-standings"
-    vs. "mid/upper-table," not three distinct strategies.
-
-    The single source of truth for this switch - both `team_roster_analysis()`
-    (which already has `young_core`/`weak` joined for its own display columns)
-    and `phase_aware_need_positions()` below (for a caller with no such table
-    to reuse) apply it the same way, so the two can never quietly disagree on
-    what "need" means for a given phase.
-    """
+    """`need` = young-core shortfall while rebuilding, else `weak`. The single switch for this rule."""
     return young_core < YOUNG_CORE_NEED_THRESHOLD if phase == "rebuilding" else weak
 
 
@@ -74,15 +54,7 @@ def phase_aware_need_positions(
     roster_positions: list[str],
     phase: str,
 ) -> frozenset[str]:
-    """`need_positions()`, but with `_need_from_phase()`'s phase-aware switch
-    applied first, for a caller that doesn't already have
-    `roster_needs_summary()`/`positional_strength_summary()` joined together
-    for another reason the way `team_roster_analysis()`'s own real-roster
-    bundle does (that function applies `_need_from_phase()` directly to its
-    already-joined columns instead of calling this). Only computes
-    `positional_strength_summary()` at all when `phase != "rebuilding"` -
-    the young-core-only reading never needs it.
-    """
+    """Positions flagged as needs for a roster, applying `_need_from_phase()`."""
     roster_needs = roster_needs_summary(roster, players)
     if roster_needs.empty:
         return frozenset()
@@ -95,13 +67,7 @@ def phase_aware_need_positions(
 
 
 def _position_starter_demand(position: str, roster_positions: list[str]) -> int:
-    """How many players are really demanded at a position: dedicated slots, plus
-    SUPER_FLEX demand for QB specifically (matching the market-value call's own
-    `num_qbs`), since roughly two QBs per team are startable in this superflex
-    league, not one. FLEX demand for RB/WR/TE is deliberately not modeled — see
-    `.claude/conventions/valuation_principles.md`'s "superflex inflates QB value"
-    rule and docs/rookie-draft-big-board.md's "Roster needs" section.
-    """
+    """Starters demanded at a position: dedicated slots, plus SUPER_FLEX for QB. FLEX ignored."""
     count = roster_positions.count(position)
     if position == "QB":
         count += roster_positions.count("SUPER_FLEX")
@@ -111,14 +77,9 @@ def _position_starter_demand(position: str, roster_positions: list[str]) -> int:
 def position_replacement_levels(
     rosters: list[dict], players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], roster_positions: list[str]
 ) -> dict[str, float]:
-    """League-wide replacement-level adj_value per position — the value of the
-    Nth-best rostered player at that position across the whole league, where
-    N = `_position_starter_demand()` times the number of teams. Every
-    rostered player counts toward the pool (including taxi/IR — they're not
-    on waivers). An external baseline rather than a same-roster-relative
-    metric deliberately, so one elite player elsewhere can't distort another
-    position's apparent strength. See docs/rookie-draft-big-board.md's
-    "Roster needs" section for the full rationale.
+    """League-wide replacement `adj_value` per position: the Nth-best rostered player.
+
+    N = `_position_starter_demand()` × teams. Taxi/IR players count.
     """
     pools: dict[str, list[float]] = {pos: [] for pos in FANTASY_POSITIONS}
     for roster in rosters:
@@ -149,21 +110,13 @@ def positional_strength_summary(
     replacement_level: dict[str, float],
     roster_positions: list[str],
 ) -> pd.DataFrame:
-    """Per-position value-over-replacement (VOR) for one roster.
+    """Per-position value over replacement (`vor`) for one roster; `weak` is `vor <= 0`.
 
-    A value-based complement to `roster_needs_summary`'s young-core `need`
-    flag: `need` is a rebuild-timeline question, `weak` (`vor <= 0`) is a
-    trade-strategy one, against `position_replacement_levels`'s external
-    baseline. Only the roster's own top-N players at a position (N =
-    `_position_starter_demand()`) count toward `starter_value` — deep bench
-    depth doesn't make a position "strong" if it never plays. See
-    docs/rookie-draft-big-board.md's "Roster needs" section.
+    Only the roster's top-N players at a position count.
     """
     by_position: dict[str, list[float]] = {pos: [] for pos in FANTASY_POSITIONS}
     for player_id, info in roster_fantasy_players(roster, players):
-        # roster_fantasy_players() already filters to FANTASY_POSITIONS, so
-        # "position" is guaranteed present here - direct subscript, not
-        # .get(), keeps the key typed as str rather than str | None.
+        # roster_fantasy_players() guarantees a position.
         position = info["position"]
         entry = fc_by_sleeper_id.get(player_id)
         adj_value = entry.get("adj_value") if entry else None

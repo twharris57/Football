@@ -1,8 +1,4 @@
-"""Thin client for Sleeper's public, read-only fantasy football API.
-
-Caches the large players reference dataset locally since it changes only a
-few times a day and is unnecessary to re-download on every draft refresh.
-"""
+"""Thin client for Sleeper's public, read-only API, with disk caching for slow-changing data."""
 
 from __future__ import annotations
 
@@ -26,13 +22,7 @@ PROJECTIONS_CACHE_TTL_SECONDS = 60 * 60
 
 
 def _build_session() -> requests.Session:
-    """A session that retries transient failures (connection errors, 5xx, 429).
-
-    Draft day means everyone hits this API at once — a bare `requests.get`
-    with no retry turns one transient hiccup into a hard failure for
-    whoever hit it, mid-draft. Only GET is used here, so retrying is safe
-    (no risk of double-submitting a write).
-    """
+    """A session that retries GETs on connection errors, 429, and 5xx."""
     session = requests.Session()
     retry = Retry(
         total=3,
@@ -87,16 +77,9 @@ def get_traded_picks(league_id: str) -> list[dict[str, Any]]:
 
 
 def get_transactions(league_id: str, season: str, current_leg: int, force_refresh: bool = False) -> list[dict[str, Any]]:
-    """Return every transaction (trades, waivers, free-agent moves) across legs 1..current_leg, concatenated.
+    """Every transaction for legs 1..current_leg. Cached 12h.
 
-    Cached to disk per (league_id, season) - like players.json/FantasyCalc
-    values, a 12h TTL rather than re-fetching current_leg's worth of
-    endpoints on every refresh. Each waiver-type transaction carries the
-    real FAAB amount bid in `settings.waiver_bid` - `status == "complete"`
-    means that bid actually won the player, `"failed"` means it didn't
-    (over budget, outbid, etc.) - the real market-behavior source
-    `dynasty_core/waiver_bids.py` calibrates bid guidance against, not an
-    invented formula.
+    Waiver bids are in `settings.waiver_bid`; `status == "complete"` means the bid won.
     """
     cache_path = CACHE_DIR / f"transactions_{league_id}_{season}.json"
     if not force_refresh and cache_path.exists():
@@ -115,21 +98,10 @@ def get_transactions(league_id: str, season: str, current_leg: int, force_refres
 
 
 def get_weekly_projections(season: str, week: int, force_refresh: bool = False) -> dict[str, dict[str, float]]:
-    """Return this week's per-player stat-category projections, keyed by player_id.
+    """This week's per-player stat projections, keyed by player_id.
 
-    An unofficial, undocumented endpoint (no `/league/{id}` scoping - Sleeper
-    computes one projection set per NFL week, shared across every league) -
-    confirmed live to return real per-stat weekly projections (`rec`,
-    `rec_yd`, `rush_td`, etc.) in the same stat-key vocabulary
-    `league["scoring_settings"]` already uses, not just an ADP number. Since
-    it's undocumented, the call site (`state.py`) wraps this in its own
-    try/except rather than this function swallowing failures itself - same
-    isolation pattern as `get_transactions`/`get_players`.
-
-    Cached to disk per (season, week) with a much shorter TTL than
-    `players.json`'s 12h - unlike the player reference data, projections
-    shift during the week (injury designations, etc.), so a stale cache is a
-    real accuracy risk, not just a mild inefficiency.
+    Undocumented endpoint, shared across leagues, using the same stat keys as
+    `scoring_settings`. Short cache TTL because projections move during the week.
     """
     cache_path = CACHE_DIR / f"projections_{season}_{week}.json"
     if not force_refresh and cache_path.exists():
@@ -146,11 +118,7 @@ def get_weekly_projections(season: str, week: int, force_refresh: bool = False) 
 
 
 def get_players(force_refresh: bool = False) -> dict[str, Any]:
-    """Return the full NFL player reference dataset, keyed by player_id.
-
-    This endpoint is ~14MB and changes only a few times a day, so results
-    are cached to disk and reused until PLAYERS_CACHE_TTL_SECONDS elapses.
-    """
+    """Return the full NFL player dataset (~14MB), keyed by player_id. Cached on disk."""
     if not force_refresh and PLAYERS_CACHE_PATH.exists():
         age_seconds = time.time() - PLAYERS_CACHE_PATH.stat().st_mtime
         if age_seconds < PLAYERS_CACHE_TTL_SECONDS:

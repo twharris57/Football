@@ -1,7 +1,4 @@
-"""Constants shared across more than one dynasty_core submodule.
-
-Single-module constants live with the functions that use them instead.
-"""
+"""Constants shared by more than one `dynasty_core` submodule."""
 
 from __future__ import annotations
 
@@ -15,8 +12,7 @@ SUPERFLEX_ELIGIBLE_POSITIONS = frozenset({"QB", "RB", "WR", "TE"})
 YOUNG_CORE_NEED_THRESHOLD = 2
 NFL_WEEKS = range(1, 19)
 
-# CACHE_DIR is re-exported here (not just imported for local use) so every
-# other dynasty_core submodule can keep doing `from .constants import CACHE_DIR`.
+# Re-exported for `from .constants import CACHE_DIR`.
 __all__ = [
     "CACHE_DIR",
     "DEFAULT_LEAGUE_ID",

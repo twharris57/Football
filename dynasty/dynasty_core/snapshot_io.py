@@ -1,23 +1,7 @@
-"""Shared load/write shell for a persisted-across-refreshes JSON snapshot,
-with explicit schema versioning and forward migrations.
+"""Load/write shell for versioned JSON snapshots that persist across refreshes.
 
-Factored out of draft_snapshots.py's draft-pick-attribution snapshot so a
-second, structurally different snapshot type (pickup_snapshots.py's
-in-season pickup-alert snapshot) doesn't reimplement the same
-load-or-seed / write-only-if-changed shape independently - see
-.claude/conventions/valuation_principles.md's pattern of two independent
-copies of the same logic drifting apart over time.
-
-Every snapshot file this project persists is stamped with a `schema_version`
-int on write. A caller registers a `migrations` dict mapping *the version a
-migration upgrades from* to a pure function returning the next version's
-shape; `load_or_seed` walks that chain automatically on load until the
-content matches the caller's current `schema_version`. A file with no
-`schema_version` key at all - every snapshot file written before this
-mechanism existed - is treated as version 0. This never silently misreads
-old-shape data as current: a version gap with no registered migration, or a
-file whose stored version is *newer* than the running code's, both raise
-rather than guess.
+Files are stamped with `schema_version`; `migrations[v]` upgrades v to v+1. Unstamped
+files are version 0. A missing migration, or a file newer than the code, raises.
 """
 
 from __future__ import annotations
@@ -32,11 +16,7 @@ Migration = Callable[[dict[str, Any]], dict[str, Any]]
 
 class LoadedSnapshot(NamedTuple):
     content: dict[str, Any]
-    # True whenever the file's stored schema_version didn't already match
-    # what was requested (migrated, or predates versioning entirely) - the
-    # caller should force a write even if its own reconcile logic finds
-    # nothing new, so a file never sits indefinitely in "content says an
-    # old version, code understands it as current" limbo once it's read.
+    # True when the file was migrated or unstamped: the caller should write it back.
     needs_rewrite: bool
 
 
@@ -46,15 +26,7 @@ def load_or_seed(
     schema_version: int,
     migrations: dict[int, Migration] | None = None,
 ) -> LoadedSnapshot:
-    """Load `path`'s JSON content, migrated up to `schema_version` and with
-    the stamp stripped, or `default` if the file doesn't exist yet.
-
-    Raises `ValueError` if the file's stored version is newer than
-    `schema_version` (never silently misinterpret a newer format as a known
-    older one), or if any version in the migration chain from stored to
-    current has no registered function in `migrations` (never silently read
-    a partially-migrated shape as current).
-    """
+    """Load `path` migrated to `schema_version` (stamp removed), or `default` if missing."""
     if not path.exists():
         return LoadedSnapshot(default, needs_rewrite=False)
 
@@ -84,14 +56,7 @@ def load_or_seed(
 def write_if_changed(
     path: Path, existing: dict[str, Any], updated: dict[str, Any], schema_version: int, force: bool = False
 ) -> None:
-    """Write `updated` (stamped with `schema_version`) to `path` if `force`
-    or it differs from `existing` (the unstamped dict `load_or_seed`
-    returned).
-
-    Avoids a disk write (and touching mtime) on a no-op refresh, unless
-    `force` - pass `load_or_seed`'s `needs_rewrite` here so a migrated file
-    is persisted at its new schema the moment it's touched.
-    """
+    """Write `updated` with its stamp if it differs from `existing` or `force` is set."""
     if force or updated != existing:
         path.parent.mkdir(exist_ok=True)
         path.write_text(json.dumps({**updated, "schema_version": schema_version}), encoding="utf-8")

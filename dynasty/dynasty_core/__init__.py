@@ -1,22 +1,8 @@
-"""Shared logic for the Sleeper dynasty league tools.
-
-Pulls league/draft/roster state from Sleeper plus dynasty values from
-FantasyCalc, and computes the rookie draft big board and roster-needs
-summary. Used by the Streamlit dashboard (`streamlit_app.py`).
-
-Split into submodules by concern (pick ownership, player pools, roster
-needs, power/timeline, capacity, roster value, byes/handcuffs, lineup,
-drop recommendation, trade evaluation, draft planning, attention digest,
-in-season pickup tracking, orchestration).
-This file just re-exports the combined public surface so `import
-dynasty_core` behaves exactly as it did as a single file.
-"""
+"""Shared dynasty league logic, split into submodules by concern and re-exported here."""
 
 from __future__ import annotations
 
-# Re-exported for callers that reach through dynasty_core (e.g.
-# monkeypatching dynasty_core.sleeper in tests) rather than importing
-# sleeper_api/fantasycalc_api directly.
+# Re-exported so tests can monkeypatch `dynasty_core.sleeper`/`fantasycalc`.
 import fantasycalc_api as fantasycalc
 import sleeper_api as sleeper
 

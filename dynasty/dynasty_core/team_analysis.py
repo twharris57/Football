@@ -30,47 +30,19 @@ def team_roster_analysis(
     projections: dict[str, dict] | None = None,
     phase: str = "rebuilding",
 ) -> dict[str, Any]:
-    """Bundle every per-roster analysis view into one call, for any team's roster.
+    """Every per-roster view for any team, in one call.
 
-    Every function it calls already takes a generic `roster` dict — this is
-    the one code path both `gather_state`'s own user-roster computation and
-    the Roster tab's team selector use, rather than a second,
-    roster-agnostic model. `roster_needs` joins `roster_needs_summary`'s
-    young-core count and `positional_strength_summary`'s
-    value-over-replacement `weak` flag on position — two different
-    questions about the same position, always shown side by side regardless
-    of phase. `need` itself, however, is phase-aware
-    (`_need_from_phase()`): young-core accumulation while `phase ==
-    "rebuilding"`, the same `weak` roster-hole read otherwise - see
-    `docs/rookie-draft-big-board.md`'s "Roster needs" section.
-    `replacement_level` is the league-wide baseline computed once per
-    refresh (`position_replacement_levels`) and passed in, not recomputed
-    here. `available_free_agents` (`free_agent_pool()`'s output) is
-    likewise computed once per refresh and passed in, not recomputed per
-    team looked up through the team selector. `phase` (this roster's own
-    rebuilding/treading_water/contending label from
-    `team_power_timeline_scores()`) defaults to `"rebuilding"` for a caller
-    without one handy - the original, single-rule behavior. `projections`
-    (this week's per-player point projections) defaults
-    to `{}` — only the Lineup tab's own team actually renders
-    `weekly_lineup_*`, so a caller that doesn't have (or care about) this
-    week's projections, like the Roster tab's other-team lookup, can omit
-    it and just get an all-`None`-value weekly lineup back, the same
-    graceful-degradation shape a failed fetch already produces.
+    `replacement_level` and `available_free_agents` are computed once per refresh and
+    passed in. `phase` defaults to rebuilding. `projections` defaults to empty, giving a
+    weekly lineup with no values.
     """
     roster_needs = roster_needs_summary(roster, players)
     if not roster_needs.empty:
         strength = positional_strength_summary(
             roster, players, fc_by_sleeper_id, replacement_level, league["roster_positions"]
         )
-        # strength always covers all 4 FANTASY_POSITIONS (see
-        # positional_strength_summary), but roster_needs only has rows for
-        # positions the roster actually has a player at - an outer join adds
-        # a real, meaningful row for "zero players at this position" (should
-        # absolutely show up as both a need and weak), but leaves count/
-        # young_core/need as NaN for it, which breaks need_positions()'s
-        # boolean mask below. Recompute them post-join instead of trusting
-        # the NaN default.
+        # An outer join adds rows for positions with zero players, leaving NaN counts.
+        # Recompute those so need_positions()' mask works.
         roster_needs = roster_needs.join(strength[["vor", "weak"]], how="outer")
         roster_needs["count"] = roster_needs["count"].fillna(0).astype(int)
         roster_needs["young_core"] = roster_needs["young_core"].fillna(0).astype(int)

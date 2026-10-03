@@ -20,17 +20,10 @@ BYES_CACHE_TTL_SECONDS = 24 * 60 * 60
 
 
 def recent_complete_seasons_weekly_data(current_season: str, lookback: int = 3) -> pd.DataFrame:
-    """Fetch weekly player stats for the most recent `lookback` NFL seasons with real data published.
+    """Weekly stats for the latest `lookback` seasons that nfl_data_py has published.
 
-    nfl_data_py's underlying data lags real-world time independent of a
-    league's own season label — a league season of "2026" doesn't mean
-    2025 stats are published yet (confirmed directly: they weren't, as of
-    when this was written). Probes backward from `current_season - 1` one
-    year at a time, so this keeps working next year without a code change,
-    rather than a hardcoded season list that goes stale. Used to
-    (re-)derive POSITION_VALUE_MULTIPLIER (see
-    scripts/derive_position_multipliers.py); will also back the eventual
-    full per-player scoring recompute (see PROJECT_PLAN_DYNASTY.md).
+    Probes backward from `current_season - 1`, since published data lags the league's
+    season label.
     """
     candidate = int(current_season) - 1
     frames = []
@@ -44,15 +37,7 @@ def recent_complete_seasons_weekly_data(current_season: str, lookback: int = 3) 
 
 
 def bye_week_by_team(season: str, force_refresh: bool = False) -> dict[str, int]:
-    """Return each NFL team's bye week for the season, derived from the schedule.
-
-    nfl_data_py has no direct "bye week" field — derived as the one week in
-    1-18 where a team appears in neither home_team nor away_team.
-
-    Cached to disk (24h TTL - a published NFL schedule essentially never
-    changes mid-season) so a plain "Refresh" click doesn't re-pull and
-    re-derive this from nfl_data_py every time, not just on force-refresh.
-    """
+    """Each team's bye week: the week in 1-18 it doesn't play. Cached 24h."""
     cache_path = CACHE_DIR / f"byes_{season}.json"
     if not force_refresh and cache_path.exists():
         age_seconds = time.time() - cache_path.stat().st_mtime
@@ -84,16 +69,9 @@ def roster_bye_conflicts(
     byes: dict[str, int],
     league: dict,
 ) -> pd.DataFrame:
-    """For each week with an active-roster player on bye, show who's out, who fills
-    in, and the resulting delta to optimal starting-lineup value.
+    """Per bye week: starters out, their fill-ins, and the lineup-value delta.
 
-    A delta rather than a plain "N players share a bye" headcount, since a
-    shared bye at a deep position can be a non-issue while a single bye at a
-    thin one costs real lineup value. Only active-roster players are
-    eligible for starting slots (taxi/reserve excluded — they can't be
-    started to cover a bye). `starters_out`/`fillers` are the at-a-glance
-    pair; `bench_out` is separate (bye'd players who weren't starting
-    anyway, so they don't move `lineup_delta`) for an expanded UI view.
+    Only active-roster players can fill in. `bench_out` lists bye'd players who weren't starting.
     """
     taxi_ids = set(roster.get("taxi") or [])
     reserve_ids = set(roster.get("reserve") or [])
@@ -131,15 +109,10 @@ def roster_bye_conflicts(
         weekly_rows.append(
             {
                 "week": week,
-                # Collapsed-view content: only starters actually bumped out and who
-                # replaces them - bench players on bye who weren't starting anyway
-                # don't belong in an at-a-glance view (see bench_out for the rest).
                 "starters_out": ", ".join(sorted(describe(pid) for pid in starters_out_ids))
                 or "(none - only bench players out)",
                 "fillers": ", ".join(sorted(describe(pid) for pid in filler_ids)) or "(none - bench absorbs it)",
                 "lineup_delta": round(week_value - full_value, 1),
-                # Expanded-view-only detail: rostered players on bye who weren't
-                # in the full-strength lineup anyway, so they don't move the delta.
                 "bench_out": ", ".join(sorted(describe(pid) for pid in bench_out_ids)) or "(none)",
             }
         )
@@ -151,15 +124,7 @@ def roster_bye_conflicts(
 
 
 def roster_weekly_gaps(roster: dict, players: dict[str, dict], byes: dict[str, int], league: dict) -> pd.DataFrame:
-    """For each week, count available (non-bye) rostered players per position
-    and flag weeks where a dedicated starting slot can't be filled.
-
-    "Dedicated" means the QB/RB/WR/TE counts in `league["roster_positions"]`
-    (1/2/2/1 in this league) — this does NOT model FLEX/SUPER_FLEX slots,
-    which could pull from other positions. It's a rough weekly-depth signal
-    (can this position's own starters be filled from the roster alone), not
-    a full lineup-feasibility solver.
-    """
+    """Per week, flag dedicated QB/RB/WR/TE slots the roster can't fill. Ignores FLEX/SUPER_FLEX."""
     required = {pos: league["roster_positions"].count(pos) for pos in FANTASY_POSITIONS}
 
     position_bye_weeks: dict[str, list[int]] = {pos: [] for pos in FANTASY_POSITIONS}
@@ -190,13 +155,7 @@ def roster_weekly_gaps(roster: dict, players: dict[str, dict], byes: dict[str, i
 def gap_delta(
     before_roster: dict, after_roster: dict, players: dict[str, dict], byes: dict[str, int], league: dict
 ) -> pd.DataFrame:
-    """Weeks where after_roster has a dedicated-slot gap that before_roster didn't (or a different one).
-
-    Shared by multi_round_plan (full-plan impact vs. the current real
-    roster) and alternate_gap_note (single-alternate impact vs. the
-    hypothetical roster entering that round) - same before/after
-    weekly-gap comparison, just different roster inputs.
-    """
+    """Weeks where `after_roster` has a dedicated-slot gap `before_roster` didn't."""
     before = roster_weekly_gaps(before_roster, players, byes, league)
     after = roster_weekly_gaps(after_roster, players, byes, league)
     merged = before[["week", "gap"]].merge(after[["week", "gap"]], on="week", suffixes=("_before", "_after"))
