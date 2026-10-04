@@ -32,35 +32,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
             )
         )
 
-    try:
-        schedule = _cached_schedule(active_season)
-    except OSError as exc:
-        st.error(f"Couldn't fetch the schedule from nfl_data_py: {exc}. Try reloading the page.")
-        st.stop()
-    season_options = sorted(set(store.known_seasons(conn)) | {active_season})
-    col_season, col_week = st.columns(2)
-    with col_season:
-        season = st.selectbox(
-            "Season", options=season_options, index=season_options.index(active_season)
-        )
-
-    if season != active_season:
-        try:
-            schedule = _cached_schedule(season)
-        except OSError as exc:
-            st.error(f"Couldn't fetch the schedule from nfl_data_py: {exc}. Try reloading the page.")
-            st.stop()
-
-    default_week = pc.current_week(schedule, today)
-    week_labels = pc.week_date_labels(schedule)
-    week_options = sorted(week_labels) or [default_week]
-    with col_week:
-        week = st.selectbox(
-            "Week",
-            options=week_options,
-            index=week_options.index(default_week) if default_week in week_options else 0,
-            format_func=lambda w: f"Week {w} ({week_labels[w]})" if w in week_labels else f"Week {w}",
-        )
+    season, week, schedule = _select_season_and_week(conn, active_season, today)
 
     store.sync_game_outcomes(conn, schedule, datetime.now(pc.ET))
 
@@ -111,18 +83,77 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
         )
 
     if locked:
-        st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
-        if status.get("lock_warning"):
-            st.warning(status["lock_warning"])
-        display_games, display_picks = _render_snapshot_selector(
-            conn, season, week, "locked", saved_games, saved_picks
-        )
-        _render_picks_table(display_games, display_picks, team_names)
-        _render_pick_details(display_games, display_picks, team_names)
-        _render_actual_picks_form(conn, season, week, saved_games, saved_picks, team_names)
-        _render_week_score(conn, season, week, saved_picks, team_names, status)
-        return
+        _render_locked_week(conn, season, week, saved_games, saved_picks, status, team_names)
+    else:
+        _render_open_week(conn, season, week, auto_games, included_map, saved_games, saved_picks, status, team_names)
 
+
+def _load_schedule(year: int) -> pd.DataFrame:
+    """The season's schedule, or an error and stop if nfl_data_py can't be reached."""
+    try:
+        return _cached_schedule(year)
+    except OSError as exc:
+        st.error(f"Couldn't fetch the schedule from nfl_data_py: {exc}. Try reloading the page.")
+        st.stop()
+
+
+def _select_season_and_week(
+    conn: sqlite3.Connection, active_season: int, today: date
+) -> tuple[int, int, pd.DataFrame]:
+    """Season and week pickers; returns `(season, week, schedule)`."""
+    season_options = sorted(set(store.known_seasons(conn)) | {active_season})
+    col_season, col_week = st.columns(2)
+    with col_season:
+        season = st.selectbox(
+            "Season", options=season_options, index=season_options.index(active_season)
+        )
+    schedule = _load_schedule(season)
+
+    default_week = pc.current_week(schedule, today)
+    week_labels = pc.week_date_labels(schedule)
+    week_options = sorted(week_labels) or [default_week]
+    with col_week:
+        week = st.selectbox(
+            "Week",
+            options=week_options,
+            index=week_options.index(default_week) if default_week in week_options else 0,
+            format_func=lambda w: f"Week {w} ({week_labels[w]})" if w in week_labels else f"Week {w}",
+        )
+    return season, week, schedule
+
+
+def _render_locked_week(
+    conn: sqlite3.Connection,
+    season: int,
+    week: int,
+    saved_games: pd.DataFrame,
+    saved_picks: pd.DataFrame,
+    status: dict,
+    team_names: dict[str, str],
+) -> None:
+    st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
+    if status.get("lock_warning"):
+        st.warning(status["lock_warning"])
+    display_games, display_picks = _render_snapshot_selector(
+        conn, season, week, "locked", saved_games, saved_picks
+    )
+    _render_picks_table(display_games, display_picks, team_names)
+    _render_pick_details(display_games, display_picks, team_names)
+    _render_actual_picks_form(conn, season, week, saved_games, saved_picks, team_names)
+    _render_week_score(conn, season, week, saved_picks, team_names, status)
+
+
+def _render_open_week(
+    conn: sqlite3.Connection,
+    season: int,
+    week: int,
+    auto_games: pd.DataFrame,
+    included_map: dict[str, bool],
+    saved_games: pd.DataFrame,
+    saved_picks: pd.DataFrame,
+    status: dict | None,
+    team_names: dict[str, str],
+) -> None:
     included: dict[str, bool] = {}
     with st.expander("Games evaluated this week — uncheck any that shouldn't count", expanded=False):
         for _, row in auto_games.iterrows():
