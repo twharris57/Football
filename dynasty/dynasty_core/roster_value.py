@@ -6,19 +6,12 @@ import pandas as pd
 
 from .player_pools import roster_fantasy_players
 
-# Dynasty aging curves differ meaningfully by position - RBs decline earliest,
-# QBs latest (and often keep starting well into their mid-30s in a passing
-# league like this one) - so a single flat "aging" cutoff either flags RBs
-# too late or QBs/TEs too early. Judgment calls, not derived from any league
-# rule; revisit by feel, same as the other rebuild-strategy heuristics below.
+# RBs age out earliest, QBs latest. Judgment calls; tune by feel.
 LOW_VALUE_AGING_AGE = {"RB": 27, "WR": 29, "TE": 30, "QB": 33}
 DEFAULT_LOW_VALUE_AGING_AGE = 29
 LOW_VALUE_YOUNG_AGE = 24
 
-# Sleeper's real injury_status values include some genuinely cryptic
-# abbreviations - expanded here for the hover-tooltip detail (see
-# player_status_details). Anything not listed (e.g. "Questionable", "Out")
-# is already a plain word and passes through unchanged via .get(x, x).
+# Expansions for Sleeper's cryptic injury codes; plain words pass through.
 INJURY_STATUS_DESCRIPTIONS = {
     "PUP": "Physically Unable to Perform",
     "COV": "COVID-19",
@@ -32,25 +25,19 @@ INJURY_STATUS_DESCRIPTIONS = {
 def player_status_details(
     player_id: str, info: dict, taxi_ids: set[str], reserve_ids: set[str]
 ) -> list[tuple[str, str]]:
-    """(icon, description) pairs for a player's current situation: rookie/injured/taxi/IR.
-
-    A player can have more than one at once (e.g. a rookie stashed on
-    taxi). Kept separate from each icon's own description, rather than
-    baked into one compact string, so a caller (see streamlit_app.py) can
-    show just the icon with the description as a hover tooltip - `st.dataframe`
-    has no per-cell tooltip, only a per-column one, so that table renders
-    this as plain HTML instead to get a real one.
-    """
+    """`(icon, description)` pairs: rookie, no NFL team, injured, taxi, IR. A player can have several."""
     details: list[tuple[str, str]] = []
     if not info.get("years_exp"):
         details.append(("🆕", "Rookie (no NFL experience yet)"))
+    if not info.get("team"):
+        details.append(("✂️", "No NFL team (released or unsigned)"))
     injury_status = info.get("injury_status")
     if injury_status:
-        details.append(("🏥", INJURY_STATUS_DESCRIPTIONS.get(injury_status, injury_status)))
+        details.append(("🩹", INJURY_STATUS_DESCRIPTIONS.get(injury_status, injury_status)))
     if player_id in taxi_ids:
-        details.append(("🌱", "Taxi squad"))
+        details.append(("🚕", "Taxi squad"))
     if player_id in reserve_ids:
-        details.append(("🩹", "IR / Reserve"))
+        details.append(("🩼", "IR / Reserve"))
     return details
 
 
@@ -66,22 +53,10 @@ def roster_value_analysis(
     byes: dict[str, int] | None = None,
     phase: str = "rebuilding",
 ) -> pd.DataFrame:
-    """Rank the roster by dynasty value (lowest `adj_value` first) to surface drop candidates.
+    """Roster sorted by `adj_value`, lowest first, with drop-candidate notes.
 
-    `status` is a compact icon summary (see `player_status_flags`) — 🆕
-    rookie, 🏥 injury, 🌱 taxi, 🩹 IR/reserve, more than one possible at once;
-    `status_details` carries the same info as (icon, description) pairs for
-    a caller that wants per-icon hover detail. The bottom quartile (min 3
-    players) of the roster's own value distribution is flagged low-value;
-    `note` distinguishes aging players (real drop candidates) from young
-    ones (rebuild upside, hold) rather than treating "low value" as "drop"
-    outright — the aging cutoff is position-aware (`LOW_VALUE_AGING_AGE`),
-    since RBs decline earlier than QBs/TEs in dynasty value. The young-hold
-    exception itself only applies while `phase == "rebuilding"` (the
-    default, for a caller without a real phase handy) - a low-value young
-    player isn't automatically protected as rebuild upside once the team
-    isn't framing itself that way, and falls through to the same
-    aging-or-monitor read everyone else gets.
+    The bottom quartile (min 3) is low-value. `note` holds young low-value players while
+    rebuilding and flags aging ones (per-position `LOW_VALUE_AGING_AGE`).
     """
     byes = byes or {}
     taxi_ids = set(roster.get("taxi") or [])

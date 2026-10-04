@@ -1,23 +1,7 @@
-"""Persist real roster state across refreshes to attribute draft-plan drops to a specific pick.
+"""Recover which real drop went with each of the user's draft picks, by diffing rosters across refreshes.
 
-Sleeper adds a drafted player straight to the team's roster the moment the
-pick is made, so the live roster already reflects every pick made so far on
-any refresh (confirmed via sleeper_api.py usage elsewhere in this project).
-That means a real drop is recoverable by diffing the roster before/after a
-newly-completed pick - but only when exactly one of the user's own picks
-completed since the last refresh. If two or more complete in the same gap,
-the diff can't tell which drop paired with which pick, so that gap is marked
-"AMBIGUOUS" rather than guessed at.
-
-Deliberately not TTL-based - the closest existing precedent is
-player_scoring.get_multipliers() (no TTL, only overwritten by an explicit
-condition), the only other non-refetch-if-stale cache in this project - and
-deliberately independent of force_full_refresh/force_scoring_refresh, since
-those are about market-data freshness and shouldn't silently wipe this
-mid-draft. Once a season's draft is over, its file is simply never read
-again (next season gets a new draft_id from Sleeper) - see
-_mark_orphaned_snapshots/_delete_orphaned_snapshots for how those old
-files are marked and eventually removed.
+Works only when exactly one own pick completed since the last refresh; otherwise the
+pick is marked AMBIGUOUS. Not a cache: no TTL, and refresh flags never reset it.
 """
 
 from __future__ import annotations
@@ -35,31 +19,15 @@ logger = logging.getLogger(__name__)
 
 AMBIGUOUS = "AMBIGUOUS"
 
-# A draft's own snapshot file stops being written to the moment the draft
-# ends (write_if_changed no-ops once _reconcile finds nothing new), so its
-# mtime freezes at roughly end-of-draft - a reasonable proxy for "this
-# draft is over" without needing this module to track every draft_id a
-# league has ever used. 90 days comfortably clears a full rookie draft plus
-# any reasonable post-draft review window before a file is considered
-# orphaned.
+# A finished draft's file stops changing, so an old mtime means the draft is over.
 ORPHAN_AGE_DAYS = 90
 
-# Minimum time an `.orphaned`-marked file must sit before
-# _delete_orphaned_snapshots() will actually remove it - a real wall-clock
-# safety margin, not just "survived one call to reconcile_snapshot()."
-# streamlit_app.py's Refresh button busts gather_state's cache on every
-# click with a fresh token and no debounce, so two clicks seconds apart
-# would otherwise mark-then-permanently-delete a file with no realistic
-# chance for a human to notice and undo a wrongly-marked one first. 24
-# hours comfortably spans that, while staying small next to ORPHAN_AGE_DAYS.
+# How long an `.orphaned` file waits before deletion, so a mistaken mark can be undone
+# (Refresh can fire twice in seconds).
 ORPHAN_DELETE_COOLDOWN_HOURS = 24
 
 SCHEMA_VERSION = 1
-# 0 -> 1: adopting explicit schema_version stamping via snapshot_io.py -
-# the business shape itself isn't changing in this migration, only the
-# stamp is being introduced, but it must still be registered or
-# load_or_seed refuses to read every real file already on disk (all of
-# them predate this mechanism and are implicitly version 0).
+# 0 -> 1: stamping only; the content shape is unchanged.
 _MIGRATIONS: dict[int, Migration] = {0: lambda d: d}
 
 
@@ -68,22 +36,9 @@ def _snapshot_path(draft_id: str) -> Any:
 
 
 def _mark_orphaned_snapshots(current_draft_id: str) -> None:
-    """Rename old draft_snapshots_*.json files that look orphaned - older
-    than ORPHAN_AGE_DAYS and not the draft currently being reconciled - by
-    appending an `.orphaned` suffix.
+    """Rename snapshot files older than `ORPHAN_AGE_DAYS` (except the current draft) to `.orphaned`.
 
-    A soft, reversible marking step, not deletion itself - actual removal
-    is `_delete_orphaned_snapshots()`'s job, called before this one on
-    every `reconcile_snapshot()` call so a file marked orphaned in this
-    call is never also deleted in the same call. Stamps the renamed file's
-    mtime to "now" (a rename alone doesn't reliably update mtime across
-    platforms) so `_delete_orphaned_snapshots()`'s own cooldown check has a
-    real "when was this marked" signal to read - a call-count guarantee
-    alone ("survived one prior call") isn't a real time buffer, since nothing
-    stops two calls from happening seconds apart (see
-    ORPHAN_DELETE_COOLDOWN_HOURS). A `.orphaned` file no longer matches the
-    glob below, so a later mark sweep leaves it alone rather than
-    re-processing it every refresh.
+    Restamps mtime so the deletion cooldown counts from the mark.
     """
     if not CACHE_DIR.exists():
         return
@@ -102,21 +57,7 @@ def _mark_orphaned_snapshots(current_draft_id: str) -> None:
 
 
 def _delete_orphaned_snapshots() -> None:
-    """Permanently delete every `.orphaned`-marked snapshot file that has
-    sat marked for at least ORPHAN_DELETE_COOLDOWN_HOURS.
-
-    Phase 2 of the two-phase orphan cleanup (see `_mark_orphaned_snapshots`)
-    - added once Phase 1's marking step was confirmed correct against real
-    production data, rather than assumed correct from launch. Called
-    before `_mark_orphaned_snapshots` in `reconcile_snapshot()`, not after,
-    so this never deletes a file this same call is about to mark. The
-    cooldown check (against the mtime `_mark_orphaned_snapshots()` stamps
-    at mark time) is what actually gives a human a real wall-clock window
-    to notice and rename a wrongly-marked file back before it's gone for
-    good - being called on a separate `reconcile_snapshot()` invocation
-    alone doesn't guarantee that, since streamlit_app.py's Refresh button
-    can trigger back-to-back calls seconds apart.
-    """
+    """Delete `.orphaned` files marked at least `ORPHAN_DELETE_COOLDOWN_HOURS` ago. Runs before marking."""
     if not CACHE_DIR.exists():
         return
     cutoff = time.time() - ORPHAN_DELETE_COOLDOWN_HOURS * 3600
@@ -137,9 +78,7 @@ def _reconcile(
     """Pure: given the loaded snapshot state, compute the updated one. No disk I/O."""
     own_completed = [p for p in own_picks if p.overall_pick < current_pick_no]
     if snapshot["confirmed_roster"] is None:
-        # First time ever seeing this draft - baseline is "whatever the
-        # roster looks like right now." Nothing before this point is
-        # retroactively attributable, by definition.
+        # First sighting of this draft: the current roster is the baseline.
         max_pick = max((p.overall_pick for p in own_completed), default=0)
         return {
             "confirmed_through_pick": max_pick,
@@ -163,8 +102,7 @@ def _reconcile(
         else:
             confirmed_drops[str(pick.overall_pick)] = AMBIGUOUS
     else:
-        # Multiple own-picks completed since the last refresh - can't
-        # isolate which drop paired with which pick.
+        # Several own picks since the last refresh: the drops can't be attributed.
         for pick in newly_completed:
             confirmed_drops[str(pick.overall_pick)] = AMBIGUOUS
 

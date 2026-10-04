@@ -54,10 +54,7 @@ class TestComputePickOwnership:
 
 
 class TestPickTradeValues:
-    """Remaining current-season picks get their real slot value and owner;
-    next season's picks use the flat, non-tiered round value applied to
-    every team, since there's no real draft order for a season that hasn't
-    happened yet."""
+    """This season's picks get slot values and real owners; next season's get flat round values."""
 
     def test_matches_remaining_current_season_picks_by_exact_slot_name_and_owner(self):
         ownership = [
@@ -88,9 +85,7 @@ class TestPickTradeValues:
         assert current_season.iloc[0]["value"] == pytest.approx(4000)
 
     def test_traded_pick_is_owned_by_the_new_owner_in_ownership_input(self):
-        # owner_roster_id already reflects the trade - that's
-        # compute_pick_ownership's job upstream, this just confirms
-        # pick_trade_values passes it through rather than the original owner.
+        # The traded owner passes through.
         ownership = [dc.DraftPickSlot(round=1, overall_pick=1, original_roster_id=1, owner_roster_id=2)]
         fc_values = [{"player": {"name": "2026 Pick 1.01", "position": "PICK"}, "value": 7000}]
         team_names = {1: "Original Team", 2: "New Owner"}
@@ -128,9 +123,7 @@ class TestPickTradeValues:
         )
 
         next_season = picks[picks["pick"] == "2027 1st"]
-        # Every team's future 1st uses the same flat value - not the tiered
-        # "(Early)" bucket, which would require guessing a team's future
-        # standing this far out.
+        # Future 1sts share one flat value, not a guessed tier.
         assert len(next_season) == 2
         assert set(next_season["value"]) == {2500.0}
 
@@ -156,12 +149,7 @@ class TestPickTradeValues:
         assert len(picks[picks["owner_roster_id"] == 2]) == 2
 
     def test_unmatched_pick_names_leave_value_empty_not_an_error(self):
-        # A FantasyCalc pick-naming convention change is exactly the
-        # silent-failure mode this join is exposed to (name-string match,
-        # no other stable join key for picks) - it must degrade to an
-        # empty value column, not raise, so gather_state's own
-        # all-NaN check (see PROJECT_PLAN_DYNASTY.md's "Current branch" review
-        # findings) has something real to detect.
+        # A FantasyCalc naming change must blank values, not raise.
         ownership = [dc.DraftPickSlot(round=1, overall_pick=1, original_roster_id=1, owner_roster_id=1)]
         fc_values = [{"player": {"name": "totally different naming scheme", "position": "PICK"}, "value": 7000}]
         team_names = {1: "Team One"}

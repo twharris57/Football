@@ -22,19 +22,16 @@ services:
       - confidence_pool_data:/app/confidence_pool_data
     restart: unless-stopped
 
-  # A batch job, not a long-running service - it syncs the scout-data
-  # branch down and exits (see dynasty/scout_api/sync.py). No ports, no
-  # restart policy: `restart: unless-stopped` would crash-loop it forever
-  # since a clean exit 0 is its normal, expected outcome, not a failure to
-  # recover from. `profiles: [cron]` keeps it out of a plain `docker
-  # compose up`; run it explicitly with `docker compose run --rm scout-api`.
+  # Batch job that exits when done, so no restart policy (it would loop).
+  # Run with: docker compose run --rm scout-api
   scout-api:
     build:
       context: .
       dockerfile: dynasty/Dockerfile.scout-api
     profiles: ["cron"]
-    environment:
-      - SCOUT_DATA_GITHUB_TOKEN=${SCOUT_DATA_GITHUB_TOKEN:-}
+    env_file:
+      - path: ./football.secrets.env
+        required: false  # the token is optional
     volumes:
       - scout_data:/app/scout_data
 

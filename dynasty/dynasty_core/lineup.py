@@ -25,32 +25,11 @@ def player_value_rows(player_ids: list[str], players: dict[str, dict], fc_by_sle
 
 
 def _weekly_projected_points(projection: dict[str, float], scoring_settings: dict[str, float], position: str) -> float:
-    """Dot product of a player's projected stat categories against this league's real scoring settings.
+    """Projected points: each numeric projected stat × its `scoring_settings` weight.
 
-    Not `player_scoring._stat_points` - that translates `nfl_data_py`'s
-    differently-named historical columns. Here both sides already speak
-    Sleeper's own stat-key vocabulary (`rec`, `rec_yd`, `rush_td`, `rush_fd`,
-    `rec_fd`, `rush_40p`, `rec_40p`, `pass_cmp_40p`, ... confirmed live to
-    line up 1:1), so no crosswalk is needed. `bonus_rec_te` was assumed to be
-    an exception - a position-conditional *weight* a global, non-league-scoped
-    endpoint could "never" emit as its own raw-stat key - but a live payload
-    check found Sleeper's projections do emit it directly, scoped correctly
-    to TEs, holding the TE's own reception count. The dot product above
-    already prices it in correctly whenever present; the fallback below only
-    fires when a TE projection omits the key (observed rarely, near-zero-
-    reception TEs), so a normal TE is never double-counted.
-
-    Confirmed absent from every payload checked: `pass_td_40p`, `pass_td_50p`,
-    `rush_td_40p`, `rush_td_50p`, `rec_td_40p`, `rec_td_50p` - real, scored
-    categories for this league that Sleeper's projections simply don't carry
-    (no per-play length data behind a weekly projection), so weekly lineup
-    projections systematically miss these bonuses with no fallback able to
-    recover them - see docs/rookie-draft-big-board.md's "Known limitations".
-
-    Non-numeric stat values are skipped rather than trusted blindly - an
-    undocumented endpoint can plausibly return `None` for a rarely-projected
-    category, and this pipeline degrades gracefully everywhere else rather
-    than crashing on an external-data surprise.
+    Sleeper's projection keys match `scoring_settings`, including `bonus_rec_te`; the TE
+    fallback only applies when that key isn't usable. Long-TD bonuses (`*_td_40p`/`50p`)
+    aren't projected, so they're always missing.
     """
     points = sum(
         value * scoring_settings.get(stat, 0.0)
@@ -70,12 +49,7 @@ def weekly_projected_value_rows(
     projections: dict[str, dict],
     scoring_settings: dict[str, float],
 ) -> list[dict]:
-    """Build {player_id, pos, adj_value} rows from this week's projected points - same
-    shape as `player_value_rows()`, so both can feed `assign_starters()` unchanged, but
-    `adj_value` here is a this-week points projection, not dynasty trade value. A player
-    with no projection entry gets `adj_value=None`, the same missing-data handling
-    `player_value_rows()` already uses for an unresolved market value.
-    """
+    """Like `player_value_rows()`, but `adj_value` is this week's projected points (`None` if unprojected)."""
     rows = []
     for player_id in player_ids:
         info = players.get(player_id, {})
@@ -95,16 +69,10 @@ def bye_for_row(row: dict, players: dict[str, dict], byes: dict[str, int]) -> in
 
 
 def assign_starters(player_rows: list[dict], roster_positions: list[str]) -> list[tuple[str, str | None]]:
-    """Assign players to starting slots, most-restrictive slot first (QB/RB/WR/TE,
-    then FLEX, then SUPER_FLEX).
+    """Fill starting slots most-restrictive first: QB/RB/WR/TE, then FLEX, then SUPER_FLEX.
 
-    Provably optimal for this league's nested slot eligibility — QB's
-    dedicated slot ⊂ SUPER_FLEX's eligible set, RB/WR/TE dedicated ⊂
-    FLEX's ⊂ SUPER_FLEX's — via a standard greedy exchange argument, not
-    just a heuristic. See docs/rookie-draft-big-board.md's "Ranking"
-    section for the full proof sketch. Returns one (slot_label, player_id)
-    pair per starting slot in `roster_positions` (excluding bench);
-    player_id is None if no eligible player remains for that slot.
+    Optimal for nested slot eligibility. Returns `(slot, player_id)` per starting slot,
+    with `None` when no eligible player remains.
     """
     remaining = sorted(
         (r for r in player_rows if r["pos"] in FANTASY_POSITIONS),
@@ -132,14 +100,7 @@ def assign_starters(player_rows: list[dict], roster_positions: list[str]) -> lis
 def _lineup_breakdown_from_rows(
     rows: list[dict], roster: dict, players: dict[str, dict], roster_positions: list[str]
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Shared assignment/grouping logic behind `lineup_breakdown()`/`weekly_lineup_breakdown()`.
-
-    The two only differ in how each row's `adj_value` gets computed
-    (dynasty trade value vs. this week's projected points, via
-    `player_value_rows()`/`weekly_projected_value_rows()`) — starter
-    assignment and the taxi/reserve/bench split are the same question
-    either way, so that logic lives here once rather than twice.
-    """
+    """Starter assignment and taxi/IR/bench split shared by both lineup views."""
     taxi_ids = set(roster.get("taxi") or [])
     reserve_ids = set(roster.get("reserve") or [])
     value_by_id = {r["player_id"]: r["adj_value"] for r in rows}
@@ -178,18 +139,7 @@ def _lineup_breakdown_from_rows(
 def lineup_breakdown(
     roster: dict, players: dict[str, dict], fc_by_sleeper_id: dict[str, dict], league: dict
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Return (starters, bench, taxi, ir) for the roster's optimal lineup by dynasty value.
-
-    A long-run asset-value ranking, not week- or injury-aware by design —
-    this is what trade/drop/draft-plan decisions correctly key off of (see
-    `valuation_principles.md`'s "one valuation strategy" rule), so it stays
-    untouched. See `weekly_lineup_breakdown()` for the this-week-projected
-    alternative. Taxi and IR/reserve players are in `roster["players"]`
-    alongside the real bench, so they're split out via
-    `roster["taxi"]`/`roster["reserve"]` (plain player_id lists) and
-    excluded from the starter assignment itself — Sleeper doesn't allow
-    starting them.
-    """
+    """`(starters, bench, taxi, ir)` by dynasty value. Taxi/IR never start."""
     rows = player_value_rows(roster.get("players") or [], players, fc_by_sleeper_id)
     return _lineup_breakdown_from_rows(rows, roster, players, league["roster_positions"])
 
@@ -197,27 +147,13 @@ def lineup_breakdown(
 def weekly_lineup_breakdown(
     roster: dict, players: dict[str, dict], projections: dict[str, dict], league: dict
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Return (starters, bench, taxi, ir) for the roster's optimal lineup by THIS WEEK's
-    projected points — a genuinely different ranking question than `lineup_breakdown()`'s
-    dynasty value (who wins the most points this week vs. long-run asset value), reusing
-    `assign_starters()`/the same taxi-reserve-bench split unchanged rather than a second,
-    parallel implementation of "who starts." An empty `projections` dict (a failed fetch —
-    see `state.py`) makes every row's `adj_value` `None`, same as an unresolved market
-    value — `assign_starters()` already handles that (treats `None` as lowest priority),
-    so this degrades to an arbitrary-order lineup rather than crashing.
-    """
+    """`(starters, bench, taxi, ir)` by this week's projections. No projections → arbitrary order."""
     rows = weekly_projected_value_rows(roster.get("players") or [], players, projections, league["scoring_settings"])
     return _lineup_breakdown_from_rows(rows, roster, players, league["roster_positions"])
 
 
 def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
-    """Return active-roster, taxi-squad, and IR/reserve slot usage for the given roster.
-
-    `roster["reserve"]` (a plain player_id list, same shape as `roster["taxi"]`)
-    is reliably derivable after all — confirmed directly against the live
-    league, including rosters with IR players populated — so it's counted
-    here and excluded from `active_filled`, same as taxi.
-    """
+    """Active, taxi, and IR slot usage. IR players are excluded from `active_filled`."""
     all_player_ids = roster.get("players") or []
     taxi_ids = roster.get("taxi") or []
     reserve_ids = roster.get("reserve") or []
@@ -245,31 +181,10 @@ def roster_capacity(roster: dict, league: dict) -> dict[str, int]:
 def roster_total_capacity(
     league: dict, reserve_filled: int = 0, taxi_eligible: bool = True, taxi_filled: int = 0
 ) -> int:
-    """Return the combined active-roster + taxi-squad + occupied-reserve slot count.
+    """Total roster ceiling: active + taxi + *occupied* IR slots.
 
-    Used to decide whether adding a player genuinely requires a drop, for
-    simulated/hypothetical rosters — those are a flat player-id list (see
-    `multi_round_plan`) with no active/taxi/reserve split, so this is the
-    "is there room *anywhere*" signal. `reserve_filled` (the roster's
-    actual current IR headcount, passed by the caller — not the league's
-    full `reserve_slots` setting) accounts only for *existing* IR occupants:
-    a newly-drafted rookie can never land on reserve (that requires a real
-    injury designation), so an empty IR slot must not read as room for one.
-
-    `taxi_eligible` gates whether a *new* candidate could occupy an *open*
-    taxi slot — `True` (default) for rookies, always taxi-eligible in this
-    draft; `False` for `free_agent_board`/`evaluate_trade`'s candidates,
-    since Sleeper's real accrued-experience taxi rule isn't modeled here
-    (see `.claude/PROJECT_PLAN_DYNASTY.md`'s `RT-8`) and most veteran free agents
-    or trade targets wouldn't actually qualify. When `taxi_eligible=False`,
-    the ceiling still credits `taxi_filled` (the roster's actual current
-    taxi headcount, same shape as `reserve_filled`) rather than dropping
-    taxi capacity to zero outright — existing taxi occupants are already
-    counted in the player-id list this ceiling is compared against
-    (`lineup_breakdown`: "Taxi and IR/reserve players are in
-    `roster["players"]` alongside the real bench"), so zeroing taxi
-    capacity entirely would make a normal existing taxi stash look like it
-    was already over capacity before anything changed.
+    Empty IR slots don't count — a new player can't be placed there. With
+    `taxi_eligible=False` (veterans), open taxi slots don't count but filled ones do.
     """
     taxi_slots = league["settings"].get("taxi_slots", 0) if taxi_eligible else taxi_filled
     return len(league["roster_positions"]) + taxi_slots + reserve_filled

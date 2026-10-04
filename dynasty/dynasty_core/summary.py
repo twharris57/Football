@@ -1,5 +1,4 @@
-"""Attention digest: a short "what needs a look right now" list, built from
-already-computed per-team analysis."""
+"""Attention digest: a short "what needs a look right now" list from existing signals."""
 
 from __future__ import annotations
 
@@ -16,32 +15,10 @@ def build_attention_digest(
     *,
     top_n: int = 3,
 ) -> dict[str, list[str]]:
-    """Compose five already-computed per-team signals into short digest lists.
+    """Format and cap already-ranked signals into short digest lists with "(+N more)" notes.
 
-    No new valuation model - see .claude/conventions/valuation_principles.md's
-    "one valuation strategy" rule; every line here is built from a field
-    another tab already displays. Each list is capped to `top_n`, with a
-    trailing "(+N more)" note if there was more - a "what needs attention"
-    list shouldn't silently understate how much is flagged. Draft-pick timing
-    and data_warnings are deliberately not covered here; both are already
-    surfaced globally above every tab (see streamlit_app.py).
-
-    `current_week` (Sleeper's `league["settings"]["leg"]`, same field
-    `roster_tab.py`'s `_render_bye_impact()` already uses for "already
-    happened" vs. "still ahead") excludes already-passed weeks from
-    `weekly_gaps` before capping - a week that's already happened has
-    nothing left to act on, and letting it occupy one of the capped slots
-    would silently crowd out a real upcoming gap in a tab whose entire
-    purpose is "what needs attention right now." `sellable`/`free_agents`/
-    `pickup_alerts` don't need this: all three already arrive ordered by
-    their own value/impact before capping, not by an unrelated fixed order
-    a stale entry could dominate.
-
-    `pickup_alerts` (see pickup_snapshots.py) must arrive already ranked
-    best-first (by marginal value) and already filtered to real positive
-    value to this roster - this function only formats and caps, matching
-    every other category's division of labor (the caller computes/ranks/
-    filters, this module formats/caps).
+    Weekly gaps before `current_week` are dropped before capping. `pickup_alerts` must
+    arrive ranked and filtered.
     """
     digest: dict[str, list[str]] = {
         "needs": [f"Flagged needs: {', '.join(sorted(need_positions))}"] if need_positions else [],
@@ -69,12 +46,7 @@ def _sellable_lines(sellable_players: pd.DataFrame) -> list[str]:
 
 
 def _impact_and_drop_note(marginal_value: float, drop_name: str | None, drop_is_starter: bool | None) -> str:
-    """"would add +X to your lineup[ — would require dropping Y (a starter)]" -
-    the impact/replacement phrasing free_agent_board() rows and pickup_alerts
-    entries share (both come from rank_by_marginal_value()'s same
-    marginal_value/drop shape via state.py), factored out so the two
-    formatters below can't drift apart on how they phrase the same signal.
-    """
+    """"would add +X to your lineup[ — would require dropping Y (a starter)]", shared by free agents and pickup alerts."""
     note = f"would add {marginal_value:+.1f} to your lineup"
     if pd.notna(drop_name):
         starter_note = " (a starter)" if drop_is_starter else ""
@@ -84,11 +56,7 @@ def _impact_and_drop_note(marginal_value: float, drop_name: str | None, drop_is_
 
 def _free_agent_lines(free_agent_board: pd.DataFrame) -> list[str]:
     if free_agent_board.empty:
-        # An empty free_agent_board() has no columns at all (built from a
-        # plain pd.DataFrame([]) when the ranked pool is empty) - unlike
-        # roster_weekly_gaps (always 18 real rows) or sellable_players
-        # (safe via .iterrows() alone), filtering by column name here would
-        # raise KeyError rather than just finding nothing.
+        # An empty board has no columns, so filtering by column name would raise.
         return []
     positive = free_agent_board[free_agent_board["marginal_value"] > 0]
     return [
@@ -112,11 +80,6 @@ def _pickup_alert_lines(pickup_alerts: list[dict]) -> list[str]:
             )
         else:  # "status"
             base = f"{alert['name']} ({alert['pos']}, {alert['team']}) status changed: {alert['old']} → {alert['new']}"
-        # marginal_value/drop_name/drop_is_starter arrive on every alert
-        # already (state.py stamps them from the same rank_by_marginal_value()
-        # call free_agent_board() uses) - what this change would mean for
-        # *your* roster, not just what changed for the player, same as the
-        # Free agents board already shows.
         note = _impact_and_drop_note(alert["marginal_value"], alert.get("drop_name"), alert.get("drop_is_starter"))
         lines.append(f"{base} — {note}")
     return lines

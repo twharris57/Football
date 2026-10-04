@@ -1,14 +1,4 @@
-"""SQLite persistence for the confidence pool: seasons, teams, the stable
-game/schedule facts, weekly odds+picks snapshots, and lock-in status.
-
-Schema lives in `db_schema/migrations/` (applied by `db_schema.apply_migrations`
-on every `connect()`) rather than a single inline `CREATE TABLE` script -- see
-`docs/confidence-pool-web-app.md` for the full table-by-table design
-rationale and `.claude/PROJECT_PLAN_CONFIDENCE_POOL.md`'s `CP-3`/`CP-5` for
-why this exists: every week's evaluated games and generated picks are meant
-to be real historical input for future what-if analysis, not just a working
-cache of "whatever's current."
-"""
+"""SQLite persistence for the confidence pool. Schema: `db_schema/migrations/`."""
 
 from __future__ import annotations
 
@@ -19,13 +9,7 @@ import pandas as pd
 
 import db_schema
 
-# Seeded once into `teams` on first connect (`INSERT OR IGNORE`, so a later
-# Settings-tab edit is never clobbered on a later app restart). Sourced from
-# the user directly (2026-08-23) against a real late-season 2025 Legion pool
-# sheet, covering all 32 of nfl_data_py's team abbreviations (see
-# `picks_core.NFL_TEAM_ABBREVIATIONS`). Still editable via Settings if the
-# pool sheet's naming ever changes -- this is just the starting basis, not a
-# fixed constant.
+# Pool-sheet names, seeded on connect without overwriting Settings edits.
 DEFAULT_TEAMS: dict[str, str] = {
     "ARI": "Arizona",
     "ATL": "Atlanta",
@@ -63,16 +47,11 @@ DEFAULT_TEAMS: dict[str, str] = {
 
 
 def connect(db_path: str) -> sqlite3.Connection:
-    """Open (creating/migrating as needed) the confidence-pool SQLite store.
+    """Open the store, applying migrations and seeding teams.
 
-    `check_same_thread=False` -- callers (streamlit_app.py) are expected to
-    open this once via `st.cache_resource` and reuse the same connection
-    across every session's own ScriptRunner thread, not just the thread
-    that happened to create it. `busy_timeout` and WAL journaling exist so
-    a second concurrent writer waits briefly for the lock instead of
-    immediately raising `sqlite3.OperationalError: database is locked` --
-    the failure mode seen when multiple uncached connections all tried to
-    run migrations against the same file at once.
+    Shared across Streamlit threads via `st.cache_resource`, hence
+    `check_same_thread=False`. WAL + `busy_timeout` make concurrent writers wait
+    instead of failing with "database is locked".
     """
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -85,9 +64,7 @@ def connect(db_path: str) -> sqlite3.Connection:
 
 
 def _seed_default_teams(conn: sqlite3.Connection) -> None:
-    """Insert `DEFAULT_TEAMS` for any team that has no row yet.
-    `INSERT OR IGNORE` -- safe to call on every `connect()`, never
-    overwrites a name already set (via Settings, or a prior call here)."""
+    """Insert `DEFAULT_TEAMS` for any team without a row."""
     with conn:
         conn.executemany(
             "INSERT OR IGNORE INTO teams (abbreviation, display_name) VALUES (?, ?)",
@@ -102,7 +79,7 @@ def get_team_display_names(conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def set_team_display_name(conn: sqlite3.Connection, abbreviation: str, display_name: str) -> None:
-    """Set (or update) the pool-sheet display name shown for a team abbreviation."""
+    """Set the pool-sheet display name for a team."""
     with conn:
         conn.execute(
             """
@@ -129,11 +106,7 @@ def get_active_season(conn: sqlite3.Connection) -> int | None:
 
 
 def known_seasons(conn: sqlite3.Connection) -> list[int]:
-    """Every season year this app has real data for -- a row in `seasons`
-    (ever activated) or `games` (ever viewed/synced) -- for scoping the
-    Picks tab's season selector to real options instead of an arbitrary
-    year range.
-    """
+    """Every season year with a `seasons` or `games` row."""
     rows = conn.execute(
         "SELECT season_year FROM seasons UNION SELECT season_year FROM games ORDER BY season_year"
     ).fetchall()
@@ -141,13 +114,7 @@ def known_seasons(conn: sqlite3.Connection) -> list[int]:
 
 
 def set_active_season(conn: sqlite3.Connection, season_year: int) -> None:
-    """Mark `season_year` active, clearing whichever season was active before.
-
-    `with conn:` -- for `sqlite3.Connection`, this commits the block as one
-    transaction on success or rolls it all back on an exception; it does
-    *not* close the connection (a common gotcha). Every multi-statement
-    write in this module relies on that for atomicity.
-    """
+    """Mark `season_year` active, deactivating any other."""
     with conn:
         conn.execute("UPDATE seasons SET active = 0")
         conn.execute(
@@ -160,37 +127,16 @@ def set_active_season(conn: sqlite3.Connection, season_year: int) -> None:
         )
 
 
-# Weeks known to carry the "every game counts, only the deadline is
-# special" bylaws exception -- used only as get_week_rule()'s *default*
-# before a real season_week_rules row exists, never as a restriction (see
-# set_late_season_deadline(), which accepts any week). Confirmed against
-# the real 2026 Legion Pool rules document: weeks 16-18, up from just
-# 17-18 in 2025 -- the bylaws' own text says "now Weeks 16-18", meaning
-# *which* weeks this covers changes year to year and this tuple needs a
-# human to re-check it against each season's actual rules document, not
-# an assumption that last year's set still holds. If it's ever wrong for
-# a given season, the fix is a Settings-tab visit (or a direct
-# set_late_season_deadline() call), not necessarily a code change --
-# but get_week_rule()'s *default* for an unconfigured week will be wrong
-# until either that happens or this tuple is corrected.
+# Default 'all_games' weeks before a season_week_rules row exists. Set by the
+# bylaws and changes yearly (17-18 in 2025, 16-18 in 2026) — re-check each season.
 KNOWN_LATE_SEASON_WEEKS = (16, 17, 18)
 
 
 def get_week_rule(conn: sqlite3.Connection, season_year: int, week: int) -> dict | None:
-    """Return this week's selection/deadline override, or `None` if it
-    follows the default `'standard'` rule (see `picks_core.select_games`).
+    """This week's rule override, or `None` for `'standard'`.
 
-    Weeks in `KNOWN_LATE_SEASON_WEEKS` always return at least
-    `{'selection_rule': 'all_games', 'deadline_override': None}`, even
-    with no row yet -- unlike the deadline's actual *value*
-    (commissioner-announced, genuinely different each year), the bylaws'
-    "every game counts, only the deadline is special" exception for these
-    weeks isn't itself something a commissioner opts into; it's just true
-    once you know which weeks it applies to this season. Returning `None`
-    here until someone visits Settings would silently apply the wrong
-    (narrower) selection rule to real games in the meantime -- a missing
-    row for any other week correctly means the plain `'standard'` default
-    applies.
+    `KNOWN_LATE_SEASON_WEEKS` default to `'all_games'` even with no row, so they select
+    correctly before anyone configures a deadline.
     """
     row = conn.execute(
         "SELECT * FROM season_week_rules WHERE season_year = ? AND week = ?",
@@ -211,17 +157,7 @@ def get_week_rule(conn: sqlite3.Connection, season_year: int, week: int) -> dict
 def set_late_season_deadline(
     conn: sqlite3.Connection, season_year: int, week: int, deadline: datetime
 ) -> None:
-    """Set the commissioner-announced early cutoff for a late-season week,
-    marking that week's selection rule as `'all_games'` -- every game
-    counts; only the deadline is special (see
-    `docs/confidence-pool-data-model.md` for the full rationale).
-
-    Deliberately accepts any week 1-18, not just a hardcoded pair -- see
-    `KNOWN_LATE_SEASON_WEEKS`'s own comment for why the exact set of weeks
-    isn't hardcoded here either. `KNOWN_LATE_SEASON_WEEKS` is only ever a
-    *default* (`get_week_rule()`) for before a real row like this one
-    exists -- never a restriction on what can actually be configured.
-    """
+    """Set a week's commissioner-announced deadline and mark it `'all_games'`. Any week 1-18."""
     if not 1 <= week <= 18:
         raise ValueError(f"Week must be between 1 and 18, got {week}")
     with conn:
@@ -239,10 +175,7 @@ def set_late_season_deadline(
 
 
 def register_algorithm_version(conn: sqlite3.Connection, version_id: str, description: str) -> None:
-    """Ensure `version_id` is recorded in `algorithm_versions` -- idempotent,
-    never overwrites an existing row's description once introduced. Called
-    once at app startup (see `streamlit_app.py`) with `picks_core.ALGORITHM_VERSION`,
-    so every `weekly_picks` row's `algorithm_version` FK is always satisfiable."""
+    """Record `version_id` if new; existing descriptions are never overwritten."""
     with conn:
         conn.execute(
             "INSERT OR IGNORE INTO algorithm_versions (version_id, description, introduced_at) VALUES (?, ?, ?)",
@@ -251,12 +184,7 @@ def register_algorithm_version(conn: sqlite3.Connection, version_id: str, descri
 
 
 def sync_game_outcomes(conn: sqlite3.Connection, schedule: pd.DataFrame, synced_at: datetime) -> None:
-    """Backfill final scores onto already-known `games` rows from a fresh
-    schedule fetch (`nfl_data_py`'s `home_score`/`away_score` columns, `NULL`
-    until a game completes). Update-only -- never inserts a new `games` row,
-    so a game the pool never selected (and so never reached `save_week()`)
-    stays out of this table entirely, matching `select_games()`'s own scope.
-    """
+    """Backfill final scores onto existing `games` rows. Never inserts."""
     has_scores = schedule["home_score"].notna() & schedule["away_score"].notna()
     rows = schedule[has_scores]
     with conn:
@@ -270,9 +198,7 @@ def sync_game_outcomes(conn: sqlite3.Connection, schedule: pd.DataFrame, synced_
 
 
 def get_game_outcomes(conn: sqlite3.Connection, season_year: int, week: int) -> pd.DataFrame:
-    """Return `game_id`/`home_team`/`away_team`/`home_score`/`away_score`
-    for every `games` row known for a week -- scores are `NULL` until
-    `sync_game_outcomes` backfills them. Feeds `picks_core.score_picks`."""
+    """Teams and scores (null until final) for a week's known games."""
     return pd.read_sql_query(
         """
         SELECT game_id, home_team, away_team, home_score, away_score
@@ -291,13 +217,7 @@ def set_reported_score(
     score: int | None,
     entered_at: datetime,
 ) -> None:
-    """Record the pool's officially reported score for a week -- the only
-    way bylaws rule 2's late-card penalty ever gets reflected here, since
-    this single-user app has no visibility into other entrants' scores
-    (see `picks_core.check_reported_score`). Updates `week_status`, whose
-    row is guaranteed to already exist -- the UI only offers this on an
-    already-locked week, and locking always writes `week_status` first via
-    `save_week`."""
+    """Record the pool's official score for an already-locked week."""
     with conn:
         conn.execute(
             """
@@ -315,8 +235,7 @@ def set_reported_score(
 
 
 def get_week_status(conn: sqlite3.Connection, season_year: int, week: int) -> dict | None:
-    """Return a week's lock/generation status, or `None` if nothing's been
-    saved for it yet."""
+    """Return a week's lock/generation status, or `None` if nothing's saved."""
     row = conn.execute(
         "SELECT * FROM week_status WHERE season_year = ? AND week = ?",
         (season_year, week),
@@ -335,30 +254,11 @@ def save_week(
     lock: bool = False,
     lock_warning: str | None = None,
 ) -> None:
-    """Persist a week's evaluated games + generated picks as the `'current'`
-    snapshot, overwriting any prior `'current'` snapshot for that week.
-    Refuses to overwrite an already-locked week.
+    """Replace the week's `'current'` snapshot. Raises if the week is locked.
 
-    On the first save for a `(season_year, week)` that's also
-    `first_snapshot_eligible`, also captures an immutable `'first'`
-    snapshot -- written once, never touched again -- so odds/pick movement
-    between the first real review and the eventual lock stays visible
-    later (see `docs/confidence-pool-web-app.md`). Deliberately *not* just
-    "the first save ever": a save made while previewing a future week (the
-    season/week selector lets you browse ahead) shouldn't get permanently
-    recorded as that week's first look -- pass `picks_core.is_first_look_window(...)`
-    so only a save made close to the week's actual kickoffs can claim it.
-
-    `games` needs `game_id`/`home_team`/`away_team`/`gameday`/`weekday`/
-    `gametime`/`home_moneyline`/`away_moneyline`/`included` columns (as
-    produced by `picks_core.games_with_included_flags`); `picks` needs
-    `game_id`/`points`/`predicted_winner`/`confidence`/`algorithm_version`
-    (as produced by `picks_core.rank_games`).
-
-    `lock_warning` records a caveat about this specific lock -- e.g.
-    `picks_core.resolve_week_lock()`'s "computed after kickoff" flag -- so it
-    stays visible on every later view of the locked week, not just the one
-    page load when the lock happened. Ignored unless `lock` is also set.
+    Also writes the one-time `'first'` snapshot when none exists and
+    `first_snapshot_eligible`. `games` comes from `games_with_included_flags`,
+    `picks` from `rank_games`. `lock_warning` is stored only when locking.
     """
     status = get_week_status(conn, season_year, week)
     if status and status["locked"]:
@@ -466,16 +366,9 @@ def save_week(
 def load_week(
     conn: sqlite3.Connection, season_year: int, week: int, snapshot_type: str = "current"
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict | None]:
-    """Load a previously-saved week's games, picks, and status for one
-    snapshot -- `'current'` by default, or `'first'` to see the frozen
-    initial look instead. Empty DataFrames (and `None` status --
-    status is week-level, not per-snapshot) if nothing has been saved for
-    that snapshot yet.
+    """Load one snapshot's games and picks, plus the week's status.
 
-    `games` carries `captured_at` (the snapshot's true generation time) so
-    a caller reusing this data verbatim -- e.g. `resolve_week_lock()`
-    locking in a prior snapshot -- can persist it under its own original
-    timestamp instead of substituting whatever moment the reuse happens.
+    `games` includes `captured_at` so a reused snapshot keeps its original timestamp.
     """
     games = pd.read_sql_query(
         """
@@ -512,18 +405,10 @@ def save_actual_picks(
     entered_at: datetime,
     late: bool = False,
 ) -> None:
-    """Persist what the user actually submitted to the pool for a week,
-    overwriting any prior entry for it -- a correction re-saves cleanly,
-    same as `save_week()`'s `'current'` snapshot. `picks` needs
-    `game_id`/`points`/`predicted_winner` columns; `points`/`predicted_winner`
-    may be `None`/`NaN` (a blank point box or unmarked winner is a real,
-    bylaws-anticipated outcome, not invalid data -- see
-    `picks_core.check_actual_picks`), and duplicate `points` values across
-    games are allowed for the same reason (bylaws rule 7).
+    """Replace the week's submitted card.
 
-    `late` marks the whole week's card as submitted after the deadline
-    (bylaws rule 2) -- a single fact for the week, stored on every row
-    for it, same pattern as `weekly_games.captured_at`.
+    Blank points/winners and duplicate points are stored as entered (the bylaws
+    resolve them). `late` applies to the whole card.
     """
     with conn:
         conn.execute(
@@ -548,8 +433,7 @@ def save_actual_picks(
 
 
 def load_actual_picks(conn: sqlite3.Connection, season_year: int, week: int) -> pd.DataFrame:
-    """Load the user's actual submitted picks for a week. Empty DataFrame
-    if nothing has been entered yet."""
+    """Load the week's submitted card (empty if none)."""
     return pd.read_sql_query(
         """
         SELECT game_id, points, predicted_winner, late, entered_at

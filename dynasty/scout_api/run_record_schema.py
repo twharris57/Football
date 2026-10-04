@@ -1,43 +1,12 @@
-"""The run-record schema: one artifact per nightly cloud-routine run,
-written as JSON to the `scout-data` branch (`run_YYYYMMDD.json`) and
-mirrored into SQLite by `sync.py`'s `ingest_run_records()`.
+"""Run-record schema: one `run_YYYYMMDD.json` per nightly scout run.
 
-Unifies three separately-designed logs into one artifact:
+Serves three purposes:
+- **Dedup:** later runs skip `(player_id, category)` pairs already reviewed.
+- **Audit:** every item considered, with its verdict and reason.
+- **Reflection:** `reflection` starts null; a later pass patches it in.
 
-- **Dedup**: a later run scans recent run records for a matching
-  `(player_id, category)` pair on a `ReviewedItem` to avoid re-surfacing
-  the same thing night after night.
-- **Materiality's audit trail**: every item considered that night is
-  recorded with its `verdict` ("surfaced" or "suppressed") and `reason`,
-  whether or not it made the cut - not just the ones that got notified.
-- **Reflection state**: `reflection` starts `null` on every run and is
-  the one field this schema reserves for a write path this module does
-  not implement. A future self-reflection pass (not yet built - hard-
-  blocked on a reliable, timestamped transaction log existing) is
-  expected to revisit a *past* run's file days later, once real outcomes
-  are known, and patch this field in - fetch, mutate, recommit, not
-  append-only. Nothing in this module performs that mutation; it only
-  shapes the slot that pass will write into.
-
-Two verdict lanes on `ReviewedItem`: **deterministic**
-(numeric thresholds already used elsewhere in this codebase - marginal
-value, FAAB comparables - real, testable code) and **agentic** (Scout's
-own qualitative judgment, run only after the deterministic dedup check
-already passed). Only a borderline agentic verdict is expected to have
-gone through a corroboration search (an independent second source
-checking the same claim) before being recorded here.
-
-Same prompt-injection posture as `finding_schema.py`, and the same
-caveat: fixed fields and a length cap on free-text (`reason`,
-`reflection.notes`) keep this store holding extracted, typed judgments
-rather than a raw blob a later consumer (the self-reflection pass's own
-GitHub-issue text, a future dashboard) could reason over as instructions
-- structural, not a content filter. `reason`/`notes` are Scout's own
-generated explanation of research content it read during its research
-pass, so the same discipline applies to them as to a finding's `summary`.
-
-Deliberately stdlib-only (no `dynasty_core` import) - see
-`finding_schema.py`'s module docstring for why.
+Verdicts come from a deterministic lane (numeric thresholds) or an agentic lane
+(Scout's judgment, after dedup). Free text is length-capped. Stdlib-only.
 """
 
 from __future__ import annotations
@@ -53,9 +22,7 @@ from .schema_validation import require_exact_keys, require_iso8601, require_none
 VERDICT_LANES = ("deterministic", "agentic")
 VERDICTS = ("surfaced", "suppressed")
 
-# Scout's own generated explanation text - same UI/audit-log hygiene
-# rationale as finding_schema.SUMMARY_MAX_LENGTH, not a prompt-injection
-# defense by itself (see module docstring).
+# Length cap for display and audit logs; not an injection defense.
 REASON_MAX_LENGTH = 500
 REFLECTION_NOTES_MAX_LENGTH = 1000
 
@@ -82,10 +49,10 @@ class ReviewedItem:
 
 @dataclass(frozen=True)
 class ReflectionState:
-    # ISO8601, tz-aware - when the self-reflection pass examined this run
+    # ISO8601, tz-aware - when reflection examined this run
     reviewed_at: str
     notes: str
-    # a GitHub issue the self-reflection pass opened for a missed catch
+    # GitHub issue opened for a missed catch, if any
     issue_url: str | None
 
 
@@ -99,9 +66,7 @@ class RunRecord:
 
 
 def is_run_record_path(path: str) -> bool:
-    """True if the GitHub path names a run-record file (e.g.
-    "scout-data/run_20260916.json") rather than some other file that may
-    land on scout-data (a finding, a future trade-block file, ...)."""
+    """True if the GitHub path is a `run_*.json` file."""
     return PurePosixPath(path).name.startswith(RUN_RECORD_FILENAME_PREFIX)
 
 
@@ -111,12 +76,7 @@ def _require_iso_date(payload: dict, key: str) -> str:
         parsed = datetime.strptime(value, "%Y-%m-%d")
     except ValueError as exc:
         raise ValueError(f"{key} is not a valid YYYY-MM-DD date: {value!r}") from exc
-    # strptime accepts non-zero-padded input ("2026-9-6") but this column
-    # is compared lexicographically (dedup/recency scans, see the
-    # scout_run_record_items indexes) - a non-canonical value would sort
-    # wrong against a normal zero-padded date, so reject it outright
-    # rather than silently normalizing (no coercion, same posture as the
-    # rest of this schema).
+    # Require zero-padding: the column is compared as text.
     if parsed.strftime("%Y-%m-%d") != value:
         raise ValueError(f"{key} must be zero-padded YYYY-MM-DD, got {value!r}")
     return value
@@ -178,12 +138,7 @@ def _parse_reflection(payload: object) -> ReflectionState | None:
 
 
 def parse_run_record(content: str) -> RunRecord:
-    """Parse and strictly validate a run_*.json file's content.
-
-    Raises ValueError on any violation, same all-or-nothing posture as
-    finding_schema.parse_finding: no defaults, no coercion, and unexpected
-    keys are rejected alongside missing ones.
-    """
+    """Parse a run record strictly: no defaults, no coercion, exact keys. Raises ValueError."""
     payload = json.loads(content)
     if not isinstance(payload, dict):
         raise ValueError(f"run record content must be a JSON object, got {type(payload).__name__}")

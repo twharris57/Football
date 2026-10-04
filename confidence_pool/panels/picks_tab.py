@@ -1,6 +1,4 @@
-"""Picks tab: this week's game-selection review, Vegas-odds ranking, and the
-pool's lock-in deadline. See docs/confidence-pool-web-app.md for the rules.
-"""
+"""Picks tab: game review, ranking, deadline lock, actual submission, and scoring."""
 
 from __future__ import annotations
 
@@ -103,9 +101,6 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
     locked = bool(status and status["locked"])
 
     if not locked and pc.is_locked(now, deadline):
-        # Deadline just passed with nothing explicitly locked yet -- lock the
-        # last-generated snapshot (or, absent that, one final computed
-        # recommendation) now rather than leaving it open to further edits.
         outcome = pc.resolve_week_lock(auto_games, included_map, saved_games, saved_picks, now)
         if outcome.locked:
             store.save_week(
@@ -178,16 +173,7 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
 
 
 def _render_deadline(deadline: datetime, now: datetime, is_override: bool) -> None:
-    """The pick-submission cutoff, given real visual weight instead of a
-    low-emphasis caption -- easy to miss at a glance otherwise. Escalates
-    to a warning inside the last 24 hours, and to an error once passed.
-
-    `is_override` marks a week using the commissioner-announced early
-    cutoff (`season_week_rules.deadline_override`) instead of the usual
-    kickoff-derived deadline -- the case most likely to catch someone off
-    guard expecting the normal timing, so it gets its own badge and a
-    warning-level background regardless of how far off it still is.
-    """
+    """Show the deadline, escalating to warning within 24h (or for an early cutoff) and error once passed."""
     deadline_str = deadline.strftime("%a %b %d, %I:%M %p ET")
     remaining = deadline - now
     if is_override:
@@ -210,10 +196,7 @@ def _format_remaining(remaining: timedelta) -> str:
 
 
 def _full_table_height(num_rows: int) -> int:
-    """A `st.dataframe` height (px) tall enough to show every row without an
-    internal scrollbar -- a confidence-pool week never has more than ~16
-    games, so a tiny embedded scrollbar is a poor fit for a table this
-    short. ~35px/row + header, matching Streamlit's own row height."""
+    """Height (px) that shows every row without an inner scrollbar."""
     return 35 * (num_rows + 1) + 3
 
 
@@ -225,13 +208,7 @@ def _render_snapshot_selector(
     current_games: pd.DataFrame,
     current_picks: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Lets the user switch between a week's frozen `'first'` look and its
-    `'current'` snapshot -- `'current'` keeps changing on every
-    regenerate pre-lock and is what eventually gets locked in, while
-    `'first'` stays frozen from the first eligible look, so comparing them
-    shows what moved. No toggle is shown until a `'first'` snapshot
-    actually exists (nothing yet to compare against).
-    """
+    """Toggle between the week's `'first'` and `'current'` snapshots, once a `'first'` exists."""
     first_games, first_picks, _ = store.load_week(conn, season, week, snapshot_type="first")
     if first_games.empty:
         return current_games, current_picks
@@ -259,10 +236,7 @@ def _render_picks_table(games: pd.DataFrame, picks: pd.DataFrame, team_names: di
 
 
 def _render_pick_details(games: pd.DataFrame, picks: pd.DataFrame, team_names: dict[str, str]) -> None:
-    """One expander per pick with the raw moneylines and intermediate math
-    behind its confidence score (`pc.explain_odds`) -- not just the final
-    points/predicted-winner/confidence columns `_render_picks_table` shows.
-    """
+    """Per-pick expander showing moneylines and de-vig math."""
     merged = picks.merge(
         games[["game_id", "home_team", "away_team", "home_moneyline", "away_moneyline"]],
         on="game_id",
@@ -308,11 +282,7 @@ def _render_actual_picks_form(
     algorithm_picks: pd.DataFrame,
     team_names: dict[str, str],
 ) -> None:
-    """A locked week's actual-submission form -- what you really wrote on
-    the pool sheet, if it differed from the recommendation, recorded so a
-    future season can compare algorithm vs. actual. Defaults every field
-    to the algorithm's own recommendation, edited only where it deviated.
-    """
+    """Form recording the card actually submitted, defaulting to the algorithm's picks."""
     st.subheader("Your actual submission")
     st.caption(
         "Defaults to the recommendation above -- edit only what you "
@@ -430,13 +400,7 @@ def _render_week_score(
     team_names: dict[str, str],
     status: dict | None,
 ) -> None:
-    """A locked week's real score, once outcomes are known -- the
-    algorithm's hypothetical total next to what you actually submitted, per
-    `picks_core.score_picks`. Also where the pool's officially reported
-    score gets recorded, since bylaws rule 2's late-card penalty needs
-    every other entrant's score, which this app doesn't track -- see
-    `picks_core.check_reported_score`.
-    """
+    """Algorithm vs. actual score once outcomes exist, plus the reported-score entry."""
     outcomes = store.get_game_outcomes(conn, season, week)
     algo_score = pc.score_picks(_entries_from_picks(saved_picks), outcomes)
     if algo_score.games_decided == 0:
@@ -488,9 +452,7 @@ def _render_week_score(
         st.caption("No actual submission recorded for this week yet.")
 
     max_score = algo_score.games_total * (algo_score.games_total + 1) // 2
-    # Bylaws rule 2: a late card scores 10 points below the field's lowest
-    # card, and no on-time card can score below 0 -- so -10 is the real
-    # floor a reported score can ever legitimately hit.
+    # A late card scores 10 below the field's lowest (rule 2); on-time cards can't go below 0.
     min_score = -10
     reported = status.get("reported_score") if status else None
     col_score, col_clear = st.columns([4, 1])

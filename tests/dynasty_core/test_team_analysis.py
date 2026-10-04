@@ -22,9 +22,7 @@ class TestTeamRosterAnalysis:
             "qb1": make_player("QB", team="AAA", full_name="QB One"),
             "wr1": make_player("WR", team="AAA", full_name="WR One"),
         }
-        # position deliberately omitted from fc_entry - passing "QB" would
-        # trigger the real POSITION_VALUE_MULTIPLIER fallback (1.175x) and
-        # break this test's hand-computed vor math below.
+        # No position on fc_entry, so the position multiplier doesn't change the hand-computed vor.
         fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("qb1", 100), fc_entry("wr1", 200)])
         roster = {"players": ["qb1", "wr1"], "taxi": [], "reserve": []}
         replacement_level = {"QB": 50.0, "RB": 0.0, "WR": 50.0, "TE": 0.0}
@@ -52,9 +50,7 @@ class TestTeamRosterAnalysis:
         }
         assert analysis["roster_capacity"]["active_filled"] == 2
         assert set(analysis["lineup_starters"]["name"]) == {"QB One", "WR One"}
-        # positional_strength_summary's vor/weak columns get joined onto
-        # roster_needs_summary's young-core need columns, not left as a
-        # separate table - two different questions about the same position.
+        # vor/weak are joined onto the needs table.
         needs = analysis["roster_needs"]
         assert needs.loc["QB", "vor"] == pytest.approx(50.0)  # 100 adj_value - 50 replacement
         assert not needs.loc["QB", "weak"]
@@ -75,9 +71,7 @@ class TestTeamRosterAnalysis:
         }
         fc_by_id = dc.fc_value_by_sleeper_id([fc_entry("rb1", 30), fc_entry("rb2", 20)])
         roster = {"players": ["rb1", "rb2"], "taxi": [], "reserve": []}
-        # Both RBs are well below this - RB is "weak" - but 2 players at
-        # <= YOUNG_CORE_MAX_YOE already meets YOUNG_CORE_NEED_THRESHOLD, so
-        # it's not a young-core need.
+        # RB is weak, but two young RBs meet the young-core threshold.
         replacement_level = {"QB": 0.0, "RB": 200.0, "WR": 0.0, "TE": 0.0}
 
         rebuilding = dc.team_roster_analysis(

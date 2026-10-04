@@ -22,12 +22,7 @@ def _trade_player_options(roster: dict, players: dict) -> list[str]:
 
 
 def _leaguewide_owner_by_player_id(rosters_by_id: dict[int, dict], user_roster_id: int, players: dict) -> dict[str, int]:
-    """player_id -> roster_id for every fantasy-relevant player on every *other* roster.
-
-    Same fantasy-position filter as `_trade_player_options`, just across
-    every roster but the user's own - the pool the Suggested Trades
-    section's single-target picker searches, since it isn't scoped to one
-    hand-picked partner."""
+    """player_id -> roster_id for fantasy-position players on every other roster."""
     owner_by_player_id: dict[str, int] = {}
     for roster_id, roster in rosters_by_id.items():
         if roster_id == user_roster_id:
@@ -55,9 +50,7 @@ def _trade_pick_label(pick_name: str, pick_value_by_name: dict) -> str:
 
 
 def _combo_asset_label(asset: dict, players: dict) -> str:
-    """Render one find_trade_offers() combo asset - same "Name (POS, value: X)"/
-    "Pick (value: X)" style _trade_player_label()/_trade_pick_label() use for the
-    target, so a suggested offer's give side reads consistently with its receive side."""
+    """Label a combo asset in the same style as the target labels."""
     value_str = f"{asset['value']:.0f}" if bool(pd.notna(asset["value"])) else "unknown"
     if asset["kind"] == "player":
         position = players.get(asset["id"], {}).get("position")
@@ -261,20 +254,10 @@ def _render_improve_offer_section(
     trade_players: dict,
     trade_pick_values: pd.DataFrame,
 ) -> None:
-    """Someone proposed the trade above *to* us. Reuses the exact
-    assets already selected in the manual evaluator - no new selectors -
-    to either confirm it's worth taking, suggest a nearby adjustment, or
-    say plainly that no adjustment found makes it worth taking.
+    """Judge the selected trade as an incoming offer: accept, counter, or reject.
 
-    The result is tagged with a signature of everything it was computed
-    from (which teams, which assets, and state["version"]) and dropped on
-    a mismatch - the same versioned-on-demand-result pattern
-    docs/dynasty-data-model.md documents for Suggested Trades, extended
-    here to also cover the user's own selection changing, not just a
-    refresh. Unlike that Suggested Trades case, no "data changed" message
-    on invalidation - the trigger here is the user's own edit to the
-    selection, not a background refresh, so it isn't surprising that the
-    button needs a fresh click.
+    The cached result is tagged with the teams, assets, and state version, and is
+    dropped quietly when any of them change.
     """
     current_signature = (
         state["version"],
@@ -419,12 +402,7 @@ def _render_leaguewide_scan(state: dict, trade_players: dict, trade_pick_values:
 
     cached = st.session_state.get("suggested_trades_results")
     if cached is not None and cached["state_version"] != state["version"]:
-        # A scan from an earlier refresh - roster/market data has moved on
-        # since (another manager's trade, a waiver claim, a fresh Refresh
-        # click), so the offers it found are no longer guaranteed valid.
-        # Drop it rather than silently keep showing it; the button above is
-        # right there to re-scan (see docs/dynasty-data-model.md's "versioned
-        # on-demand-result pattern").
+        # Computed against an earlier refresh; drop it rather than show stale offers.
         del st.session_state["suggested_trades_results"]
         cached = None
         st.info("Data has changed since your last scan — press “Scan the league for offers” again for current results.")
@@ -513,11 +491,7 @@ def _trade_block_row_label(sleeper_id: str, players: dict) -> str:
 
 @st.cache_resource(show_spinner=False)
 def _get_trade_block_connection() -> sqlite3.Connection:
-    """Open the trade-block store once per running server process and reuse
-    it for every session/rerun - same rationale as
-    confidence_pool/streamlit_app.py's own `_get_connection()`: connecting
-    fresh on every widget interaction would let concurrent reruns race each
-    other for the SQLite write lock."""
+    """One connection per server process; per-rerun connections race for the write lock."""
     trade_block_store.DATA_DIR.mkdir(parents=True, exist_ok=True)
     return trade_block_store.connect(str(trade_block_store.DB_PATH))
 
@@ -557,11 +531,7 @@ def _render_trade_block(state: dict) -> None:
         pid for pid in _trade_player_options(state["rosters_by_id"][add_team_id], trade_players)
         if pid not in already_blocked
     ]
-    # Keyed by add_team_id, not a fixed key - switching teams must not leave
-    # this pointed at a now-irrelevant (or, if already blocked elsewhere,
-    # no-longer-an-option) player from the previous team's list. Streamlit
-    # raises if a selectbox's persisted value isn't in its current options,
-    # which a stale cross-team selection would otherwise trigger.
+    # Keyed per team: Streamlit raises if a persisted value isn't in the current options.
     player_select_key = f"trade_block_add_player_{add_team_id}"
     add_player_id = st.selectbox(
         "Player",
@@ -574,16 +544,10 @@ def _render_trade_block(state: dict) -> None:
             trade_block_store.add_trade_block_entry(conn, add_player_id, add_team_id, dt.date.today().isoformat())
         except sqlite3.IntegrityError:
             st.warning("Already on the trade block.")
-            # Someone else just blocked this exact player, so it drops out
-            # of add_options above the same as the success path below -
-            # clear the stale selection here too, but skip the rerun so the
-            # warning stays visible until the next natural one.
+            # Already listed elsewhere: clear the selection but skip the rerun so the warning stays.
             del st.session_state[player_select_key]
         else:
-            # The just-added player now drops out of add_options above on
-            # the next render (same team, shrunk list) - clear the stale
-            # selection rather than leave it pointed at a value no longer
-            # in its own options.
+            # Clear the selection; the added player leaves the options.
             del st.session_state[player_select_key]
             st.rerun()
 
@@ -606,10 +570,7 @@ def _render_trade_block(state: dict) -> None:
             with date_col:
                 st.write(entry.added_date)
             with remove_col:
-                # One-click delete with no undo (trade_block_store has no
-                # soft-delete) needs a confirm step, per web_guidelines.md's
-                # "never lose data silently" rule - a misclick on the wrong
-                # row's Remove button would otherwise be unrecoverable.
+                # Removal can't be undone, so confirm first.
                 confirm_key = f"trade_block_remove_confirm_{entry.sleeper_id}"
                 if st.session_state.get(confirm_key):
                     confirm_col, cancel_col = st.columns(2)
@@ -629,13 +590,6 @@ def _render_trade_block(state: dict) -> None:
 
 
 def render_trade_tab(state: dict) -> None:
-    # Split into subtabs - these were two long sections stacked on
-    # one page; they're already structurally independent (own team pickers
-    # vs. a leaguewide scan that explicitly ignores those pickers - see
-    # _render_suggested_trades' own "not scoped to the pickers" caption), so
-    # the "Your team"/"Trade partner" selectors move inside the Manual Trade
-    # subtab with the section that actually uses them, rather than staying
-    # shared above both.
     manual_tab, suggested_tab, block_tab = st.tabs(["Manual Trade", "Suggested Trades", "Trade Block"])
     with manual_tab:
         trade_team_names = state["team_names"]

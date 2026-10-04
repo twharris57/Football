@@ -1,14 +1,4 @@
-"""Schema migration runner for the scout-data SQLite mirror.
-
-Applies every `*.sql` file under `migrations/` that `schema_migrations`
-doesn't already record as applied, in ascending numeric-prefix order.
-Mirrors `confidence_pool/db_schema/`'s shape (this is dynasty's first real
-persistence beyond file-cached snapshots) rather than sharing code with
-it - the two subsystems share none, per CLAUDE.md's Architecture section.
-Nested under `scout_api/` rather than a top-level `db_schema` module so it
-never collides with `confidence_pool/db_schema` when both subsystems'
-directories are on `sys.path` at once (e.g. under pytest).
-"""
+"""Migration runner for the scout-data mirror. Nested in `scout_api` so it can't clash with `confidence_pool/db_schema`."""
 
 from __future__ import annotations
 
@@ -20,8 +10,7 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 def apply_migrations(conn: sqlite3.Connection) -> None:
-    """Run any migration not yet recorded in `schema_migrations`, in
-    ascending numeric order, each as its own transaction."""
+    """Apply unrecorded `migrations/*.sql` files in numeric order, one transaction each."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (

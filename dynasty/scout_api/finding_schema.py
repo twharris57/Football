@@ -1,25 +1,8 @@
-"""The templated finding schema: one scouted fact about an NFL player,
-written as JSON to the `scout-data` branch by the not-yet-built cloud
-routine's Scout research pass, and mirrored into SQLite by `sync.py`'s
-`ingest_findings()`.
+"""Finding schema: one scouted fact about a player, as JSON on the `scout-data` branch.
 
-Half of this project's prompt-injection defense for scouted content: this
-schema is what keeps the store holding only extracted, typed fields
-rather than a raw blob a later consumer (a push notification) could
-reason over as instructions. That defense is structural (fixed fields,
-never free text) - the validation here additionally guards against
-schema drift between a future research-pass writer and this reader, not
-against injected content itself (a length cap or an unknown-key check
-doesn't stop injected text that already fits inside a typed field).
-
-Deliberately stdlib-only (no `dynasty_core` import): `dynasty/scout_api`
-is a separately built, minimal Docker image (`requests` is its only real
-dependency, see its own `requirements.txt`) - pulling in anything from
-`dynasty_core` would bloat that image for no reason this module needs.
-
-No generated ID (`uuid`/`hashlib`): the GitHub file path is the natural
-key, supplied externally by the caller (matching how `scout_data_files`
-already keeps `path` as caller-supplied metadata, not embedded content).
+Fixed typed fields, never free text, so downstream consumers can't treat scouted
+content as instructions. Stdlib-only to keep the scout image minimal. The GitHub
+path is the key.
 """
 
 from __future__ import annotations
@@ -41,9 +24,7 @@ CATEGORIES = (
 )
 CONFIDENCE_LEVELS = ("low", "medium", "high")
 
-# UI/notification hygiene (a push notification and a list view both want a
-# bounded one-liner) - not itself a prompt-injection defense, see module
-# docstring.
+# Keeps notifications and list rows to one line; not an injection defense.
 SUMMARY_MAX_LENGTH = 300
 
 FINDING_FILENAME_PREFIX = "finding_"
@@ -61,31 +42,17 @@ class Finding:
     source: str
     confidence: str
     observed_at: str  # ISO8601 - when the real-world event happened
-    # ISO8601 - when this finding was written (the anchor for a future
-    # 30-day retention-pruning step)
+    # ISO8601 - when this finding was written; anchors retention pruning
     created_at: str
 
 
 def is_finding_path(path: str) -> bool:
-    """True if the GitHub path names a finding file (e.g.
-    "scout-data/finding_....json") rather than some other file that may
-    land on scout-data (a future dedup log, a status file, ...)."""
+    """True if the GitHub path is a `finding_*.json` file."""
     return PurePosixPath(path).name.startswith(FINDING_FILENAME_PREFIX)
 
 
 def parse_finding(content: str) -> Finding:
-    """Parse and strictly validate a finding_*.json file's content.
-
-    Raises ValueError on any violation - a future Scout research-pass
-    writer is expected to already validate against this same schema
-    before ever committing to scout-data, so a failure here means schema
-    drift or a bug upstream, not routine bad data to skip past silently
-    (see sync.ingest_findings's own docstring for how this propagates).
-
-    No defaults, no coercion, and unexpected keys are rejected alongside
-    missing ones - both are equally a sign the writer and this reader have
-    drifted out of sync.
-    """
+    """Parse a finding strictly: no defaults, no coercion, exact keys. Raises ValueError."""
     payload = json.loads(content)
     if not isinstance(payload, dict):
         raise ValueError(f"finding content must be a JSON object, got {type(payload).__name__}")
@@ -108,9 +75,6 @@ def parse_finding(content: str) -> Finding:
         raise ValueError(f"summary exceeds {SUMMARY_MAX_LENGTH} characters ({len(summary)})")
 
     observed_at = require_iso8601(payload, "observed_at")
-    # created_at anchors a future retention-pruning step - require_iso8601's
-    # tz-aware check exists specifically so that comparison can't mix naive
-    # and aware timestamps.
     created_at = require_iso8601(payload, "created_at")
 
     return Finding(

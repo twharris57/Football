@@ -1,9 +1,4 @@
-"""Tests for dynasty_core.state.
-
-`TestGatherStateConnectivityErrors` monkeypatches sleeper_api/fantasycalc_api
-directly, which testing.md's "mock only external services you do not
-control" explicitly allows.
-"""
+"""Tests for dynasty_core.state (API clients monkeypatched; no network)."""
 
 from __future__ import annotations
 
@@ -14,10 +9,7 @@ import dynasty_core as dc
 
 
 class TestGatherStateConnectivityErrors:
-    """A connectivity failure should name which upstream service failed,
-    not a generic "Sleeper/FantasyCalc" either-or - draft day means
-    everyone hits both unauthenticated public APIs at once, so knowing
-    which one is actually down matters for deciding whether to retry."""
+    """A connectivity failure names which service failed."""
 
     def test_sleeper_failure_is_named(self, monkeypatch):
         def raise_it(*args, **kwargs):
@@ -67,11 +59,7 @@ PLAYERS = {
 
 
 class TestBuildPickupAlerts:
-    """A raw marginal_value must be rounded before the >0 "worth surfacing"
-    filter runs, matching free_agent_board()'s own round-then-filter order -
-    otherwise a real-but-tiny value can pass the filter and still render as
-    the self-contradicting "would add +0.0 to your lineup" once summary.py
-    formats it to one decimal (VA-6, valuation_principles.md)."""
+    """Values are rounded before the > 0 filter, so nothing shows as "+0.0"."""
 
     def test_a_raw_value_that_rounds_to_zero_is_excluded(self):
         changes = [_change("p1")]

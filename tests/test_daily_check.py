@@ -1,12 +1,4 @@
-"""Tests for dynasty/scripts/daily_check.py - the automated daily scout's
-cloud-routine entry point (.claude/PROJECT_PLAN_DYNASTY.md's "Automated
-daily scout" section).
-
-`dynasty_core.gather_state` is monkeypatched with a synthetic result -
-this only exercises daily_check.py's own extraction/reporting logic, not
-gather_state()'s own (already covered by tests/dynasty_core/'s suite), so
-no real Sleeper/FantasyCalc calls happen here.
-"""
+"""Tests for scripts/daily_check.py, with `gather_state` monkeypatched."""
 
 from __future__ import annotations
 

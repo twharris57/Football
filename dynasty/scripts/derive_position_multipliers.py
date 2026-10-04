@@ -1,9 +1,4 @@
-"""Inspect the real-scoring multipliers used to correct FantasyCalc values.
-
-Forces a fresh recompute (busts the disk cache) and pretty-prints the
-per-player ratios and position averages that `player_scoring.get_multipliers`
-would otherwise serve from cache — a standalone debug/sanity-check entry
-point, not something the app itself needs to run.
+"""Recompute and print the real-scoring multipliers (bypasses the cache).
 
     python scripts/derive_position_multipliers.py
 """

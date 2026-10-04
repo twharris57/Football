@@ -11,3 +11,5 @@ dynasty_data/
 .pytest_cache/
 tmp/*
 !tmp/.gitkeep
+*.secrets.env
+!*.secrets.env.example

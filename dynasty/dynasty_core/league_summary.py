@@ -19,23 +19,10 @@ def league_team_summaries(
     team_names: dict[int, str],
     team_power_timeline: pd.DataFrame,
 ) -> pd.DataFrame:
-    """One row per team: total roster value, biggest need, capacity, power/timeline read.
+    """One row per team: total value, biggest need (lowest `vor`), capacity, power read.
 
-    Deliberately does NOT call `team_roster_analysis()` per team - that
-    bundle includes `free_agent_board()`, an 18-week `assign_starters` pass
-    per free-agent-pool candidate (~350-450 players) via
-    `rank_by_marginal_value()`, meant for one team at a time, not ~12 teams
-    every refresh for a summary row. Only cheap, O(roster size) primitives
-    are used here: `roster_capacity()`, `roster_value_analysis()` (summed
-    for total value), and `positional_strength_summary()` - the last one
-    reused for "biggest need" (the position with the lowest `vor`) so this
-    agrees with the exact same VOR signal already driving the Roster tab's
-    "Weak" flag, rather than a second needs metric
-    (`valuation_principles.md`'s "one valuation strategy" rule).
-    `team_power_timeline` (phase/rank/record) is already computed once per
-    refresh by `team_power_timeline_scores()` and passed in rather than
-    recomputed. Iterates `rosters_by_id`'s real keys, never a synthesized
-    roster_id range (`valuation_principles.md`'s "opaque keys" rule).
+    Uses only cheap per-roster primitives — `team_roster_analysis()` per team would
+    run the free-agent board ~12 times per refresh.
     """
     roster_positions = league["roster_positions"]
     rows = []

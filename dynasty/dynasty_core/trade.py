@@ -1,4 +1,4 @@
-"""Sellable-depth surfacing, two-sided trade evaluation, and the trade-target optimizer."""
+"""Sellable depth, two-sided trade evaluation, and trade-offer search."""
 
 from __future__ import annotations
 
@@ -21,12 +21,7 @@ from .roster_needs import (
     roster_needs_summary,
 )
 
-# Trade-target optimizer bounds - judgment calls, not derived from
-# any league rule, same status as the rebuild-strategy constants elsewhere.
-# Sized for this league's realistic team count (~12) and per-team
-# sellable-pool size (typically 5-15 candidates between bench depth and
-# owned picks) - bounds the combinatorial search before the expensive
-# evaluate_trade() calls.
+# Offer-search bounds. Judgment calls sized for ~12 teams with 5-15 sellable assets each.
 TRADE_OFFER_POOL_CAP = 12
 TRADE_OFFER_MAX_COMBO_SIZE = 3
 TRADE_OFFER_PREFILTER_LOW = 0.5
@@ -34,12 +29,7 @@ TRADE_OFFER_PREFILTER_HIGH = 2.0
 TRADE_OFFER_PARTNER_TOLERANCE_PCT = 0.15
 TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE = 25.0
 
-# Leaguewide Suggested Trades - how many of the cheap, leaguewide
-# marginal-value-ranked candidates get the expensive per-candidate
-# find_trade_offers() search. Bounds Stage 2's cost to a constant
-# regardless of league size (see leaguewide_trade_candidates()/
-# suggested_trades() below), the same order of magnitude as one partner's
-# whole-roster scan already was before this feature existed.
+# Suggested Trades: how many stage-1 candidates get the expensive offer search.
 SUGGESTED_TRADE_SCAN_TOP_K = 15
 
 
@@ -51,23 +41,11 @@ def sellable_players(
     league: dict,
     byes: dict[str, int],
 ) -> pd.DataFrame:
-    """Rostered bench depth worth shopping for trade value, not just cutting for nothing.
+    """Bench depth worth shopping, sorted by `adj_value`.
 
-    A position qualifies if its own starters clear replacement level
-    (`positional_strength_summary`'s `vor > 0`); within a qualifying
-    position, "sellable" is the roster's depth beyond what's needed to
-    start there — reserving this roster's `FLEX` slot count against every
-    FLEX-eligible position too, unlike `starter_value`'s dedicated-slot-only
-    count, so a real weekly FLEX starter isn't misflagged as surplus. A
-    candidate must also survive `gap_delta` (dropping them can't open a
-    weekly-depth hole), and rookies are excluded (dynasty upside to hold,
-    not surplus to sell). Deliberately excludes actual starters — that's a
-    bigger strategic call, left for a human to judge against a specific
-    offer. Returns a candidate list sorted by `adj_value`, not a
-    recommendation. Includes `player_id` (an internal join key for callers
-    like `find_trade_offers()` that need to act on a candidate, not just
-    display it - drop it before rendering a table). Full rationale in
-    docs/rookie-draft-big-board.md's "Trade targets & sells" section.
+    Only at positions with `vor > 0`; reserves FLEX-eligible depth; keeps anyone whose
+    removal opens a weekly gap; excludes rookies and starters. `player_id` is a join key
+    — drop it before rendering.
     """
     roster_positions = league["roster_positions"]
     strength = positional_strength_summary(roster, players, fc_by_sleeper_id, replacement_level, roster_positions)
@@ -116,25 +94,14 @@ def sellable_players(
 def _weekly_gap_changes(
     before_roster: dict, after_roster: dict, players: dict[str, dict], byes: dict[str, int], league: dict
 ) -> tuple[list[int], list[int]]:
-    """(weeks newly broken, weeks newly fixed) for a dedicated-slot weekly gap.
-
-    Reuses `gap_delta()` in both directions - swapping before/after finds
-    the reverse case (a gap that existed before but not after), the same
-    primitive `alternate_gap_note`/`sellable_players` already use, just
-    read backwards - not a second gap-detection model. Computed
-    unconditionally in `evaluate_trade()` (not gated behind
-    `compute_callouts`) since `find_trade_offers()`'s ranking needs these
-    as real data, not just the formatted text `_weekly_gap_callouts()`
-    turns them into for display.
-    """
+    """`(weeks newly broken, weeks newly fixed)`, via `gap_delta()` in both directions."""
     worsened = gap_delta(before_roster, after_roster, players, byes, league)
     closed = gap_delta(after_roster, before_roster, players, byes, league)
     return sorted(worsened["week"].tolist()), sorted(closed["week"].tolist())
 
 
 def _weekly_gap_callouts(weekly_gaps_opened: list[int], weekly_gaps_closed: list[int]) -> list[str]:
-    """Format `_weekly_gap_changes()`'s output as the existing callout text - unchanged
-    wording, just no longer computing `gap_delta()` a second time to get it."""
+    """Format `_weekly_gap_changes()` output as callout text."""
     callouts = []
     if weekly_gaps_opened:
         weeks = ", ".join(str(w) for w in weekly_gaps_opened)
@@ -170,15 +137,7 @@ def _buried_to_starter_callouts(
     ineligible_ids: frozenset[str],
     league: dict,
 ) -> list[str]:
-    """Outgoing players who weren't even starting here, and incoming players who immediately would.
-
-    A genuine mutual-unlock reason a trade can make sense even at close to
-    even raw asset value - a bench player is a low real cost for the
-    sender to give up, and an instant starter is real value for the
-    receiver, neither of which shows up as anything special in the
-    lineup/asset deltas alone. Same `assign_starters()` + `ineligible_ids`
-    filtering pattern as `recommend_drop()`.
-    """
+    """Outgoing players who weren't starting here; incoming players who would start at once."""
 
     def _starter_ids(player_ids: list[str]) -> set[str]:
         rows = [r for r in player_value_rows(player_ids, players, fc_by_sleeper_id) if r["player_id"] not in ineligible_ids]
@@ -200,30 +159,17 @@ def _buried_to_starter_callouts(
 
 
 def _pick_context_callouts(pick_names: list[str], pick_value_table: pd.DataFrame | None) -> list[str]:
-    """Where each involved pick falls in its own class's value ranking, not just a bare number.
+    """Each pick's rank within its own draft class.
 
-    `pick_value_table` is `pick_trade_values()`'s leaguewide output (every
-    owner's picks, one row per pick) - ranked here within the pick's own
-    season ("class"), not the whole table, so "the #2 pick" means #2 among
-    that year's picks specifically. The leading 4-digit year is the only
-    season anchor common to both of `pick_trade_values()`'s name formats -
-    this season's slot-specific "2026 Pick 1.01" and next season's
-    round-only "2027 1st" (no real draft object yet to assign a slot).
-    Splitting on " Pick " instead would leave a next-season pick's "season"
-    as its own full name, putting it alone in a one-pick class that always
-    ranks #1 - fixed after verifying live (2026-08-07 review - see
-    `.claude/conventions/valuation_principles.md`).
+    The class comes from the leading year, the one anchor common to both name formats
+    ("2026 Pick 1.01", "2027 1st").
     """
     if not pick_names or pick_value_table is None or pick_value_table.empty:
         return []
     ranked = pick_value_table.dropna(subset=["value"]).copy()
     if ranked.empty:
         return []
-    # A name with no leading year (never a real pick_trade_values() output,
-    # but happens in tests using placeholder pick names) falls back to its
-    # own full name as "season" - an isolated one-row group, same graceful
-    # degradation a real but literally unparseable name would need, rather
-    # than a NaN group that breaks the int cast below.
+    # No leading year (test placeholder names): group by the full name.
     ranked["season"] = ranked["pick"].str.extract(r"^(\d{4})")[0].fillna(ranked["pick"])
     ranked["rank"] = ranked.groupby("season")["value"].rank(ascending=False, method="min").astype(int)
     rank_by_pick = dict(zip(ranked["pick"], zip(ranked["rank"], ranked["value"])))
@@ -256,57 +202,19 @@ def evaluate_trade(
     pick_value_table: pd.DataFrame | None = None,
     compute_callouts: bool = True,
 ) -> dict[str, Any]:
-    """Evaluate one side of a proposed multi-asset trade (players + picks) for one roster.
+    """Evaluate one side of a multi-asset trade for one roster.
 
-    Two independent reads: `lineup_delta` (`season_average_starter_value()`
-    before vs. after) and `asset_value_delta` (`adj_value` summed each
-    side, plus caller-supplied pick values) — a trade can be lineup-critical
-    but value-negative, or the reverse. Evaluating the other side of the
-    same trade is this function called again with the partner's roster and
-    the two asset lists swapped, not a second code path.
+    - `lineup_delta`: season-average lineup value after vs. before.
+    - `asset_value_delta`: summed `adj_value` + pick values.
+    - Over capacity, `recommend_drop()` cuts one player per overflow (never an incoming
+      one); `lineup_delta_after_drops` includes those cuts.
+    - `weekly_gaps_opened`/`weekly_gaps_closed` are always computed (offer ranking
+      uses them).
+    - `callouts` need the optional handcuff/pick arguments; `compute_callouts=False`
+      skips them (~90% of the cost in search loops).
 
-    `over_capacity` uses `taxi_eligible=False` (a traded-for player is
-    assumed to be an established veteran, not taxi-safe like a rookie), and
-    `reserve_filled`/`taxi_filled` are computed *post*-trade (excluding any
-    outgoing player already on IR/taxi, since trading them away genuinely
-    frees that slot). When `roster_after` exceeds capacity, `recommend_drop()`
-    is applied once per player over the limit; `recommended_drops` is that
-    list, and `lineup_delta_after_drops` is the trade's real net lineup
-    impact including those forced cuts, while `lineup_delta` stays the
-    trade-only number. Newly-incoming players are protected from being
-    recommended for their own trade's forced cut via `exclude_ids`.
-
-    `weekly_gaps_opened`/`weekly_gaps_closed` (week numbers where this trade
-    newly breaks/fixes a dedicated-slot weekly gap, via
-    `_weekly_gap_changes()`/`gap_delta()`) are a secondary signal, not a
-    third independent valuation axis - `lineup_delta`/`lineup_delta_after_drops`
-    stay the primary read for whether a trade is worth it (this league's
-    rebuild strategy is explicitly about multi-season roster strength, not
-    week-to-week patching), and this is meant to break ties or justify an
-    otherwise-marginal trade, the way `suggested_trades()` uses it. Computed
-    unconditionally (unlike `callouts`, gated behind `compute_callouts`)
-    since `find_trade_offers()`'s combinatorial search loop runs with
-    `compute_callouts=False` for cost but still needs this to rank offers.
-
-    `callouts` surfaces non-obvious value the two headline deltas
-    can miss - the same weekly-gap change as text, an incoming
-    player who handcuffs one of this roster's own current RBs, an outgoing
-    player who was buried on this bench or an incoming one who'd start
-    immediately, and where an involved pick ranks in its own class. All
-    four compose existing primitives (`gap_delta`, `handcuff_targets`,
-    `assign_starters`, `pick_trade_values()`'s output) rather than a new
-    signal - see `.claude/conventions/valuation_principles.md`'s "one
-    valuation strategy" rule. `handcuffs`/`outgoing_pick_names`/
-    `incoming_pick_names`/`pick_value_table` are optional so existing
-    callers/tests that don't have pick or handcuff context on hand keep
-    working unchanged; omitting them just means those specific callouts
-    don't fire. `compute_callouts=False` skips all four entirely (`callouts`
-    comes back `[]`) - for a caller like `find_trade_offers()` that runs
-    this in a combinatorial search loop and only needs callouts for the
-    handful of combos it actually surfaces, computing them for every combo
-    explored is pure waste (verified live: ~90% of this function's cost
-    with callouts on, for a combo that gets filtered out or ranked below
-    `top_n` and never shown).
+    New players can't use an open taxi slot. The other side is the same call with the
+    arguments swapped.
     """
     current_ids = list(roster.get("players") or [])
     outgoing_set = set(outgoing_player_ids)
@@ -388,17 +296,9 @@ def _asset_pool(
     pick_value_table: pd.DataFrame,
     value_cap: float | None = None,
 ) -> list[dict[str, Any]]:
-    """One roster's sellable players plus every pick it owns (current- and
-    future-season alike, since `pick_value_table` already carries both
-    formats), as a single value-sorted, capped asset pool - each entry
-    `{"kind": "player"/"pick", "id", "label", "value"}`.
+    """One roster's sellable players plus owned picks, sorted by value and capped.
 
-    The shared candidate-pool builder `find_trade_offers()`'s combo search
-    and `improve_incoming_offer()`'s neighbor search both draw from, so a
-    heterogeneous mix (players and picks together) is handled uniformly by
-    every consumer rather than each reimplementing its own merge. `value_cap`
-    (if given) drops any asset priced beyond it up front - no combo/variant
-    containing one could ever land in a target-anchored value band.
+    Entries are `{kind, id, label, value}`. Assets above `value_cap` are dropped.
     """
     sellable = sellable_players(roster, players, fc_by_sleeper_id, replacement_level, league, byes)
     pool = [
@@ -436,47 +336,15 @@ def find_trade_offers(
     target_pick_name: str | None = None,
     top_n: int = 3,
 ) -> dict[str, Any]:
-    """Given one asset on partner_roster, decide whether it's worth pursuing and search for a mutually-beneficial offer.
+    """For one target asset on `partner_roster`, search for offers the partner would plausibly accept.
 
-    Exactly one of target_player_id/target_pick_name must be given - a
-    single asset, not a bundle (`evaluate_trade()` already handles an
-    already-specified multi-asset trade). Composes `evaluate_trade()`, no
-    new valuation model (see .claude/conventions/valuation_principles.md).
+    Give exactly one of `target_player_id`/`target_pick_name`. `target_read` is the value
+    of acquiring it for free. No search runs if the target's value doesn't resolve.
 
-    `target_read`: `evaluate_trade()` with zero outgoing - the marginal
-    lineup value of acquiring the target for free, plus its market value
-    for context.
-
-    `target_value_resolved` is `False` when the target has no real market
-    value (an unranked player, or an unmatched pick name) - the offer
-    search doesn't run in that case (`offers`/`combos_*` come back empty)
-    rather than searching against a fabricated `$0` baseline. Resolved via
-    `pd.notna()`, not a bare `value or 0.0`, since `NaN` is truthy in
-    Python and would otherwise defeat every downstream comparison (see
-    valuation_principles.md's NaN rule).
-
-    `offers`: every combination (size 1..`TRADE_OFFER_MAX_COMBO_SIZE`) of
-    your own `sellable_players()`/pick pool, first pruned to drop any
-    candidate priced beyond `TRADE_OFFER_PREFILTER_HIGH` of the target's
-    value (no combo containing one could ever land in-band), then capped
-    to `TRADE_OFFER_POOL_CAP` by value, pre-filtered to a value band around
-    the target, and verified two-sided via `evaluate_trade()`. A combo
-    survives only if the partner's own `asset_value_delta` stays within
-    `TRADE_OFFER_PARTNER_TOLERANCE_PCT` of zero - the one hard acceptance
-    gate. Combos touching one of the partner's current `need_positions`
-    (today's roster, not post-trade) rank ahead of otherwise-equal
-    alternatives, as a tiebreaker only - each offer's `partner_need_match`
-    (bool) and `partner_need_positions` (which position(s) specifically)
-    reflect this. Ranked best-for-you first, then need-match, then fewest
-    assets. Returns up to `top_n`, empty if nothing clears the bar.
-
-    `combos_considered`/`combos_evaluated` are the raw and post-prefilter
-    combo counts, so an empty result can say something concrete.
-
-    `handcuffs` and `pick_value_table` pass straight through to every
-    `evaluate_trade()` call for its `callouts` - `pick_value_table`
-    is already required here for offer search, so it's reused rather than
-    a second lookup table.
+    `offers` are 1-`TRADE_OFFER_MAX_COMBO_SIZE` asset combos from your pool, kept only
+    when the partner's asset delta is within tolerance. They're ranked by your asset
+    delta, then partner need match, then fewest assets; up to `top_n`. The combo counts
+    explain an empty result.
     """
     if bool(target_player_id) == bool(target_pick_name):
         raise ValueError("Exactly one of target_player_id or target_pick_name must be given.")
@@ -565,12 +433,7 @@ def find_trade_offers(
     tolerance = max(TRADE_OFFER_PARTNER_TOLERANCE_PCT * target_value, TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE)
     offers = []
     for combo in prefiltered:
-        # compute_callouts=False here: this loop runs for every prefiltered
-        # combo just to filter/rank them, and only `top_n` ever get shown -
-        # computing full callouts (bye-gap/handcuff/buried-bench/pick-rank)
-        # for every one of them was ~90% of this search's cost for value no
-        # caller ever saw. Recomputed with callouts on, below, for only the
-        # combos that actually make the cut.
+        # Callouts are recomputed below only for the combos that get returned.
         your_side, partner_side = _evaluate_combo(combo, compute_callouts=False)
         if partner_side["asset_value_delta"] < -tolerance:
             continue
@@ -606,11 +469,7 @@ def find_trade_offers(
 
 
 def _is_good(your_side: dict[str, Any]) -> bool:
-    """Worth surfacing at all - the same lineup-value bar `suggested_trades()`
-    already established (`.claude/conventions/valuation_principles.md`'s
-    "worth surfacing" filter rule), reused here rather than a second bar for
-    "is this actually a good trade."
-    """
+    """Worth surfacing: positive `lineup_delta_after_drops`."""
     return your_side["lineup_delta_after_drops"] > 0
 
 
@@ -630,56 +489,16 @@ def improve_incoming_offer(
     handcuffs: dict[str, str] | None = None,
     top_n: int = 3,
 ) -> dict[str, Any]:
-    """Evaluate a trade a partner has already proposed to us - both
-    sides already fully specified, unlike `find_trade_offers()`'s single
-    target - and either confirm it's worth taking, suggest a nearby
-    adjustment that would make it worth taking, or say plainly that no
-    adjustment found does. Returns `{"verdict": "accept"/"counter"/"reject",
-    "baseline": {...}, "improvements": [...]}`.
+    """Judge a fully specified incoming proposal and look for single-move tweaks.
 
-    Deliberately not another from-scratch `find_trade_offers()`-style combo
-    search - the ask here is "tweak this specific real proposal," not
-    "ignore it and search my whole pool again." Generates single-move
-    neighbors of the proposed trade (drop an asset, swap one for a pool
-    candidate, add a pool candidate) independently on each side - your own
-    `_asset_pool()` for what you'd give, the partner's for what you'd
-    receive, so a heterogeneous mix (players, current- or future-season
-    picks) on either side is handled uniformly, not as a special case. This
-    stays linear in (assets on a side) x (pool size), not combinatorial, so
-    it doesn't need `find_trade_offers()`'s prefilter/combo-count machinery.
+    Tries drop/swap/add on each side, drawing from that side's asset pool. A variant
+    must pass the partner tolerance and `_is_good()`. The tolerance anchors on whichever
+    side isn't changing.
 
-    A variant survives only if it clears both of the same gates already
-    established elsewhere in this module: the partner's own
-    `asset_value_delta` within `TRADE_OFFER_PARTNER_TOLERANCE_PCT`/
-    `TRADE_OFFER_MIN_ABSOLUTE_TOLERANCE` of zero, and `_is_good()` in
-    absolute terms - not merely "better than an already-bad baseline."
-    The tolerance is anchored on whichever side of the trade stays *fixed*
-    for the variant being evaluated - the proposal's own incoming value for
-    a `"yours"` variant (only your outgoing package changes, mirroring
-    `find_trade_offers()`'s tolerance formula anchored on its fixed
-    target_value), the proposal's own outgoing value for a `"theirs"`
-    variant (the mirror image - your outgoing package stays fixed while
-    what you'd receive varies). Anchoring both on the same value would let
-    a "theirs" swap/add that shrinks a large baseline ask slip through
-    under a stale, too-generous tolerance sized for the original ask, not
-    the real (now smaller) deal the variant actually proposes. Nothing
-    needs to separately forbid a one-sided giveaway (e.g. dropping your
-    only outgoing asset): that fails the partner-tolerance gate on its own.
-
-    Verdict logic:
-    - `"accept"` - the baseline proposal, exactly as offered, already
-      clears `_is_good()`. `improvements` still lists any variant that's
-      *also* good and strictly better than baseline, as optional upside.
-    - `"counter"` - the baseline doesn't clear the bar, but at least one
-      neighbor variant clears both gates. `improvements` is that ranked,
-      `top_n`-capped list (best `your_side["asset_value_delta"]` first,
-      same key `find_trade_offers()` ranks by).
-    - `"reject"` - the baseline doesn't clear the bar and no variant does
-      either. `improvements` is always `[]` in this case.
-
-    `compute_callouts=False` while generating/filtering every variant,
-    recomputed `True` only for the survivors actually returned - identical
-    perf pattern to `find_trade_offers()`'s own combo search.
+    Returns `{"verdict", "baseline", "improvements"}`:
+    - `accept`: the baseline is good; improvements are optional upside.
+    - `counter`: some variant is good; ranked by your asset delta, up to `top_n`.
+    - `reject`: nothing is good; no improvements.
     """
     pick_value_by_name = dict(zip(pick_value_table["pick"], pick_value_table["value"]))
 
@@ -717,11 +536,7 @@ def improve_incoming_offer(
         return your_side, partner_side
 
     def _neighbor_variants(owner_roster: dict, current_player_ids: list[str], current_pick_names: list[str], exclude_ids: set[str]) -> list[dict]:
-        """Single-move (drop/swap/add) neighbors of one side of the proposed
-        trade, drawing swap/add candidates from `owner_roster`'s own asset
-        pool - your pool for what you'd give, the partner's for what you'd
-        receive. `exclude_ids` keeps a candidate from duplicating an asset
-        already present anywhere in the trade."""
+        """Drop/swap/add neighbors for one side; `exclude_ids` prevents duplicate assets."""
         pool = _asset_pool(owner_roster, players, fc_by_sleeper_id, replacement_level, league, byes, pick_value_table)
         candidates = [c for c in pool if c["id"] not in exclude_ids]
         current_assets = [_player_asset(pid) for pid in current_player_ids] + [_pick_asset(pn) for pn in current_pick_names]
@@ -746,18 +561,7 @@ def improve_incoming_offer(
     )
     baseline = {"your_side": baseline_your, "partner_side": baseline_partner}
 
-    # Tolerance is anchored on whichever side of the trade stays *fixed* for
-    # the variant being evaluated - not one anchor reused for both. A
-    # "yours" variant only changes your outgoing package; what the partner
-    # is set to give you (incoming_value) stays fixed, so that's the deal-
-    # size reference (mirrors find_trade_offers()'s own tolerance, anchored
-    # on its fixed target_value while your combo varies). A "theirs"
-    # variant is the mirror image - your outgoing package stays fixed while
-    # what you'd receive varies, so outgoing_value is the right anchor
-    # there. Using incoming_value for both (a bug found in review) let a
-    # "theirs" swap/add that shrinks a large baseline ask slip through
-    # under a stale, too-generous tolerance sized for the *original* ask,
-    # not the real (now much smaller) deal the variant actually proposes.
+    # Anchor tolerance on the fixed side: incoming value for "yours" variants, outgoing for "theirs".
     incoming_value = sum(_player_asset(pid)["value"] for pid in incoming_player_ids) + _pick_value_sum(incoming_pick_names)
     outgoing_value = sum(_player_asset(pid)["value"] for pid in your_outgoing_player_ids) + _pick_value_sum(your_outgoing_pick_names)
     tolerance_by_side = {
@@ -822,21 +626,9 @@ def improve_incoming_offer(
 
 
 def _max_affordable_target_value(sellable: pd.DataFrame, pick_value_table: pd.DataFrame, roster_id: int) -> float:
-    """Rough ceiling on a target's market value this roster's own sellable pool could plausibly match.
+    """Rough ceiling on a target value this roster's top sellable assets could match.
 
-    Mirrors `find_trade_offers()`'s own `TRADE_OFFER_PREFILTER_HIGH` band (a
-    combo priced beyond that multiple of the target's value could never
-    land in-band) - reuses that existing tolerance rule rather than adding
-    a second one. Used by `leaguewide_trade_candidates()` to keep a
-    leaguewide scan's limited search budget off targets no realistic offer
-    could ever reach, not to replace `find_trade_offers()`'s own combo
-    search - this is a cheap top-line estimate (top
-    `TRADE_OFFER_MAX_COMBO_SIZE` assets by value, no combinatorics), not a
-    guarantee any specific combo actually clears the bar. `sellable` can be
-    a columnless empty DataFrame (`sellable_players()`'s empty-pool shape,
-    same trap noted in `summary.py`'s `_sellable_lines`) when there's
-    nothing sellable at all - guarded explicitly rather than indexing
-    `"adj_value"` directly, which would raise `KeyError` on that shape.
+    Uses `find_trade_offers()`'s prefilter band. `sellable` may be a columnless empty frame.
     """
     values = sellable["adj_value"].dropna().tolist() if not sellable.empty else []
     values += pick_value_table.loc[pick_value_table["owner_roster_id"] == roster_id, "value"].dropna().tolist()
@@ -855,29 +647,11 @@ def leaguewide_trade_candidates(
     pick_value_table: pd.DataFrame,
     top_n: int = SUGGESTED_TRADE_SCAN_TOP_K,
 ) -> list[dict]:
-    """Cheap, leaguewide "worth pursuing" pre-rank - Stage 1 of Suggested Trades.
+    """Suggested Trades stage 1: other teams' players ranked by marginal value.
 
-    Every fantasy-relevant player on every *other* roster is a candidate.
-    Reuses `rank_by_marginal_value()` exactly like `free_agent_board()`
-    does - not a second valuation model (see
-    `.claude/conventions/valuation_principles.md`) - just a different
-    candidate pool source (other rosters instead of the free-agent pool).
-
-    Pre-filtered by `_max_affordable_target_value()` before ranking:
-    without this, the top marginal-value candidates leaguewide skew toward
-    the biggest names at your weak positions - exactly the players no
-    realistic offer from your own sellable depth could match. Left
-    unfiltered, `suggested_trades()`'s downstream expensive search (capped
-    to this function's `top_n`) would waste its whole budget on
-    unreachable stars instead of genuinely gettable value, since a
-    marginal-value read alone has no notion of affordability.
-
-    Filtered to `marginal_value > 0` (matches `free_agent_board`/
-    `pickup_alerts`' existing "worth surfacing at all" convention). Returns
-    up to `top_n` rows (`player_id`, `marginal_value`, `drop`, `roster_id`)
-    sorted best first - `roster_id` (the one field `free_agent_board`'s row
-    shape doesn't need) is which partner owns the candidate, for
-    `suggested_trades()` to search against.
+    Filtered to what your sellable pool can afford and to `marginal_value > 0`, so the
+    expensive stage 2 isn't spent on stars you can't reach. Rows include the owning
+    `roster_id`.
     """
     ineligible_ids = frozenset(user_roster.get("taxi") or []) | frozenset(user_roster.get("reserve") or [])
     reserve_filled = len(user_roster.get("reserve") or [])
@@ -933,36 +707,11 @@ def suggested_trades(
     handcuffs: dict[str, str] | None = None,
     top_n: int = 3,
 ) -> list[dict]:
-    """Stage 2 of Suggested Trades: the real offer search, only for Stage 1's short list.
+    """Suggested Trades stage 2: run `find_trade_offers()` for each candidate.
 
-    `candidates` is typically `leaguewide_trade_candidates()`'s output -
-    already capped to a small K, which is what keeps this affordable at
-    leaguewide scale (see that function's and this module's own docstrings
-    for the cost reasoning). For each candidate, resolves which roster owns
-    them and runs the **existing, unmodified** `find_trade_offers()` -
-    zero new valuation logic, this function only orchestrates and ranks.
-
-    Candidates with no viable offer (`find_trade_offers()`'s `offers` comes
-    back empty - nothing clears the partner's plausibility bar) are dropped
-    entirely rather than shown empty. A viable offer still isn't necessarily
-    a good one for the user - `find_trade_offers()`'s only hard gate is the
-    *partner's* `asset_value_delta` staying in tolerance, nothing about the
-    user's own lineup impact - so survivors are further filtered to a
-    positive best-offer `your_side["lineup_delta_after_drops"]` (matches
-    `leaguewide_trade_candidates()`'s own `marginal_value > 0` "worth
-    surfacing at all" filter one stage earlier; see
-    `.claude/conventions/valuation_principles.md`'s "worth surfacing" filter
-    rule) before being ranked primarily by that same number - the same
-    number `_show_trade_side()` already surfaces per offer today, not a new
-    metric. `your_side["weekly_gaps_closed"]`/`["weekly_gaps_opened"]`
-    break ties only - this league's rebuild strategy means
-    multi-season roster strength stays the primary question `suggested_trades()`
-    answers, with which weeks a trade smooths over a recurring starter gap as
-    a secondary nudge between otherwise-similar options, never able to
-    outrank a real `lineup_delta_after_drops` difference. Capped to `top_n`.
-    Each returned entry is a `find_trade_offers()` result dict with
-    `roster_id`/`target_player_id` added, so a caller can label which
-    partner owns the suggestion.
+    Keeps candidates whose best offer has positive `lineup_delta_after_drops`, ranked by
+    it, with net weekly gaps closed as the tiebreaker. Up to `top_n`, each tagged with
+    `roster_id`/`target_player_id`.
     """
     results = []
     for candidate in candidates:

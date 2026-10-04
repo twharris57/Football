@@ -1,10 +1,4 @@
-"""Client for FantasyCalc's public dynasty trade-value rankings.
-
-Used as the player valuation source for dynasty tools in this project — the
-project has no valuation model of its own, and FantasyCalc's crowd-sourced
-values already cover the current rookie class and join to Sleeper via
-`player["sleeperId"]`.
-"""
+"""Client for FantasyCalc's public dynasty trade values, joined to Sleeper via `player["sleeperId"]`."""
 
 from __future__ import annotations
 
@@ -26,13 +20,7 @@ VALUES_CACHE_TTL_SECONDS = 12 * 60 * 60
 
 
 def _build_session() -> requests.Session:
-    """A session that retries transient failures (connection errors, 5xx, 429).
-
-    Draft day means everyone hits this API at once — a bare `requests.get`
-    with no retry turns one transient hiccup into a hard failure for
-    whoever hit it, mid-draft. Only GET is used here, so retrying is safe
-    (no risk of double-submitting a write).
-    """
+    """A session that retries GETs on connection errors, 429, and 5xx."""
     session = requests.Session()
     retry = Retry(
         total=3,
@@ -52,24 +40,16 @@ _session = _build_session()
 def get_dynasty_values(
     num_qbs: int, num_teams: int, ppr: float, force_refresh: bool = False
 ) -> list[dict[str, Any]]:
-    """Return dynasty trade values for all ranked players, including rookies.
+    """Return dynasty values for all ranked players, including rookies. Cached 12h per config.
 
     Args:
-        num_qbs: Starting QB-eligible slots (include SUPER_FLEX) — materially
-            changes QB value, so this must match the league being evaluated.
+        num_qbs: QB-eligible starting slots, including SUPER_FLEX.
         num_teams: League size.
         ppr: Points per reception (0-1).
-        force_refresh: Bust the disk cache and re-fetch even if it's fresh.
+        force_refresh: Bypass the disk cache.
 
     Returns:
-        Raw FantasyCalc entries, each with a nested `player` dict and a
-        `value`. Entries are not necessarily sorted by value.
-
-    Cached to disk (like sleeper_api's players cache) so a plain "Refresh"
-    click doesn't re-hit this every time - dynasty market values shift day
-    to day, not minute to minute, so a 12h TTL matches players.json's.
-    Keyed by (num_qbs, num_teams, ppr) since different league configs need
-    different cached values.
+        Unsorted raw entries, each with a nested `player` dict and a `value`.
     """
     cache_path = CACHE_DIR / f"fantasycalc_values_{num_qbs}_{num_teams}_{ppr}.json"
     if not force_refresh and cache_path.exists():

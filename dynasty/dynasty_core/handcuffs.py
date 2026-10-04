@@ -16,17 +16,9 @@ HANDCUFFS_CACHE_TTL_SECONDS = 12 * 60 * 60
 
 
 def handcuff_map(season: str, force_refresh: bool = False) -> dict[str, str]:
-    """Map each starting RB's sleeper_id to their primary backup's sleeper_id.
+    """Map each starting RB's sleeper_id to their backup's, from the latest depth-chart scrape.
 
-    "Starting"/"backup" come from the latest depth-chart snapshot for the
-    season — nfl_data_py's depth-chart feed is a time series of scrapes, not
-    a single current view, so this filters to the most recent `dt`. Handcuffs
-    are an RB-specific fantasy concept; other positions aren't modeled here.
-
-    Cached to disk (12h TTL, same cadence as sleeper_api's players cache -
-    depth charts shift day to day, not minute to minute) so a plain
-    "Refresh" click doesn't re-pull and re-derive this every time, not just
-    on force-refresh.
+    Cached on disk for 12h.
     """
     cache_path = CACHE_DIR / f"handcuffs_{season}.json"
     if not force_refresh and cache_path.exists():
@@ -56,12 +48,7 @@ def handcuff_map(season: str, force_refresh: bool = False) -> dict[str, str]:
 
 
 def handcuff_targets(player_ids: list[str], players: dict[str, dict], handcuffs: dict[str, str]) -> dict[str, str]:
-    """Map each of these players' rostered handcuffs to their starter's full name.
-
-    Shared by `draft_plan.py` (a hypothetical simulated roster) and
-    `trade.py` (a real roster, for a trade's "also handcuffs your own X"
-    callout) - same lookup, just pointed at different player_id lists.
-    """
+    """Map each of these players' rostered handcuffs to their starter's full name."""
     rb_ids = {pid for pid in player_ids if players.get(pid, {}).get("position") == "RB"}
     return {
         backup_id: players.get(starter_id, {}).get("full_name", "")

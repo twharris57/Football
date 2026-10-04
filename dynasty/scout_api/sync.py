@@ -1,23 +1,7 @@
-"""Pull the scout-data git branch's JSON state down from GitHub and mirror
-it into local SQLite - the NAS-side half of this project's outbound
-scout-data sync design (.claude/PROJECT_PLAN_DYNASTY.md's "Automated
-daily scout" section).
+"""Mirror the `scout-data` branch's JSON files from GitHub into local SQLite.
 
-The nightly cloud routine has no persistent disk of its own between runs,
-so it keeps its real state (findings, dedup log, last-run status) as JSON
-files committed to a dedicated `scout-data` branch on this repo - the only
-thing both the cloud routine and this NAS can reach without an inbound
-connection (see PROJECT_PLAN_DYNASTY.md's "Why the inbound design was
-abandoned" for why a direct API call never worked). This script is this
-mirror's read side: run to completion on a schedule (Synology Task
-Scheduler, invoking this image), not a long-running service - there is no
-inbound port to expose here at all.
-
-Uses GitHub's public REST API (unauthenticated works fine against this
-public repo, just at GitHub's lower 60 req/hour unauthenticated rate
-limit; set SCOUT_DATA_GITHUB_TOKEN to a read-only token for the standard
-higher authenticated limit instead - not required for a script that runs
-a few times a day).
+Runs to completion on a schedule. Set `SCOUT_DATA_GITHUB_TOKEN` (football.secrets.env) to lift GitHub's
+60 req/hour anonymous limit.
 """
 
 from __future__ import annotations
@@ -44,18 +28,12 @@ REPO = "twharris57/Football"
 BRANCH = "scout-data"
 BRANCH_DIR = "scout-data"
 
-# GitHub's contents API for a directory silently truncates here with no
-# error and no Link-header pagination (unlike the git trees API) - treated
-# as a hard failure rather than a silent partial sync, see fetch_data_files.
+# The contents API silently truncates directory listings at this size, so exceeding it fails the sync.
 GITHUB_CONTENTS_PAGE_LIMIT = 1000
 
 
 def _build_session() -> requests.Session:
-    """A session that retries transient failures (connection errors, 5xx, 429).
-
-    Only GET is used here, so retrying is safe - matches
-    dynasty/sleeper_api.py's own session-building pattern.
-    """
+    """A session that retries GETs on connection errors, 429, and 5xx."""
     session = requests.Session()
     retry = Retry(
         total=3,
@@ -88,9 +66,7 @@ def fetch_branch_head_sha(session: requests.Session) -> str:
 
 
 def fetch_data_files(session: requests.Session, ref: str) -> list[dict[str, Any]]:
-    """Return every JSON file directly under scout-data/ at the given ref
-    (a commit SHA, so this observes the same commit fetch_branch_head_sha()
-    resolved rather than whatever the branch has moved to since)."""
+    """Every JSON file directly under `scout-data/` at commit `ref`."""
     response = session.get(
         f"{GITHUB_API_BASE}/repos/{REPO}/contents/{BRANCH_DIR}",
         params={"ref": ref},
@@ -116,17 +92,7 @@ def fetch_file_content(session: requests.Session, download_url: str) -> str:
 
 
 def _mirror_table(conn: sqlite3.Connection, table: str, columns: tuple[str, ...], rows: list[tuple]) -> None:
-    """Replace `table`'s contents with `rows` via delete-stale-then-upsert,
-    inside the caller's own `with conn:` transaction.
-
-    `columns[0]` is the primary key every row is keyed on; `rows` must carry
-    values in the same order as `columns`. Shared by sync() (scout_data_files),
-    ingest_findings() (scout_findings), and ingest_run_records() (called
-    twice, once each for scout_run_records/scout_run_record_items) - all
-    mirror an external source's current full state into one table, keyed
-    the same way, and previously duplicated this exact delete/upsert shape
-    independently.
-    """
+    """Replace `table`'s rows with `rows` (keyed on `columns[0]`) inside the caller's transaction."""
     key_column = columns[0]
     current_keys = [row[0] for row in rows]
     if current_keys:
@@ -178,33 +144,16 @@ def sync(conn: sqlite3.Connection, session: requests.Session) -> int:
 
 
 def _fetch_and_parse(conn: sqlite3.Connection, path_predicate, parser) -> list[tuple[str, Any]]:
-    """Select every scout_data_files row matching `path_predicate` and
-    parse its content with `parser`. Shared by ingest_findings() and
-    ingest_run_records(), which previously duplicated this exact
-    fetch-then-filter-then-parse shape with only the predicate/parser
-    swapped.
-    """
+    """Parse every mirrored file whose path matches `path_predicate`."""
     rows = conn.execute("SELECT path, content FROM scout_data_files").fetchall()
     matching = [(row["path"], row["content"]) for row in rows if path_predicate(row["path"])]
     return [(path, parser(content)) for path, content in matching]
 
 
 def ingest_findings(conn: sqlite3.Connection) -> int:
-    """Parse every finding_*.json row already mirrored into scout_data_files
-    (the templated finding schema, see finding_schema.py) and upsert its
-    typed fields into scout_findings. Returns the number ingested.
+    """Upsert mirrored `finding_*.json` files into `scout_findings`; returns the count.
 
-    Reads from the local scout_data_files mirror rather than fetching fresh
-    from GitHub - the content is already locally validated JSON from sync(),
-    so no network access is needed here.
-
-    Raises ValueError on the first malformed finding, aborting the whole
-    ingest with nothing partially written - same all-or-nothing shape
-    sync() already has for raw JSON validity. This is a deliberate
-    trade-off, not an implicit side effect: a future Scout research-pass
-    writer is expected to validate against this same schema before ever
-    committing to scout-data, so a failure here means schema drift or a
-    bug upstream, not routine bad data to skip past silently.
+    All-or-nothing: a malformed finding raises ValueError and writes nothing.
     """
     parsed = _fetch_and_parse(conn, finding_schema.is_finding_path, finding_schema.parse_finding)
 
@@ -231,19 +180,9 @@ def ingest_findings(conn: sqlite3.Connection) -> int:
 
 
 def ingest_run_records(conn: sqlite3.Connection) -> int:
-    """Parse every run_*.json row already mirrored into scout_data_files
-    (the run-record schema, see run_record_schema.py) and upsert its
-    typed fields into scout_run_records/scout_run_record_items. Returns
-    the number of run records ingested.
+    """Upsert mirrored `run_*.json` files into the run-record tables; returns the count.
 
-    Reads from the local scout_data_files mirror rather than fetching
-    fresh from GitHub - same reasoning as ingest_findings().
-
-    Raises ValueError on the first malformed run record, aborting the
-    whole ingest with nothing partially written - same all-or-nothing
-    shape sync() and ingest_findings() already have, for the same reason:
-    a future nightly-orchestrator writer is expected to already validate
-    against this schema before ever committing to scout-data.
+    All-or-nothing: a malformed record raises ValueError and writes nothing.
     """
     parsed = _fetch_and_parse(conn, run_record_schema.is_run_record_path, run_record_schema.parse_run_record)
 
@@ -306,10 +245,7 @@ def connect(db_path: str) -> sqlite3.Connection:
 
 
 def main() -> int:
-    """Entry point. Ends in an unambiguous OK/FAIL state with a matching
-    exit code, per code_conventions.md's Scripts and Automation rule -
-    this runs unattended on a schedule, so there is no one present to
-    interpret an ambiguous result."""
+    """Sync, ingest, and exit 0 (OK) or 1 (FAIL)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     conn: sqlite3.Connection | None = None
     try:

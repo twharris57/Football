@@ -1,14 +1,4 @@
-"""Tests for dynasty/scout_api's outbound sync: pulling the scout-data
-branch's JSON state down from GitHub and mirroring it into SQLite (see
-.claude/PROJECT_PLAN_DYNASTY.md's "Automated daily scout" section).
-
-No real network calls - a fake `requests.Session` stands in for GitHub's
-API, matching testing.md's "mock only external services you do not
-control" exception for a genuine third-party API boundary (the same
-pattern tests/test_sleeper_api.py already uses). The SQLite side is a
-real in-memory connection with real migrations applied - no mocking of a
-boundary this project owns.
-"""
+"""Tests for scout_api's GitHub-to-SQLite sync: fake `requests.Session`, real in-memory SQLite."""
 
 from __future__ import annotations
 

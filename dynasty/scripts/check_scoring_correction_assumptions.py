@@ -1,25 +1,7 @@
-"""Re-runnable version of VA-4's two ad hoc scoring-correction checks.
+"""Re-run the two scoring-correction checks from `docs/dynasty-methodology.md`.
 
-`docs/rookie-draft-big-board.md`'s "Valuation" section documents two
-one-off analyses with an explicit instruction to re-run them if a later
-season's data looks different - neither was originally checked in
-anywhere, so following that instruction meant reconstructing the queries
-from scratch (CQ-12). This preserves both as one script:
-
-1. Linearity check: does the per-player-season scoring-correction ratio
-   (real_points / baseline_points) vary systematically with how many
-   points a player scored, within a position? If it did, applying one
-   flat ratio per player would risk compounding whatever convexity exists
-   in how market value itself responds to points (see the doc's
-   "Linearity assumption" subsection).
-2. Continuous-vs-binary rookie bucket check: does a simple linear
-   regression on the same combine metric `_bucket_metric()` already uses
-   meaningfully outperform the current two-bucket-mean prediction? (see
-   the doc's "Checked whether a continuous score... would meaningfully
-   improve" subsection).
-
-Standalone debug/sanity-check entry point, not something the app itself
-needs to run - same spirit as derive_position_multipliers.py.
+1. Linearity: does the correction ratio vary with a player's points within a position?
+2. Rookie buckets: does a linear fit on the combine metric beat the two-bucket mean?
 
     python scripts/check_scoring_correction_assumptions.py
 """
@@ -40,9 +22,7 @@ import sleeper_api as sleeper
 
 
 def _season_totals_with_points(scoring_settings: dict[str, float], current_season: str) -> pd.DataFrame:
-    """Reconstruct _derive_multipliers()'s season_totals (real_points/baseline_points
-    per player-season) without reimplementing it - both checks below need this
-    intermediate, which get_multipliers()'s public return value doesn't expose."""
+    """Per player-season real and baseline points, rebuilt from `player_scoring`'s internals."""
     weekly = ps._recent_complete_seasons_weekly_data(current_season, ps.LOOKBACK_SEASONS)
     if weekly.empty:
         return pd.DataFrame()

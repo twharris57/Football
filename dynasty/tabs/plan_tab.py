@@ -114,12 +114,7 @@ def render_plan_tab(state: dict) -> None:
                         label_visibility="collapsed",
                     )
                     selected = candidates.iloc[option_labels.index(chosen)]
-                    # The best drop for THIS specific candidate, not the
-                    # cheap lowest-value-bench-player heuristic the ranking
-                    # above uses (which repeats the same answer across very
-                    # different candidates) - searched fresh here since it's
-                    # only ever needed for the one candidate picked from the
-                    # dropdown, not all of them.
+                    # Real best-drop search, only for the one candidate selected.
                     best_drop = dynasty_core.best_position_relevant_drop(
                         selected["player_id"],
                         hypothetical_ids_by_pick[row["overall_pick"]],

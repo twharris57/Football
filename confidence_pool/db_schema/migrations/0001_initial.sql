@@ -1,9 +1,4 @@
--- Origin schema for the confidence-pool app's SQLite store.
---
--- This is a fresh design (see docs/confidence-pool-web-app.md), not a
--- replay of the app's pre-migration development history -- the app never
--- held real production data before this migration, so there is nothing
--- to preserve by re-deriving that history as separate steps.
+-- Origin schema.
 
 CREATE TABLE seasons (
     season_year INTEGER PRIMARY KEY,
@@ -11,9 +6,7 @@ CREATE TABLE seasons (
     sunday_afternoon_cutoff TEXT NOT NULL DEFAULT '13:00'
 );
 
--- Only weeks whose game-selection/deadline rule differs from the default
--- ("standard": Sunday-afternoon + Monday, deadline = earliest kickoff) get
--- a row here -- see picks_core.select_games()/week_deadline().
+-- Rows only for weeks whose rule differs from 'standard'.
 CREATE TABLE season_week_rules (
     season_year INTEGER NOT NULL REFERENCES seasons(season_year),
     week INTEGER NOT NULL,
@@ -27,9 +20,6 @@ CREATE TABLE teams (
     display_name TEXT NOT NULL
 );
 
--- The stable schedule + outcome fact for a game -- teams, kickoff, and
--- (once known) the final score. Synced from nfl_data_py's schedule export,
--- not re-derived from a weekly snapshot.
 CREATE TABLE games (
     game_id TEXT PRIMARY KEY,
     season_year INTEGER NOT NULL,
@@ -50,10 +40,7 @@ CREATE TABLE algorithm_versions (
     introduced_at TEXT NOT NULL
 );
 
--- A game's evaluated odds/inclusion at a point in time. 'current' is the
--- live working snapshot (overwritten on every regenerate, frozen once
--- week_status.locked = 1); 'first' is captured once, on the very first
--- save ever made for a (season_year, week), and never touched again.
+-- 'current' is overwritten until lock; 'first' is written once, in the first-look window.
 CREATE TABLE weekly_games (
     game_id TEXT NOT NULL REFERENCES games(game_id),
     snapshot_type TEXT NOT NULL CHECK (snapshot_type IN ('current', 'first')),

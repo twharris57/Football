@@ -8,15 +8,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-# Domain jargon shown somewhere in the app without room to spell out inline
-# every time (web_guidelines.md: "explain domain abbreviations on first
-# use... a tooltip is acceptable in space-constrained contexts"). A "How
-# this works" expander already explains VOR in full sentences right where
-# it's used (Roster needs), but that requires remembering which tab/expander
-# to reopen - this glossary is the one persistent, always-one-click-away
-# reference instead, reachable from every tab via the header button below.
-# Add a term here (not a new per-section expander) whenever the app
-# introduces another acronym like this one.
+# Jargon defined once, reachable from every tab. Add new acronyms here.
 GLOSSARY: dict[str, tuple[str, str]] = {
     "VOR": (
         "Value Over Replacement",
@@ -63,14 +55,7 @@ def show_df(
     hide_index: bool = True,
     column_config: dict[str, Any] | None = None,
 ) -> bool:
-    """Render df, or empty_message if it's empty - the repeated shape across every tab.
-
-    Returns whether df had rows, so callers can compose extra logic (an
-    extra warning, an expander) on the non-empty path. `column_config` is
-    passed straight through to st.dataframe - display-only relabeling
-    (see the `cols()` helper below), the underlying column names (and
-    every reference to them elsewhere in this codebase) are untouched.
-    """
+    """Render `df` or `empty_message`; returns whether `df` had rows."""
     if df.empty:
         st.write(empty_message)
         return False
@@ -79,19 +64,7 @@ def show_df(
 
 
 def cols(df: pd.DataFrame, *specs: tuple[str, str] | tuple[str, str, str]) -> dict[str, Any]:
-    """Build a column_config dict from (key, label) or (key, label, help_text) tuples.
-
-    Human-readable table headers without renaming the underlying DataFrame
-    columns everything else in this codebase (and its tests) refers to by
-    their plain snake_case names. `df` is only consulted for dtypes, never
-    modified - any float column (adj_value, value, avg_age, ...) gets a
-    NumberColumn capped to 2 decimal digits instead of st.dataframe's
-    default of showing whatever precision the underlying computation
-    happened to produce (e.g. adj_value's real-scoring multiplier leaves
-    values like 7827.988709). Display-only, same as the label relabeling
-    itself - the DataFrame's actual values, and everything else that reads
-    them, are untouched.
-    """
+    """Build a `column_config` from `(key, label[, help])` tuples; floats show 2 decimals."""
     config: dict[str, Any] = {}
     for spec in specs:
         key, label = spec[0], spec[1]
@@ -104,12 +77,7 @@ def cols(df: pd.DataFrame, *specs: tuple[str, str] | tuple[str, str, str]) -> di
 
 
 def show_status_table(df: pd.DataFrame, empty_message: str, column_labels: dict[str, str]) -> None:
-    """Render df (must have a `status_details` column, see dynasty_core.player_status_details)
-    as a plain HTML table instead of st.dataframe, so each player's status icons get a real
-    per-cell hover tooltip with the specific detail (e.g. the actual injury_status word).
-    st.dataframe's column_config only supports a per-column tooltip (see cols()'s help text
-    elsewhere), not per-cell, so this one table can't use the shared show_df approach.
-    """
+    """Render `df` as HTML so status icons get per-cell tooltips (`st.dataframe` can't)."""
     if df.empty:
         st.write(empty_message)
         return
@@ -133,11 +101,7 @@ def show_status_table(df: pd.DataFrame, empty_message: str, column_labels: dict[
                 if bool(pd.isna(value)):
                     cell = ""
                 elif isinstance(value, float):
-                    # numpy.float64 (what a pandas row actually holds) is a
-                    # float subclass, so this also catches adj_value/value/bye
-                    # - capped to 2 decimals same as every other table
-                    # (see cols()), not whatever precision the value happens
-                    # to carry (e.g. adj_value's real-scoring multiplier).
+                    # numpy.float64 is a float subclass: cap to 2 decimals like cols().
                     cell = html.escape(f"{value:.2f}")
                 else:
                     cell = html.escape(str(value))
@@ -163,13 +127,7 @@ def team_selectbox(
     exclude: int | None = None,
     tag_you: bool = True,
 ) -> int:
-    """Team-picker selectbox: the user's own team sorts first.
-
-    `tag_you` adds a "(you)" suffix on the user's own team - left off for a
-    trade-partner picker, where the real user's team could still legally
-    appear in the option list (if "Your team" above was itself pointed at
-    someone else) but should never be labeled as the viewer's own.
-    """
+    """Team picker with the user's team first; `tag_you` adds "(you)" (off for partner pickers)."""
     options = sorted(team_names, key=lambda rid: (rid != user_roster_id, team_names[rid]))
     if exclude is not None:
         options = [rid for rid in options if rid != exclude]

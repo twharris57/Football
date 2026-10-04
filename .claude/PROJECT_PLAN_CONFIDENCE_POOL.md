@@ -1,87 +1,29 @@
 # Project Plan — Confidence Pool
 
-Scoped to `confidence_pool/` only. `dynasty/`'s backlog lives in
-`.claude/PROJECT_PLAN_DYNASTY.md` — the two subsystems share no code (see
-`CLAUDE.md`'s "Architecture") and are kept in separate plan files
-deliberately, so neither accumulates the other's items by mistake. See
-`docs/README.md`'s "Confidence pool" section for durable design docs; this
-file is only what's left to do.
+Open work only. Delete an item when it's done — git has the history. Long-lived
+decisions go in `docs/` or `confidence_pool_principles.md`.
 
-Same conventions as the dynasty plan: grouped by theme, most important
-first within a group; remove an item's entry the moment it's done (the
-closing commit/PR is the historical record); a durable design decision
-belongs in `CLAUDE.md`, `docs/`, or a `.claude/conventions/` file, not here.
-
-**Item IDs**: every open item carries a permanent `CP-<n>` tag, assigned
-once in document order and never reused or renumbered even after the item
-it names is completed and deleted. Cross-reference other items by tag
-(`see CP-3`), never by list position.
-
-**ID tracker** (last number assigned): `CP-35`.
+**IDs:** permanent `CP-<n>` tags; never reuse or renumber. Last assigned: `CP-35`.
 
 ## Current branch — fix before merge
 
-Empty right now.
+Empty.
 
 ## Now — blocking
 
-Empty right now — nothing blocking.
+Nothing.
 
 ## Backlog
 
-- [ ] **CP-3: Season-long cumulative standings across all of a season's
-  scored weeks.** **Narrowed 2026-08-27 (Phase 3a):** this item originally
-  covered both per-week scoring and season-long totals; per-week scoring
-  is done — `picks_core.score_picks()` (algorithm vs. actual, bylaws
-  rules 6/7/15/16 applied) and the reported-score cross-check
-  (`picks_core.check_reported_score()`, `CP-29`'s mismatch-flagging idea)
-  now run on the Picks tab once a locked week's outcomes are known — see
-  `docs/confidence-pool-web-app.md`'s "Weekly scoring" section and
-  `docs/confidence-pool-data-model.md`'s `week_status` section. What's
-  left is summing those per-week figures into a running season total
-  (algorithm vs. actual) somewhere a human can see it — a new
-  panel/section, reusing `score_picks`/`WeekScore` across every scored
-  week in a season rather than a second computation path. Deliberately
-  deferred until there's real multi-week data to make it worth building
-  against — work on it "when it makes sense," per the user.
-- [ ] **CP-30: Import the pool's actual score sheet (PDF or similar) to
-  auto-populate `week_status.reported_score`**, cross-checking it against
-  the app's computed score the same way manual entry already does
-  (`picks_core.check_reported_score()`, wired up in Phase 3a). No parsing
-  exists yet — manual entry via the Picks tab's "Reported score" field is
-  the interim step this depends on, already built.
-- [ ] **CP-5: Expose weekly pick history via a small analytics API** once
-  there's an actual second consumer for it (e.g. `CP-3`'s what-if
-  analysis) — likely a small FastAPI service reading the same SQLite
-  store, added alongside the Streamlit container rather than replacing it.
-- [ ] **CP-6: Fill in `football_enhanced.py`'s other stubbed weight
-  functions** (injury impact, weather/altitude, sentiment) as real signals
-  in `picks_core.py`, if the Vegas-odds-only approach ever stops being
-  sufficient. Deliberately deferred — the pure-odds approach already
-  placed 7th of 100+ last season, so this isn't urgent.
-- [ ] **CP-12: Revisit the vig-removal method for extreme favorites, and
-  consider multi-book consensus lines** (assistant valuation review,
-  2026-08-22). `compute_probability` + `rank_games`'s proportional
-  normalization (`home_prob / (home_prob + away_prob)`) is the standard
-  "multiplicative" de-vig method, reused unchanged from
-  `football_enhanced.py` — reasonable for most games, but known in the
-  sports-betting literature to distort implied probability more than
-  alternatives (e.g. Shin's method, which corrects for the "longshot
-  bias") specifically for large favorites/underdogs (moneylines beyond
-  roughly +/-300). Also worth a look: `nfl_data_py`'s moneyline
-  presumably reflects one sportsbook (or an aggregate) rather than a
-  cross-book consensus/closing line, typically a lower-noise input for
-  probability estimation. Neither is urgent — the pure-odds approach
-  already placed 7th of 100+ last season (see `CP-6`) — but worth a real
-  backtest against last season's results before investing further,
-  rather than assuming either change would actually improve rank order
-  in practice. While touching this, also add a deterministic secondary
-  tiebreaker to `rank_games`'s sort — it currently falls back to
-  schedule order on an exact confidence tie (rare with real odds, but
-  arbitrary when it happens). **Refined 2026-08-23 (user, PR #46):** once
-  the basics are in place, backtest by opening up the 2025 season and
-  having the user input last season's actual picks, so the current
-  algorithm's real results are on record to compare a methodology change
-  against — needs `CP-3` (join snapshots against outcomes) as the
-  remaining prerequisite; raw-input/algorithm-version storage is done
-  (`algorithm_versions`, Phase 1 schema redesign).
+- [ ] **CP-3: Season standings.** Sum per-week `score_picks()` results (algorithm vs.
+  actual) across a season. Wait until there's real multi-week data.
+- [ ] **CP-12: Better de-vig and a backtest.** Proportional de-vig distorts extreme
+  favorites (beyond ±300); consider Shin's method and consensus/closing lines. Backtest
+  against last season's real picks first (needs `CP-3`). Also add a deterministic
+  tiebreaker to `rank_games`'s sort.
+- [ ] **CP-30: Import the pool's score sheet** (PDF) to fill `reported_score`
+  automatically.
+- [ ] **CP-5: Pick-history API** (small FastAPI over the same SQLite) once a second
+  consumer exists.
+- [ ] **CP-6: More signals** (injuries, weather, sentiment) if odds alone stop being
+  enough. Low priority — odds alone placed 7th of 100+ last season.
