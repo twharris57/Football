@@ -131,17 +131,40 @@ def _render_locked_week(
     status: dict,
     team_names: dict[str, str],
 ) -> None:
+    """Order sections by phase: picks before games, live score during, score entry after."""
     st.success(f"Week {week} picks are locked (final as of {status['locked_at']}).")
     if status.get("lock_warning"):
         st.warning(status["lock_warning"])
-    display_games, display_picks = _render_snapshot_selector(
-        conn, season, week, "locked", saved_games, saved_picks
-    )
-    _render_picks_table(display_games, display_picks, team_names)
-    _render_pick_details(display_games, display_picks, team_names)
-    _render_actual_picks_form(conn, season, week, saved_games, saved_picks, team_names)
-    _render_week_score(conn, season, week, saved_picks, team_names, status)
 
+    outcomes = store.get_game_outcomes(conn, season, week)
+    algo_score = pc.score_picks(_entries_from_picks(saved_picks), outcomes)
+    actual = store.load_actual_picks(conn, season, week)
+    late = bool(actual["late"].iloc[0]) if not actual.empty else False
+    actual_score = pc.score_picks(_entries_from_picks(actual), outcomes) if not actual.empty else None
+    phase = pc.week_phase(algo_score)
+
+    def picks_and_submission() -> None:
+        display_games, display_picks = _render_snapshot_selector(
+            conn, season, week, "locked", saved_games, saved_picks
+        )
+        _render_picks_table(display_games, display_picks, team_names)
+        _render_pick_details(display_games, display_picks, team_names)
+        _render_actual_picks_form(conn, season, week, saved_games, saved_picks, team_names)
+
+    if phase == "picks":
+        picks_and_submission()
+        st.caption("Scores appear here once games finish.")
+    elif phase == "in_progress":
+        _render_score_summary(algo_score, actual_score, late, team_names, live=True)
+        st.subheader("Picks")
+        picks_and_submission()
+        with st.expander("Reported score (once the pool posts it)"):
+            _render_reported_score(conn, season, week, algo_score, actual_score, late, status)
+    else:
+        _render_reported_score(conn, season, week, algo_score, actual_score, late, status)
+        _render_score_summary(algo_score, actual_score, late, team_names, live=False)
+        st.subheader("Picks and submission")
+        picks_and_submission()
 
 def _render_open_week(
     conn: sqlite3.Connection,
@@ -409,65 +432,58 @@ def _entries_from_picks(picks: pd.DataFrame) -> dict[str, tuple[str | None, int 
     }
 
 
-def _render_week_score(
-    conn: sqlite3.Connection,
-    season: int,
-    week: int,
-    saved_picks: pd.DataFrame,
+def _render_score_summary(
+    algo_score: pc.WeekScore,
+    actual_score: pc.WeekScore | None,
+    late: bool,
     team_names: dict[str, str],
-    status: dict | None,
+    live: bool,
 ) -> None:
-    """Algorithm vs. actual score once outcomes exist, plus the reported-score entry."""
-    outcomes = store.get_game_outcomes(conn, season, week)
-    algo_score = pc.score_picks(_entries_from_picks(saved_picks), outcomes)
-    if algo_score.games_decided == 0:
-        st.caption("This week's games haven't finished yet -- scores will appear here once results are in.")
-        return
-
-    st.subheader("This week's result")
-    partial = algo_score.games_decided < algo_score.games_total
-    suffix = (
-        f" ({algo_score.games_decided}/{algo_score.games_total} games decided so far)"
-        if partial
-        else ""
-    )
+    """Algorithm vs. actual score, with a game-by-game breakdown (open while games are live)."""
+    st.subheader("This week so far" if live else "This week's result")
+    suffix = f" ({algo_score.games_decided}/{algo_score.games_total} games final)" if live else ""
     st.write(f"Algorithm score: **{algo_score.total_points}**{suffix}")
-
-    actual = store.load_actual_picks(conn, season, week)
-    late = bool(actual["late"].iloc[0]) if not actual.empty else False
-    actual_score = pc.score_picks(_entries_from_picks(actual), outcomes) if not actual.empty else None
-    if actual_score is not None:
+    if actual_score is None:
+        st.caption("No actual submission recorded yet; the breakdown shows the algorithm's picks.")
+    else:
         st.write(f"Your actual score: **{actual_score.total_points}**{suffix}")
         if late:
             st.caption(
-                (
-                    "The late-card penalty (rule 2) depends on other entrants' scores, so it "
-                    "isn't included. Enter the commissioner's reported score below."
-                )
+                "The late-card penalty (rule 2) depends on other entrants' scores, so it "
+                "isn't included. Enter the commissioner's reported score."
             )
-        with st.expander("Game-by-game breakdown"):
-            rows = []
-            for r in actual_score.results:
-                rows.append(
-                    {
-                        "Your pick": team_names.get(r.predicted_winner, r.predicted_winner)
-                        if r.predicted_winner
-                        else "(not marked)",
-                        "Points assigned": r.points if r.points is not None else "(blank)",
-                        "Actual winner": team_names.get(r.actual_winner, r.actual_winner)
-                        if r.actual_winner
-                        else ("tied" if r.decided else "TBD"),
-                        "Points awarded": r.points_awarded,
-                    }
-                )
-            breakdown = pd.DataFrame(rows)
-            st.dataframe(
-                breakdown, hide_index=True, width="stretch",
-                height=_full_table_height(len(breakdown)),
-            )
-    else:
-        st.caption("No actual submission recorded for this week yet.")
 
+    shown = actual_score or algo_score
+    rows = [
+        {
+            "Pick": team_names.get(r.predicted_winner, r.predicted_winner)
+            if r.predicted_winner
+            else "(not marked)",
+            "Points": r.points if r.points is not None else "(blank)",
+            "Winner": team_names.get(r.actual_winner, r.actual_winner)
+            if r.actual_winner
+            else ("tied" if r.decided else "TBD"),
+            "Awarded": r.points_awarded,
+        }
+        for r in sorted(shown.results, key=lambda r: (r.points is None, -(r.points or 0)))
+    ]
+    with st.expander("Game-by-game", expanded=live):
+        breakdown = pd.DataFrame(rows)
+        st.dataframe(
+            breakdown, hide_index=True, width="stretch", height=_full_table_height(len(breakdown))
+        )
+
+
+def _render_reported_score(
+    conn: sqlite3.Connection,
+    season: int,
+    week: int,
+    algo_score: pc.WeekScore,
+    actual_score: pc.WeekScore | None,
+    late: bool,
+    status: dict | None,
+) -> None:
+    """Entry for the pool's officially reported score, with a mismatch check."""
     max_score = algo_score.games_total * (algo_score.games_total + 1) // 2
     # A late card scores 10 below the field's lowest (rule 2); on-time cards can't go below 0.
     min_score = -10

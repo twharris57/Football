@@ -420,6 +420,15 @@ class WeekScore:
     results: list[PickResult]
 
 
+def week_phase(week_score: WeekScore) -> str:
+    """Where a locked week stands: `'picks'` (no game final), `'in_progress'`, or `'final'`."""
+    if week_score.games_decided == 0:
+        return "picks"
+    if week_score.games_decided < week_score.games_total:
+        return "in_progress"
+    return "final"
+
+
 def score_picks(
     entries: dict[str, tuple[str | None, int | None]], outcomes: pd.DataFrame
 ) -> WeekScore:
