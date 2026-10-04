@@ -33,14 +33,12 @@ def render_settings_tab(conn: sqlite3.Connection, active_season: int, today: dat
     late_weeks = store.KNOWN_LATE_SEASON_WEEKS
     with st.expander(f"Weeks {late_weeks[0]}-{late_weeks[-1]} deadline — {active_season}", expanded=False):
         st.caption(
-            "The bylaws set an explicit early cutoff for the season's final few weeks, "
-            "announced by the commissioner each year — earlier than any of that week's "
-            "actual kickoffs, so it isn't derivable from the schedule. The fields below "
-            "default to the real announced values once known (currently: 2026 season); "
-            "update them once a season's actual cutoffs are announced or change. *Which* "
-            "weeks this covers can also change year to year (2025 was just weeks 17-18; "
-            "2026 added week 16) — if a week that needs this isn't listed below, see "
-            "`store.KNOWN_LATE_SEASON_WEEKS`."
+            (
+                'The commissioner announces an early cutoff for the final weeks each '
+                "season, before any of those weeks' kickoffs. Defaults are the announced "
+                '2026 dates. Which weeks this covers can change yearly; check the bylaws '
+                'each season.'
+            )
         )
         for week in late_weeks:
             label = f"Week {week}"
@@ -70,10 +68,7 @@ def render_settings_tab(conn: sqlite3.Connection, active_season: int, today: dat
 
     with st.expander("Team display names", expanded=False):
         st.caption(
-            "The Legion pool's own pick sheet doesn't use nfl_data_py's raw team "
-            "abbreviations (e.g. `LAC`) — these overrides control what's shown "
-            "instead on the Picks tab. Purely a display label; doesn't affect "
-            "ranking or scoring."
+            'Names shown on the Picks tab, matching the pool sheet. Display only.'
         )
         team_names = store.get_team_display_names(conn)
         edited: dict[str, str] = {}

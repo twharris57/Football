@@ -13,26 +13,15 @@ def _render_team_timeline(state: dict, selected_roster_id: int) -> None:
     st.subheader("Team timeline")
     with st.expander("How this works"):
         st.caption(
-            "Where this team sits on a rebuild-vs-contend spectrum, recomputed fresh "
-            "every refresh from current roster/standings state (not a fixed label - it "
-            "reacts to injuries, trades, and results automatically).\n"
-            "- **Score** — a continuous, league-wide z-scored average of three signals: "
-            "roster strength (aggregate VOR across positions - see the Glossary above), "
-            "timeline direction (value-weighted average age - older *established value* "
-            "skews win-now), and actual win percentage. 0 = league average; positive = "
-            "more win-now, negative = more rebuild-oriented. The **rank** below it (e.g. "
-            "\"3 of 12\") is the same score, just easier to read at a glance than the raw "
-            "number.\n"
-            "- **Phase** — a label bucketed from the score (rebuilding / treading water / "
-            "contending). Started as a display convenience but now also decides what "
-            "**Need** and value-analysis **Note** mean below, and what the draft plan calls "
-            "out as a \"flagged need\" - see those sections for the specifics. The raw score "
-            "is still the more precise read; check it against the metric's tooltip when a "
-            "team looks close to a boundary.\n"
-            "- **Win % before games are played** — defaults to a neutral 50%, so it "
-            "contributes nothing to the score pre-season instead of distorting it with "
-            "a meaningless small sample. Shown as \"no games played yet\" instead of a "
-            "misleading 50% once the season actually starts, this will show a real record."
+            (
+                'Where this team sits between rebuilding and contending, recomputed every '
+                'refresh.\n- **Score** — league-relative average of roster strength (VOR), '
+                'value-weighted age, and record. 0 is average; positive leans win-now. '
+                '**Rank** is the same score as "3 of 12".\n- **Phase** — the score in three '
+                'buckets. It also decides what **Need** and **Note** mean below, so check '
+                'the raw score when a team is near a boundary.\n- **Win %** shows "no games '
+                'played yet" until the season starts.'
+            )
         )
     power = state["team_power_timeline"].loc[selected_roster_id]
     league_size = len(state["team_power_timeline"])
@@ -42,9 +31,8 @@ def _render_team_timeline(state: dict, selected_roster_id: int) -> None:
         phase_labels.get(phase, phase),
         f"{int(power['rank'])} of {league_size}",
         help=(
-            "Rank by power score (1 = strongest roster + timeline + record in the "
-            f"league). Raw score: {power['power_score']:+.2f} (0 = league average; "
-            "positive = more contending, negative = more rebuilding)."
+            f"Power score: {power['power_score']:+.2f} (0 = league average; "
+            "positive leans contending)."
         ),
     )
     win_pct_text = "no games played yet" if power["games_played"] == 0 else f"{power['win_pct']:.0%}"
@@ -70,21 +58,14 @@ def _render_needs(analysis: dict) -> None:
     st.subheader("Roster needs")
     with st.expander("How this works"):
         st.caption(
-            "Two different questions about each position, side by side:\n"
-            "- **Need** — while this team is rebuilding: fewer than 2 players at this position "
-            "have 2 years of NFL experience or less (\"are we still accumulating enough young "
-            "talent here\"). Once the team's timeline shifts past a bottom-of-standings rebuild "
-            "(see Team timeline above), Need switches to mean the same thing as Weak instead - a "
-            "roster-hole question, not a youth-accumulation one.\n"
-            "- **Weak** — trade-strategy framing, always computed this way regardless of phase: "
-            "this position's actual starters (top players by value, up to this league's dedicated "
-            "slot count) are worth less than **VOR** (value-over-replacement) — the value of the "
-            "last startable-tier player still rostered *anywhere* in the league at that position. "
-            "A position can have plenty of bodies (no Need flag while rebuilding) and still be "
-            "Weak if none of them clear what's freely available elsewhere — or vice versa, thin "
-            "in bodies but strong if the few players there are excellent.\n"
-            "- VOR compares against the whole league, not the rest of *your* roster — one elite "
-            "player elsewhere can't make another position look artificially weak by comparison."
+            (
+                'Two questions per position:\n- **Need** — while rebuilding: fewer than 2 '
+                'players with 2 or fewer years of experience. Otherwise it means the same '
+                "as Weak.\n- **Weak** — this team's starters are worth no more than the "
+                "league's replacement level (**VOR** ≤ 0), whatever the depth.\n\nVOR "
+                'compares against the whole league, so one star elsewhere on your roster '
+                "can't make a position look weak."
+            )
         )
     show_df(
         analysis["roster_needs"],
@@ -112,17 +93,12 @@ def _render_value_analysis(analysis: dict) -> None:
     st.subheader("Roster value analysis")
     with st.expander("How this works"):
         st.caption(
-            "Sorted lowest Adj. Value first (same real-scoring-corrected value as the big "
-            "board).\n"
-            "- **Note** — weighs age against a position-aware aging cutoff (RBs decline earlier "
-            "than QBs/TEs): low value + young is a rebuild asset worth holding *while this team "
-            "is rebuilding* (see Team timeline above); low value + aging is a real drop candidate "
-            "regardless of phase. Once the team isn't framing itself as a rebuild anymore, a low "
-            "value + young player loses that automatic hold and gets the same monitor/drop read "
-            "as anyone else.\n"
-            "- **Status** — 🆕 rookie, ✂️ no NFL team, 🩹 injury, 🚕 taxi squad, 🩼 IR/reserve; a player can show "
-            "more than one at once. Hover an icon for the specific detail (e.g. the real injury "
-            "status)."
+            (
+                'Lowest Adj. Value first.\n- **Note** — low value + aging (cutoff varies by '
+                'position) is a drop candidate. Low value + young is a hold, but only while '
+                'rebuilding.\n- **Status** — 🆕 rookie, ✂️ no NFL team, 🩹 injury, 🚕 taxi, 🩼 '
+                'IR. Hover an icon for detail.'
+            )
         )
     show_status_table(
         analysis["roster_value"],
@@ -145,13 +121,11 @@ def _render_sellable(analysis: dict) -> None:
     st.subheader("Sellable veterans")
     with st.expander("How this works"):
         st.caption(
-            "This team's own bench depth at positions with real surplus (VOR above zero - see "
-            "the Glossary above), not the starters generating that VOR - selling an actual "
-            "starter is a bigger call than \"there's more depth here than the roster can use,\" "
-            "left for a human to judge, not this list. Only shown if dropping the player "
-            "wouldn't open a weekly-depth hole. A candidate list to evaluate a specific trade "
-            "against, not a recommendation - rookies are excluded (long-term upside to hold, "
-            "not surplus to sell)."
+            (
+                'Bench depth at positions with surplus (VOR > 0) that could be shopped. '
+                'Excludes starters, rookies, and anyone whose loss would open a weekly gap. '
+                'Candidates to weigh against an offer, not recommendations.'
+            )
         )
     sellable_display = analysis["sellable_players"].drop(columns="player_id", errors="ignore")
     show_df(
@@ -173,17 +147,12 @@ def _render_free_agents(state: dict, analysis: dict, selected_roster_id: int) ->
     st.subheader("Free agents")
     with st.expander("How this works"):
         st.caption(
-            "Every non-rostered player, ranked by season-average marginal starting-lineup "
-            "value against this team - the same ranking method the Draft Plan uses, not a "
-            "different valuation model. Each row's own best drop is shown alongside it, the "
-            "same cheap heuristic the ranking itself uses (not a per-candidate optimal "
-            "search).\n"
-            "- **Taxi squad not modeled** — Sleeper's real accrued-experience taxi rule isn't "
-            "verified here, so an add is only ever suggested for an open active roster slot "
-            "or via a drop, never assumed to fit an open taxi slot the way a rookie safely "
-            "can.\n"
-            "- **FAAB bid guidance** — pick a candidate below to see real comparable bid "
-            "history and check a planned bid against it."
+            (
+                "Unrostered players ranked by how much they'd raise this team's lineup, "
+                'each with the drop it would take.\n- Adds assume an open active slot or a '
+                "drop, never a taxi slot (Sleeper's taxi rule for veterans isn't "
+                'modeled).\n- Pick a candidate below for FAAB bid guidance.'
+            )
         )
     selected_roster_settings = state["rosters_by_id"][selected_roster_id].get("settings") or {}
     faab_remaining = state["league"]["settings"].get("waiver_budget", 0) - selected_roster_settings.get(
@@ -215,29 +184,16 @@ def _render_faab_bid_guidance(state: dict, board: pd.DataFrame) -> None:
     st.markdown("**FAAB bid guidance**")
     with st.expander("How this works"):
         st.caption(
-            "Real winning FAAB bids from this league's own Sleeper transaction history, "
-            "not an invented formula - the nearest, by current market value, to the "
-            "selected candidate (same position preferred, broadened to every position "
-            "only when there aren't enough same-position comparables yet), and each "
-            "one's own value is shown alongside its bid so you can judge how close a "
-            "match it really is. A bid whose player is too far off in value to be a "
-            "meaningful comparable is excluded rather than shown anyway. QB is the one "
-            "exception to broadening: this is a superflex league, so a QB can draw a real "
-            "bidding premium purely from 2-QB-startable scarcity that a same-value "
-            "RB/WR/TE never faces, and mixing a thin QB sample into other positions' bids "
-            "would present a range built from a different demand curve than the one a QB "
-            "candidate is actually being bid into - so QB guidance simply says \"not "
-            "enough comparable bid history yet\" until enough real QB bids exist, rather "
-            "than ever broadening, and a QB bid is likewise never shown as a broadened "
-            "comparable for a non-QB candidate. Shown as the "
-            "real numbers directly, plus a low/median/high computed from that exact list "
-            "- never a separately-modeled number. \"Not enough comparable bid history "
-            "yet\" means too few real winning bids exist close enough in value this "
-            "season to say anything useful, not a hidden zero. Current season only, and "
-            "each historical bid is compared against the player's *current* market "
-            "value, not their value at the time of that bid - a reasonable proxy for "
-            "the short in-season windows this covers, less so further back (why this "
-            "doesn't yet reach into prior seasons' history)."
+            (
+                "Real winning bids from this league this season, nearest the candidate's "
+                'current value, each shown with its value so you can judge the match.\n- '
+                'Same position first; other positions only when the sample is thin. QB '
+                'never mixes with other positions — superflex scarcity prices QBs '
+                'differently.\n- Bids too far off in value are excluded.\n- Low/median/high '
+                'come from the listed bids.\n- "Not enough comparable bid history yet" '
+                "means too few close bids, not zero.\n\nOlder bids are compared at today's "
+                'values, which is why this covers the current season only.'
+            )
         )
 
     label_by_id = {row["player_id"]: f"{row['name']} ({row['pos']}, {row['team']})" for _, row in board.iterrows()}
@@ -289,17 +245,13 @@ def _render_bye_impact(state: dict, analysis: dict) -> None:
     st.subheader("Bye week impact")
     with st.expander("How this works"):
         st.caption(
-            "One collapsible section per week with an active-roster player on bye.\n"
-            "- **Collapsed view** — only starters actually bumped out and who fills in, plus the "
-            "lineup-value delta vs. a full-strength week. A bye'd bench player who wasn't starting "
-            "anyway doesn't clutter this view (it's still shown, expanded, since it doesn't move "
-            "the delta).\n"
-            "- **✅** — a week that's already happened. This project has no live in-week stats "
-            "yet, so the delta shown is still this same projection, not a real result.\n"
-            "- **📅** — a week still ahead, projected from today's roster (it'll shift if the "
-            "roster changes before then).\n"
-            "- **Delta size** — a small delta means the bench covers it fine; a large one is "
-            "worth looking for bye-week coverage via trade."
+            (
+                'One section per week with an active player on bye.\n- **Collapsed** — '
+                'starters out, who fills in, and the lineup-value change. Bench players on '
+                'bye show when expanded.\n- **✅** past week / **📅** upcoming — both are '
+                "projections from today's roster.\n- A large change is worth covering via "
+                'trade.'
+            )
         )
     bye_impact = analysis["roster_bye_conflicts"]
     if bye_impact.empty:
@@ -315,8 +267,10 @@ def _render_bye_impact(state: dict, analysis: dict) -> None:
         with st.expander(label):
             if is_actual:
                 st.write(
-                    "**Already happened** — no live in-week stats feed into this yet, so this "
-                    "is still the same roster-based projection, not a real result."
+                    (
+                        "**Already happened** — still a projection from today's roster, not the "
+                        'real result.'
+                    )
                 )
             else:
                 st.write(
@@ -333,11 +287,11 @@ def _render_weekly_gaps(analysis: dict) -> None:
     st.subheader("Weekly gaps")
     with st.expander("How this works"):
         st.caption(
-            "- **What it shows** — available (non-bye) rostered players per position per week, "
-            "vs. what's needed to fill this league's dedicated starting slots (QB:1 RB:2 WR:2 "
-            "TE:1).\n"
-            "- **What it doesn't** — FLEX/SUPER_FLEX, which could pull from other positions; a "
-            "rough depth signal, not a full lineup-feasibility check."
+            (
+                "Available players per position each week vs. this league's dedicated slots "
+                "(QB 1, RB 2, WR 2, TE 1). Ignores FLEX/SUPER_FLEX, so it's a rough depth "
+                'check.'
+            )
         )
     weekly_gaps = analysis["roster_weekly_gaps"]
     gap_weeks = weekly_gaps[weekly_gaps["gap"] != ""]

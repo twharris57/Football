@@ -12,15 +12,12 @@ def _render_team_summary(state: dict) -> None:
     st.subheader("Team summary")
     with st.expander("How this works"):
         st.caption(
-            "One row per team, at a glance.\n"
-            "- **Total value** — sum of Adj. Value (real-scoring-corrected market value) "
-            "across the whole roster, same numbers the Roster tab shows per player.\n"
-            "- **Biggest need** — the position with the lowest VOR (value-over-replacement, "
-            "see the Glossary above) on that roster — the same signal driving the Roster "
-            "tab's own \"Weak\" flag, not a separate metric.\n"
-            "- **Open slots** — active roster / taxi squad openings.\n"
-            "- **Phase / Rank** — the same power/timeline read as the Roster tab's Team "
-            "timeline section, for every team side by side."
+            (
+                'One row per team.\n- **Total value** — summed Adj. Value.\n- **Biggest '
+                "need** — the position with the lowest VOR (Roster tab's Weak signal).\n- "
+                '**Open slots** — active / taxi.\n- **Phase / Rank** — the Team timeline '
+                'read.'
+            )
         )
     summary = dynasty_core.league_team_summaries(
         state["rosters_by_id"],
@@ -60,10 +57,10 @@ def _render_team_summary(state: dict) -> None:
 def _render_pick_values(state: dict) -> None:
     st.subheader("Draft pick trade values")
     st.caption(
-        "Every remaining pick this season, exact-slot valued and matched to its real "
-        "current owner, plus next season's picks at a flat round value applied the same "
-        "to every team (no real projected standings this far out to justify guessing who "
-        "picks early vs. late)."
+        (
+            "This season's remaining picks at exact-slot value with their current "
+            "owner; next season's at a flat value per round."
+        )
     )
     pick_values_display = state["pick_trade_values"].drop(columns="owner_roster_id", errors="ignore")
     show_df(

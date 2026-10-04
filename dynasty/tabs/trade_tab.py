@@ -65,8 +65,8 @@ def _show_trade_side(label: str, result: dict) -> None:
         "Lineup value",
         f"{result['lineup_delta_after_drops']:+.1f}",
         help=(
-            f"Before any forced cuts: {result['lineup_delta']:+.1f}. "
-            "Differs when a required drop was an actual starter, not just bench depth."
+            f"Before forced cuts: {result['lineup_delta']:+.1f} (differs when a cut "
+            "player was a starter)."
             if drops
             else None
         ),
@@ -95,33 +95,17 @@ def _render_manual_evaluator(
 ) -> None:
     with st.expander("How this works"):
         st.caption(
-            "Two independent reads for a proposed trade, not one blended verdict — a trade "
-            "can be lineup-critical but value-negative, or value-positive but just adds bench "
-            "depth behind an already-strong position.\n"
-            "- **Lineup value** — season-average optimal starting-lineup value before vs. "
-            "after the trade, the same simulation the Draft Plan uses. If the trade leaves a "
-            "roster over capacity, this is the value *after* the recommended cut(s) below, "
-            "not the raw trade alone — hover the number to see the raw figure too.\n"
-            "- **Asset value** — Adj. Value (players) plus pick value (picks) summed on each "
-            "side, FantasyCalc's market read of who gave up more.\n"
-            "- **Recommended cuts** — shown when a side goes over roster capacity: the "
-            "lowest-value bench player(s) forced out, same heuristic the Draft Plan/Free "
-            "agents board use elsewhere. Never recommends cutting a player from the same "
-            "trade's incoming side.\n"
-            "- **💡 callouts** — non-obvious value the two numbers above can miss: a weekly "
-            "bye-week gap this trade opens or closes, an incoming player who handcuffs one of "
-            "this side's own current RBs, an outgoing player who wasn't even starting here (a "
-            "low real cost to give up) or an incoming one who'd start immediately, and where an "
-            "involved pick ranks within its own class. All composed from the same signals used "
-            "elsewhere in the app — no separate scoring model.\n"
-            "- Shown for both sides — is this good for you, and is it something the partner "
-            "would actually want.\n"
-            "- 3-way trades aren't supported. Taxi-squad eligibility isn't modeled for "
-            "incoming players (same simplification as the Free agents board) — a candidate "
-            "is only ever assumed to need an open active roster spot or a drop, not an open "
-            "taxi slot. A pick with no resolvable value (a FantasyCalc pick-naming-convention "
-            "gap, same one the Draft pick trade values table can hit) contributes 0 to that "
-            "side's asset value, noted below if it happens."
+            (
+                'Two separate reads per side, not one verdict:\n- **Lineup value** — '
+                'season-average starting lineup before vs. after, including any forced cuts '
+                '(hover for the raw number).\n- **Asset value** — Adj. Value plus pick '
+                'value given vs. received.\n- **Recommended cuts** — lowest-value bench '
+                'players, if a side goes over capacity. Never an incoming player.\n- **💡 '
+                'Callouts** — weekly gaps opened or closed, handcuffs, bench players given '
+                'up, instant starters, and pick rank in its class.\n\nNot supported: 3-way '
+                'trades, and taxi slots for incoming players. A pick with no FantasyCalc '
+                'value counts as 0.'
+            )
         )
 
     give_col, receive_col = st.columns(2)
@@ -301,8 +285,7 @@ def _render_improve_offer_section(
     result = cached["result"]
     if result["verdict"] == "reject":
         st.error(
-            "No adjustment found makes this proposal worth taking — the read above holds "
-            "regardless of a small tweak. Consider declining."
+            'No tweak makes this worth taking. Consider declining.'
         )
     elif result["verdict"] == "accept":
         st.success("This proposal is already worth taking as-is.")
@@ -358,14 +341,13 @@ def _render_single_target_search(
     offers = offer_result["offers"]
     if not offer_result["target_value_resolved"]:
         st.warning(
-            f"No resolvable market value for {target_label} — can't search for a plausible offer "
-            "without a value to match against. The lineup-value read above is still valid."
+            f"No market value for {target_label}, so there's nothing to match an offer "
+            "against. The lineup read above still holds."
         )
     elif not offers:
         st.info(
-            f"No combination of your sellable players/picks clears {partner_name}'s "
-            f"plausibility bar for {target_label} — nothing to suggest. Considered "
-            f"{offer_result['combos_evaluated']} combinations within a plausible value range."
+            f"None of {offer_result['combos_evaluated']} combinations of your sellable "
+            f"assets would plausibly get {target_label} from {partner_name}."
         )
     else:
         for i, offer in enumerate(offers):
@@ -412,9 +394,10 @@ def _render_leaguewide_scan(state: dict, trade_players: dict, trade_pick_values:
         return
     if not results:
         st.info(
-            "None of the top leaguewide candidates cleared a partner's plausibility bar right "
-            "now — try again after your roster or the market shifts, or search a specific "
-            "player directly above."
+            (
+                "No offer cleared a partner's bar right now. Try again later, or search a "
+                'specific player above.'
+            )
         )
         return
 
@@ -433,28 +416,15 @@ def _render_suggested_trades(state: dict) -> None:
     st.subheader("Suggested Trades")
     with st.expander("How this works"):
         st.caption(
-            "Leaguewide by default, not scoped to the Manual Trade tab's 'Your team'/'Trade "
-            "partner' selectors — always scans for your own actual roster, regardless of "
-            "what's selected there for the manual evaluator.\n"
-            "- **Leaguewide candidates** — every fantasy-relevant player on every other "
-            "team's roster, ranked by the same season-average marginal-lineup read used "
-            "elsewhere, pre-filtered to ones your own sellable depth could plausibly afford "
-            "(a rough ceiling from your top 3 sellable assets' value) so the real search "
-            "below isn't spent entirely on unreachable stars. Free to show — already "
-            "computed this refresh.\n"
-            "- **Scan the league for offers** — the real two-sided search (same "
-            "evaluate_trade() check as the manual evaluator above, not a new valuation "
-            "model), repeated for the strongest ~15 leaguewide candidates, showing the top 3 "
-            "that actually clear a partner's plausibility bar. Ranked primarily by long-run "
-            "lineup value (matching a rebuild strategy's multi-season focus), with weekly-gap "
-            "impact — the same 💡 signal the manual evaluator's callouts show — as a "
-            "secondary tie-break only, never able to outrank a real lineup-value difference. "
-            "This is the expensive part, so it's behind a button rather than running on every "
-            "page interaction.\n"
-            "- **Or search one player directly** — pick anyone on another team's roster to "
-            "search immediately, without a full leaguewide scan or picking a partner first.\n"
-            "- Picks aren't targetable in this section yet — draft-pick trades are still "
-            "fully supported in the manual evaluator above."
+            (
+                'Always scans for your own roster, regardless of the Manual Trade '
+                "selections.\n- **Candidates** — other teams' players ranked by lineup "
+                'gain, limited to what your sellable depth can afford.\n- **Scan the '
+                'league** — searches offers for the top ~15 candidates and shows the best '
+                "3, ranked by lineup gain (weekly gaps break ties). Slow, so it's behind a "
+                'button.\n- **Search one player** — any player on another roster, right '
+                "away.\n\nPicks can't be targeted here; use Manual Trade."
+            )
         )
 
     trade_players = state["players"]
@@ -499,13 +469,12 @@ def _get_trade_block_connection() -> sqlite3.Connection:
 def _render_trade_block(state: dict) -> None:
     with st.expander("How this works"):
         st.caption(
-            "Which players other managers have declared available to trade — purely "
-            "user-declared intent (Sleeper's API has no trade-block concept of its own), "
-            "entered here and nowhere else.\n"
-            "- Auto-removed the moment a listed player is no longer on the roster they "
-            "were added under (traded elsewhere, or dropped outright) — checked fresh every "
-            "time this tab loads, against this refresh's live roster data.\n"
-            "- Adding a player already on the block is a no-op, not a duplicate."
+            (
+                "Players other managers say they'll trade (Sleeper doesn't track this, so "
+                "it's entered here).\n- Removed automatically once the player leaves that "
+                "roster (traded or dropped).\n- Adding a player who's already listed does "
+                'nothing.'
+            )
         )
 
     conn = _get_trade_block_connection()

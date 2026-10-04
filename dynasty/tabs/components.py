@@ -12,31 +12,19 @@ import streamlit as st
 GLOSSARY: dict[str, tuple[str, str]] = {
     "VOR": (
         "Value Over Replacement",
-        "How much a position's actual starters exceed the value of the last "
-        "startable-tier player still rostered *anywhere else* in the league "
-        "at that position - an external, league-wide baseline, not just "
-        "\"this player/position looks low-value.\" Negative VOR (Weak) means "
-        "this position's starters don't even clear what's freely available "
-        "elsewhere in the league.",
+        "How much a position's starters are worth above the league-wide replacement "
+        "level (the last startable player rostered anywhere). Zero or below is Weak.",
     ),
     "Power score": (
         "Team power/timeline score",
-        "A continuous, league-wide score (Roster tab) combining a "
-        "team's roster strength (VOR), timeline direction (value-weighted "
-        "average age), and actual win percentage. 0 = league average; "
-        "positive = more win-now/contending; negative = more "
-        "rebuild-oriented. Recomputed fresh every refresh, so it moves with "
-        "real injuries/trades/results instead of ever going stale.",
+        "League-relative blend of roster strength (VOR), value-weighted age, and "
+        "record. 0 is average; positive leans contending. Updates every refresh.",
     ),
     "Adj. Value": (
         "Adjusted Value",
-        "FantasyCalc's market value, corrected for this league's real "
-        "scoring rules (6pt passing TDs, TE reception premium, this "
-        "league's real interception/yardage rates, and more) - see the "
-        "Draft Plan tab's methodology for the full correction. Where both "
-        "are shown (e.g. the Roster tab), the raw, uncorrected Value sits "
-        "right alongside it for comparison; the rookie big board shows "
-        "only Adj. Value, since it's what determines Rank there.",
+        "FantasyCalc's market value corrected for this league's scoring (6pt pass TDs, "
+        "TE premium, INT and yardage rates, bonuses). Raw Value is shown beside it where "
+        "both appear.",
     ),
 }
 

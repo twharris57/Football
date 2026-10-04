@@ -22,25 +22,14 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
 
     with st.expander("How picks are ranked", expanded=False):
         st.markdown(
-            "1. **Moneyline → implied probability.** Each side's Vegas "
-            "moneyline is converted to a raw win probability: a negative "
-            "line (favorite) of `-150` implies `150 / (150 + 100) = 60%`; "
-            "a positive line (underdog) of `+130` implies "
-            "`100 / (130 + 100) = 43.5%`.\n"
-            "2. **Remove the vig.** Both sides' raw probabilities add up "
-            "to a bit more than 100% — that extra is the sportsbook's "
-            "built-in margin (the \"vig\"). Both probabilities are scaled "
-            "down proportionally so they sum to exactly 100%.\n"
-            "3. **Confidence = home probability − away probability**, "
-            "after that adjustment. Its sign picks the predicted winner "
-            "(positive favors the home team); its magnitude is how lopsided "
-            "the game looks.\n"
-            "4. **Points.** That week's games are sorted by confidence "
-            "magnitude, most lopsided first, and assigned points N, N-1, "
-            "..., 1 in that order — the standard confidence-pool scoring "
-            "rule.\n\n"
-            "Expand any pick below (\"Show the math\") for the exact "
-            "moneylines and intermediate numbers behind that game."
+            (
+                '1. **Moneyline → probability.** `-150` → 150/250 = 60%; `+130` → 100/230 = '
+                '43.5%.\n2. **Remove the vig.** Scale both sides so they sum to 100%.\n3. '
+                '**Confidence** = home − away probability. The sign picks the winner; the '
+                'size is how lopsided the game is.\n4. **Points.** Most lopsided gets N '
+                'points, then N-1, down to 1.\n\nExpand "Show the math" below for each '
+                "game's numbers."
+            )
         )
 
     try:
@@ -117,9 +106,8 @@ def render_picks_tab(conn: sqlite3.Connection, active_season: int, today: date) 
     _render_deadline(deadline, now, is_override=configured_deadline is not None)
     if week_rule:
         st.info(
-            f"Week {week} uses an early, commissioner-announced cutoff instead of "
-            "kickoff time (bylaws rule 2) — verify it against this season's actual "
-            "league rules and adjust it in the Settings tab if it's changed."
+            f"Week {week} uses the commissioner's early cutoff, not kickoff time (rule 2). "
+            "Verify it in Settings."
         )
 
     if locked:
@@ -285,13 +273,12 @@ def _render_actual_picks_form(
     """Form recording the card actually submitted, defaulting to the algorithm's picks."""
     st.subheader("Your actual submission")
     st.caption(
-        "Defaults to the recommendation above -- edit only what you "
-        "actually wrote on the pool sheet, then save. Purely a record for "
-        "future comparison; doesn't affect this week's locked picks. A "
-        "blank point box, an unmarked winner, or two games sharing the "
-        "same points value are all real, allowed outcomes here -- the "
-        "bylaws define exactly what happens (rules 15, 16, 7), so this "
-        "records what actually happened rather than blocking the save."
+        (
+            'Defaults to the recommendation. Edit only what you actually wrote, then '
+            "save; this is a record and doesn't change the locked picks. Blank points, "
+            'unmarked winners, and duplicate points are allowed; the bylaws resolve '
+            'them (rules 15, 16, 7).'
+        )
     )
 
     existing = store.load_actual_picks(conn, season, week)
@@ -328,8 +315,7 @@ def _render_actual_picks_form(
     late = st.checkbox(
         "This card was submitted late",
         value=existing_late,
-        help="Bylaws rule 2: a late card isn't excluded -- it's docked 10 "
-        "points below that week's lowest card.",
+        help="Rule 2: a late card scores 10 points below that week's lowest card.",
         key=f"actual_late_{season}_{week}",
     )
 
@@ -423,10 +409,10 @@ def _render_week_score(
         st.write(f"Your actual score: **{actual_score.total_points}**{suffix}")
         if late:
             st.caption(
-                "Bylaws rule 2's late-card penalty (10 points below the field's "
-                "lowest card) isn't reflected above -- this app has no visibility "
-                "into other entrants' scores. Enter the commissioner's reported "
-                "score below once it's posted."
+                (
+                    "The late-card penalty (rule 2) depends on other entrants' scores, so it "
+                    "isn't included. Enter the commissioner's reported score below."
+                )
             )
         with st.expander("Game-by-game breakdown"):
             rows = []
