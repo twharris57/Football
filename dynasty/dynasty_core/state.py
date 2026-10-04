@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import fantasycalc_api as fantasycalc
 import pandas as pd
@@ -42,6 +42,8 @@ from .trade import leaguewide_trade_candidates
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 
 def build_pickup_alerts(pickup_changes: list[dict], ranked: list[dict], players: dict[str, dict]) -> list[dict]:
     """Add marginal value and drop context to pickup changes; keep positive rounded values, best first."""
@@ -66,6 +68,61 @@ def build_pickup_alerts(pickup_changes: list[dict], ranked: list[dict], players:
             )
     pickup_alerts.sort(key=lambda a: a["marginal_value"], reverse=True)
     return pickup_alerts
+
+
+def _optional(fetch: Callable[[], T], default: T, log_message: str, warning: str, data_warnings: list[str]) -> T:
+    """Run an optional fetch; on failure log, record `warning`, and return `default`."""
+    try:
+        return fetch()
+    except Exception:
+        logger.warning(log_message, exc_info=True)
+        data_warnings.append(warning)
+        return default
+
+
+def _pickup_alerts(
+    pickup_changes: list[dict],
+    user_roster: dict,
+    players: dict[str, dict],
+    fc_by_sleeper_id: dict[str, dict],
+    byes: dict[str, int],
+    league: dict,
+    ineligible_ids: frozenset[str],
+) -> list[dict]:
+    """Rank pickup changes by marginal value (uncapped) and attach drop context."""
+    if not pickup_changes:
+        return []
+    changed_ids = [c["player_id"] for c in pickup_changes]
+    ranked = rank_by_marginal_value(
+        changed_ids,
+        user_roster.get("players") or [],
+        players,
+        fc_by_sleeper_id,
+        byes,
+        league,
+        top_n=len(changed_ids),
+        ineligible_ids=ineligible_ids,
+        reserve_filled=len(user_roster.get("reserve") or []),
+        taxi_eligible=False,
+        taxi_filled=len(user_roster.get("taxi") or []),
+    )
+    return build_pickup_alerts(pickup_changes, ranked, players)
+
+
+def _recent_picks(draft_picks: list[dict], players: dict[str, dict], team_names: dict[int, str]) -> pd.DataFrame:
+    """The last five draft picks."""
+    rows = []
+    for pick in sorted(draft_picks, key=lambda p: p["pick_no"])[-5:]:
+        info = players.get(pick["player_id"], {})
+        rows.append(
+            {
+                "pick": pick["pick_no"],
+                "team": team_names.get(pick["roster_id"]),
+                "player": info.get("full_name"),
+                "pos": info.get("position"),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def gather_state(
@@ -102,60 +159,52 @@ def gather_state(
     # Optional enrichments: a failure falls back and adds a data warning instead of breaking the refresh.
     data_warnings: list[str] = []
 
-    try:
-        multipliers = player_scoring.get_multipliers(
-            league["scoring_settings"], league["season"], force_refresh=force_scoring_refresh
-        )
-    except Exception:
-        logger.warning("Failed to compute real-scoring multipliers; falling back to position defaults", exc_info=True)
-        multipliers = {}
-        data_warnings.append(
-            "Real-scoring multipliers unavailable this refresh - values are using position-average "
-            "or hardcoded fallbacks, not each player's own recomputed ratio."
-        )
+    season = league["season"]
+    leg = league["settings"].get("leg", 1)
+    multipliers = _optional(
+        lambda: player_scoring.get_multipliers(league["scoring_settings"], season, force_refresh=force_scoring_refresh),
+        {},
+        "Failed to compute real-scoring multipliers; falling back to position defaults",
+        "Real-scoring multipliers unavailable this refresh - values are using position-average "
+        "or hardcoded fallbacks, not each player's own recomputed ratio.",
+        data_warnings,
+    )
     fc_by_sleeper_id = fc_value_by_sleeper_id(fc_values, multipliers)
 
-    try:
-        byes = bye_week_by_team(league["season"], force_refresh=force_full_refresh)
-    except Exception:
-        logger.warning("Failed to fetch bye weeks; skipping bye-conflict analysis", exc_info=True)
-        byes = {}
-        data_warnings.append(
-            "Bye week data unavailable this refresh - bye-week impact will show no weeks, which "
-            "does not mean there are none."
-        )
-    try:
-        handcuffs = handcuff_map(league["season"], force_refresh=force_full_refresh)
-    except Exception:
-        logger.warning("Failed to fetch depth charts; skipping handcuff analysis", exc_info=True)
-        handcuffs = {}
-        data_warnings.append(
-            "Handcuff data unavailable this refresh - handcuff flags will show none, which does "
-            "not mean there are none."
-        )
-    try:
-        transactions = sleeper.get_transactions(
-            league_id, league["season"], league["settings"].get("leg", 1), force_refresh=force_full_refresh
-        )
-    except Exception:
-        logger.warning("Failed to fetch transaction history; skipping FAAB bid guidance", exc_info=True)
-        transactions = []
-        data_warnings.append(
-            "Waiver transaction history unavailable this refresh - FAAB bid guidance will show no "
-            "comparable bids, which does not mean there aren't any."
-        )
-
-    projection_week = league["settings"].get("leg", 1)
-    try:
-        projections = sleeper.get_weekly_projections(league["season"], projection_week, force_refresh=force_full_refresh)
-    except Exception:
-        logger.warning("Failed to fetch weekly projections; skipping this-week lineup mode", exc_info=True)
-        projections = {}
-        data_warnings.append(
-            "This week's player projections are unavailable this refresh - the Lineup tab's "
-            "\"this week's projected lineup\" mode will show no ranking, which does not mean "
-            "the players themselves are unavailable."
-        )
+    byes = _optional(
+        lambda: bye_week_by_team(season, force_refresh=force_full_refresh),
+        {},
+        "Failed to fetch bye weeks; skipping bye-conflict analysis",
+        "Bye week data unavailable this refresh - bye-week impact will show no weeks, which "
+        "does not mean there are none.",
+        data_warnings,
+    )
+    handcuffs = _optional(
+        lambda: handcuff_map(season, force_refresh=force_full_refresh),
+        {},
+        "Failed to fetch depth charts; skipping handcuff analysis",
+        "Handcuff data unavailable this refresh - handcuff flags will show none, which does "
+        "not mean there are none.",
+        data_warnings,
+    )
+    transactions = _optional(
+        lambda: sleeper.get_transactions(league_id, season, leg, force_refresh=force_full_refresh),
+        [],
+        "Failed to fetch transaction history; skipping FAAB bid guidance",
+        "Waiver transaction history unavailable this refresh - FAAB bid guidance will show no "
+        "comparable bids, which does not mean there aren't any.",
+        data_warnings,
+    )
+    projection_week = leg
+    projections = _optional(
+        lambda: sleeper.get_weekly_projections(season, projection_week, force_refresh=force_full_refresh),
+        {},
+        "Failed to fetch weekly projections; skipping this-week lineup mode",
+        "This week's player projections are unavailable this refresh - the Lineup tab's "
+        "\"this week's projected lineup\" mode will show no ranking, which does not mean "
+        "the players themselves are unavailable.",
+        data_warnings,
+    )
 
     user_roster_id = resolve_user_roster_id(users, rosters, username)
     team_names = team_name_by_roster_id(rosters, users)
@@ -219,23 +268,7 @@ def gather_state(
         league_id, league["season"], fantasy_relevant_teamed_players(players)
     )
     pickup_changes = [c for c in pickup_changes if c["player_id"] in available_free_agents]
-    pickup_alerts = []
-    if pickup_changes:
-        changed_ids = [c["player_id"] for c in pickup_changes]
-        ranked = rank_by_marginal_value(
-            changed_ids,
-            user_roster.get("players") or [],
-            players,
-            fc_by_sleeper_id,
-            byes,
-            league,
-            top_n=len(changed_ids),
-            ineligible_ids=ineligible_ids,
-            reserve_filled=len(user_roster.get("reserve") or []),
-            taxi_eligible=False,
-            taxi_filled=len(user_roster.get("taxi") or []),
-        )
-        pickup_alerts = build_pickup_alerts(pickup_changes, ranked, players)
+    pickup_alerts = _pickup_alerts(pickup_changes, user_roster, players, fc_by_sleeper_id, byes, league, ineligible_ids)
 
     replacement_level = position_replacement_levels(rosters, players, fc_by_sleeper_id, league["roster_positions"])
 
@@ -268,18 +301,6 @@ def gather_state(
         pick_values,
     )
 
-    recent_rows = []
-    for pick in sorted(draft_picks, key=lambda p: p["pick_no"])[-5:]:
-        info = players.get(pick["player_id"], {})
-        recent_rows.append(
-            {
-                "pick": pick["pick_no"],
-                "team": team_names.get(pick["roster_id"]),
-                "player": info.get("full_name"),
-                "pos": info.get("position"),
-            }
-        )
-
     big_board = build_big_board(
         board_pool, fc_by_sleeper_id, user_analysis["need_positions"], user_handcuff_targets, draft_attribution
     )
@@ -290,7 +311,7 @@ def gather_state(
         user_analysis["sellable_players"],
         user_analysis["free_agent_board"],
         pickup_alerts,
-        league["settings"].get("leg", 1),
+        leg,
     )
 
     return {
@@ -321,7 +342,7 @@ def gather_state(
         "your_picks": format_your_picks(ownership, user_roster_id, current_pick_no, team_names),
         **user_analysis,
         "attention_digest": attention_digest,
-        "recent_picks": pd.DataFrame(recent_rows),
+        "recent_picks": _recent_picks(draft_picks, players, team_names),
         "big_board": big_board,
         "multi_round_plan": multi_round_plan(
             ownership,

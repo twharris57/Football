@@ -6,6 +6,7 @@ import pytest
 import requests
 
 import dynasty_core as dc
+from dynasty_core import state as state_module
 
 
 class TestGatherStateConnectivityErrors:
@@ -98,3 +99,21 @@ class TestBuildPickupAlerts:
         alerts = dc.build_pickup_alerts(changes, ranked, PLAYERS)
 
         assert [a["player_id"] for a in alerts] == ["p2", "p1"]
+
+
+class TestOptional:
+    """An optional fetch falls back to its default and records a warning on failure."""
+
+    def test_success_returns_the_result_without_a_warning(self):
+        warnings: list[str] = []
+        assert state_module._optional(lambda: {"a": 1}, {}, "log", "warn", warnings) == {"a": 1}
+        assert warnings == []
+
+    def test_failure_returns_the_default_and_records_the_warning(self):
+        warnings: list[str] = []
+
+        def fail():
+            raise ValueError("schema drift")
+
+        assert state_module._optional(fail, [], "log", "warn", warnings) == []
+        assert warnings == ["warn"]
