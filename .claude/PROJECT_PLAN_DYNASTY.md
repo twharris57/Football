@@ -118,8 +118,6 @@ offer); pick ownership beyond next season (`FUTURE_PICK_YEARS_AHEAD = 1`).
   notifications will hit the same problem.
 - [ ] **CQ-5: Give `pick_trade_values()` real `season`/`round`/`slot` columns** so
   consumers stop re-parsing the display label.
-- [ ] **CQ-7: Share the pick-value lookup/sum** between `find_trade_offers()` and
-  `improve_incoming_offer()` next time either is touched.
 - [ ] **CQ-8: Handle `SIGTERM` in-process for graceful shutdown.** The convention may
   belong upstream in AgentConfig.
 

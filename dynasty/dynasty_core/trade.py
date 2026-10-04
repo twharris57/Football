@@ -286,6 +286,15 @@ def evaluate_trade(
     }
 
 
+def _resolved_pick_values(pick_value_table: pd.DataFrame) -> dict[str, float]:
+    """Pick name -> value, omitting picks whose value didn't resolve (NaN)."""
+    return {
+        name: float(value)
+        for name, value in zip(pick_value_table["pick"], pick_value_table["value"])
+        if pd.notna(value)
+    }
+
+
 def _asset_pool(
     roster: dict,
     players: dict[str, dict],
@@ -349,7 +358,7 @@ def find_trade_offers(
     if bool(target_player_id) == bool(target_pick_name):
         raise ValueError("Exactly one of target_player_id or target_pick_name must be given.")
 
-    pick_value_by_name = dict(zip(pick_value_table["pick"], pick_value_table["value"]))
+    pick_values = _resolved_pick_values(pick_value_table)
 
     if target_player_id:
         target_entry = fc_by_sleeper_id.get(target_player_id)
@@ -358,7 +367,7 @@ def find_trade_offers(
             your_roster, [], [target_player_id], players, fc_by_sleeper_id, byes, league, handcuffs=handcuffs
         )
     else:
-        raw_target_value = pick_value_by_name.get(target_pick_name)
+        raw_target_value = pick_values.get(target_pick_name)
         target_read = evaluate_trade(
             your_roster, [], [], players, fc_by_sleeper_id, byes, league,
             incoming_pick_value=float(raw_target_value) if pd.notna(raw_target_value) else 0.0,
@@ -500,10 +509,10 @@ def improve_incoming_offer(
     - `counter`: some variant is good; ranked by your asset delta, up to `top_n`.
     - `reject`: nothing is good; no improvements.
     """
-    pick_value_by_name = dict(zip(pick_value_table["pick"], pick_value_table["value"]))
+    pick_values = _resolved_pick_values(pick_value_table)
 
     def _pick_value_sum(pick_names: list[str]) -> float:
-        return sum(float(v) for v in (pick_value_by_name.get(name) for name in pick_names) if pd.notna(v))
+        return sum(pick_values.get(name, 0.0) for name in pick_names)
 
     def _player_asset(player_id: str) -> dict[str, Any]:
         info = players.get(player_id, {})
@@ -512,8 +521,7 @@ def improve_incoming_offer(
         return {"kind": "player", "id": player_id, "label": info.get("full_name"), "value": value if pd.notna(value) else 0.0}
 
     def _pick_asset(pick_name: str) -> dict[str, Any]:
-        value = pick_value_by_name.get(pick_name)
-        return {"kind": "pick", "id": pick_name, "label": pick_name, "value": value if pd.notna(value) else 0.0}
+        return {"kind": "pick", "id": pick_name, "label": pick_name, "value": pick_values.get(pick_name, 0.0)}
 
     def _evaluate(
         out_player_ids: list[str], out_pick_names: list[str], in_player_ids: list[str], in_pick_names: list[str],
