@@ -120,7 +120,7 @@ def _render_value_analysis(analysis: dict) -> None:
             "regardless of phase. Once the team isn't framing itself as a rebuild anymore, a low "
             "value + young player loses that automatic hold and gets the same monitor/drop read "
             "as anyone else.\n"
-            "- **Status** — 🆕 rookie, 🏥 injury, 🌱 taxi squad, 🩹 IR/reserve; a player can show "
+            "- **Status** — 🆕 rookie, ✂️ no NFL team, 🩹 injury, 🚕 taxi squad, 🩼 IR/reserve; a player can show "
             "more than one at once. Hover an icon for the specific detail (e.g. the real injury "
             "status)."
         )

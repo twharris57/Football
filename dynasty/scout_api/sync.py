@@ -1,6 +1,6 @@
 """Mirror the `scout-data` branch's JSON files from GitHub into local SQLite.
 
-Runs to completion on a schedule. Set `SCOUT_DATA_GITHUB_TOKEN` to lift GitHub's
+Runs to completion on a schedule. Set `SCOUT_DATA_GITHUB_TOKEN` (football.secrets.env) to lift GitHub's
 60 req/hour anonymous limit.
 """
 

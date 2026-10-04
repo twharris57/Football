@@ -6,7 +6,7 @@ decisions go in `docs/` or `valuation_principles.md`.
 **IDs:** each item has a permanent `<PREFIX>-<n>` tag; never reuse or renumber.
 Cross-reference by tag, never by position. Prefixes: `SC` scout, `RT` roster & trade,
 `VA` valuation, `CQ` code quality, `DL` deferred. Last assigned: `NB-2`, `RT-33`,
-`VA-9`, `CQ-13`, `DL-10`, `SC-18`.
+`VA-9`, `CQ-13`, `DL-10`, `SC-19`.
 
 ## Current branch — fix before merge
 
@@ -18,18 +18,26 @@ Nothing.
 
 ## Automated daily scout
 
-Goal: catch opportunities (depth-chart bump, IR move freeing a free agent, trade
-window) on nights the user can't check, and stay quiet otherwise.
+Goal: run the team competitively without the user following football day to day. The
+scout watches for opportunities and tells the user what to do: pickups, trade targets
+and offers, taxi moves (stash or promote), and players to unload (drop or trade). Stay
+quiet when nothing is worth acting on.
 
 **Design:** one nightly cloud `/schedule` routine gathers state, researches, applies
 materiality, notifies via `PushNotification`, and commits its state to the `scout-data`
 branch (its only memory). A NAS job mirrors that branch into SQLite for a future
-dashboard; it's off the notify path. **The cloud sandbox can't reach the NAS inbound —
-don't revisit an inbound design.**
+dashboard; it's off the notify path. Inbound calls from the cloud sandbox to the NAS
+failed in earlier testing; `SC-19` re-checks whether sandbox configuration caused that,
+since the scout will need some way to coordinate with NAS-side state.
 
-**Build order:** `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9` → `SC-10`.
+**Build order:** `SC-19` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9` → `SC-10`.
 `SC-15`'s NAS deploy and `SC-16`'s staleness banner wait for a scout dashboard.
 
+- [ ] **SC-19: Re-test cloud-to-NAS connectivity.** Rule out sandbox configuration
+  (network allowlist, proxy, egress settings) as the cause of the earlier inbound
+  failures. First confirm the sandbox reaches a known public test service; then use the
+  same setup against a test endpoint on the Synology. The outcome decides how the scout
+  reads NAS-side state like the trade block (see `SC-3`).
 - [ ] **SC-1: Cloud environment setup.** `daily_check.py` works; still needs the
   network allowlist set on claude.ai (`api.sleeper.app`, `api.fantasycalc.com`,
   `github.com`, `raw.githubusercontent.com`). `nfl_data_py` cold-fetches every run
@@ -39,7 +47,7 @@ don't revisit an inbound design.**
   candidate pools, or the trade block flagged — never a blind sweep. Write findings in
   the finding schema (whose categories are still first guesses). Build `SC-8`'s
   corroboration in from the start. **Open question:** the trade block lives in NAS
-  SQLite, which the cloud routine can't read — decide how it gets there.
+  SQLite; how the cloud routine reads it depends on `SC-19`.
 - [ ] **SC-5: Materiality thresholds.** Deterministic lane reuses existing gates
   (`free_agent_board()`'s `> 0`, `suggested_trades()`'s tolerance) and inherits the FAAB
   thin-sample caveat. A quantitative signal and a scout finding agreeing is its own

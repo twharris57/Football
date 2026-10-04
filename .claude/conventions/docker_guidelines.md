@@ -20,8 +20,11 @@ Compose stacks split config from secrets:
 | File | Tracked? |
 |---|---|
 | `<name>.env` | yes — non-secret config |
-| `<name>.secrets.env` | no — gitignored |
+| `<name>.secrets.env` | no — gitignored (`*.secrets.env`, `!*.secrets.env.example`) |
 | `<name>.secrets.env.example` | yes — each var blank, with a one-line source comment |
+
+Wire them with `env_file:`, secrets file last. App repos publish the templates for this
+split; see `app_deployment_reference.md`.
 
 ## Compose and tagging
 

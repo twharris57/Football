@@ -25,17 +25,19 @@ INJURY_STATUS_DESCRIPTIONS = {
 def player_status_details(
     player_id: str, info: dict, taxi_ids: set[str], reserve_ids: set[str]
 ) -> list[tuple[str, str]]:
-    """`(icon, description)` pairs: rookie, injured, taxi, IR. A player can have several."""
+    """`(icon, description)` pairs: rookie, no NFL team, injured, taxi, IR. A player can have several."""
     details: list[tuple[str, str]] = []
     if not info.get("years_exp"):
         details.append(("🆕", "Rookie (no NFL experience yet)"))
+    if not info.get("team"):
+        details.append(("✂️", "No NFL team (released or unsigned)"))
     injury_status = info.get("injury_status")
     if injury_status:
-        details.append(("🏥", INJURY_STATUS_DESCRIPTIONS.get(injury_status, injury_status)))
+        details.append(("🩹", INJURY_STATUS_DESCRIPTIONS.get(injury_status, injury_status)))
     if player_id in taxi_ids:
-        details.append(("🌱", "Taxi squad"))
+        details.append(("🚕", "Taxi squad"))
     if player_id in reserve_ids:
-        details.append(("🩹", "IR / Reserve"))
+        details.append(("🩼", "IR / Reserve"))
     return details
 
 

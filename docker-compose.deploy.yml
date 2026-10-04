@@ -27,8 +27,9 @@ services:
     image: ghcr.io/twharris57/football-scout-api:latest
     pull_policy: always
     profiles: ["cron"]
-    environment:
-      - SCOUT_DATA_GITHUB_TOKEN=${SCOUT_DATA_GITHUB_TOKEN:-}
+    env_file:
+      - path: ./football.secrets.env
+        required: false  # the token is optional
     volumes:
       - scout_data:/app/scout_data
 

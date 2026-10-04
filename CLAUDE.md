@@ -37,8 +37,8 @@ Design docs: `docs/` (index in `docs/README.md`).
   | Confidence pool | `confidence_pool/streamlit_app.py` | 8502 | `confidence_pool/VERSION` |
   | Scout sync | `dynasty/scout_api/sync.py` (runs on a schedule) | — | `dynasty/scout_api/VERSION` |
 
-- `docker-compose.deploy.yml` + `.env.example` are the deployment reference; the
-  deployment repo is `../nas-configs`.
+- `docker-compose.deploy.yml`, `.env.example`, and `football.secrets.env.example` are the
+  deployment reference; the deployment repo is `../nas-configs`.
 - **Legacy, untouched:** `confidence_pool/football.py`, `football_enhanced.py`,
   `team_metadata_batch.py`, `football.ipynb`. The web app reuses their math but not
   their code.

@@ -29,8 +29,9 @@ services:
       context: .
       dockerfile: dynasty/Dockerfile.scout-api
     profiles: ["cron"]
-    environment:
-      - SCOUT_DATA_GITHUB_TOKEN=${SCOUT_DATA_GITHUB_TOKEN:-}
+    env_file:
+      - path: ./football.secrets.env
+        required: false  # the token is optional
     volumes:
       - scout_data:/app/scout_data
 

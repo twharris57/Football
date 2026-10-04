@@ -31,6 +31,8 @@ Concise and readable beats complete. Code should read on its own.
 - No commented-out code, `TODO`/`FIXME`, or debug logging in committed code.
 - Scripts end with an explicit `OK: ...` / `FAIL: ...` and matching exit code. Don't
   swallow error output for quieter logs (`curl -sS`, not `curl -s`).
+- Script output and log messages stay ASCII, or the stream is explicitly UTF-8 —
+  Windows consoles default to cp1252 and raise `UnicodeEncodeError` on emoji/arrows.
 
 ## Design
 
@@ -85,6 +87,11 @@ Patterns that have caused real bugs here.
 
 ## Logging
 
+- Use the logging framework, never `print()`, unless output *is* the product (a CLI's
+  final `OK:`/`FAIL:` line, JSON on stdout).
+- Prefer structured logs: a fixed message plus fields/args
+  (`logger.info("Pick saved", extra={"week": week})` or `%s` args), not f-strings.
+  Let the framework and handlers own formatting, levels, and truncation.
 - Log events, not state dumps. Never in tight loops.
 - **Error**: something broke. **Warning**: recovered from something unexpected.
   **Info**: user actions and significant events. **Debug**: off in production.

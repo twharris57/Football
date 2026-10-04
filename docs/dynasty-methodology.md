@@ -94,7 +94,7 @@ not by `adj_value`. A modest player at a thin position can beat a star who would
   - Computed for all teams at once, every refresh.
 - **Roster value analysis**: lowest value first. Low value + young = hold; low value +
   aging = drop candidate. The aging cutoffs are per position (RB 27, WR 29, TE 30, QB 33).
-  Status icons: 🆕 rookie, 🏥 injured, 🌱 taxi, 🩹 IR.
+  Status icons: 🆕 rookie, ✂️ no NFL team, 🩹 injured, 🚕 taxi, 🩼 IR.
 - **Bye impact / weekly gaps**: lineup loss for each bye week, counting active players
   only. Gaps check dedicated slots only.
 - **Handcuffs**: RB backups from the latest depth chart. Rookies show up late, because the
