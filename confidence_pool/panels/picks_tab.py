@@ -166,6 +166,7 @@ def _render_locked_week(
         st.subheader("Picks and submission")
         picks_and_submission()
 
+
 def _render_open_week(
     conn: sqlite3.Connection,
     season: int,
