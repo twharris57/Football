@@ -6,7 +6,7 @@ decisions go in `docs/` or `valuation_principles.md`.
 **IDs:** each item has a permanent `<PREFIX>-<n>` tag; never reuse or renumber.
 Cross-reference by tag, never by position. Prefixes: `SC` scout, `RT` roster & trade,
 `VA` valuation, `CQ` code quality, `DL` deferred. Last assigned: `NB-2`, `RT-33`,
-`VA-9`, `CQ-13`, `DL-10`, `SC-19`.
+`VA-9`, `CQ-14`, `DL-10`, `SC-19`.
 
 ## Current branch — fix before merge
 
@@ -118,8 +118,9 @@ offer); pick ownership beyond next season (`FUTURE_PICK_YEARS_AHEAD = 1`).
   notifications will hit the same problem.
 - [ ] **CQ-5: Give `pick_trade_values()` real `season`/`round`/`slot` columns** so
   consumers stop re-parsing the display label.
-- [ ] **CQ-7: Share the pick-value lookup/sum** between `find_trade_offers()` and
-  `improve_incoming_offer()` next time either is touched.
+- [ ] **CQ-14: Split the remaining 120+ line functions** — `multi_round_plan` (~186),
+  `improve_incoming_offer` and `find_trade_offers` (~145 each), `render_plan_tab` (~128),
+  `_render_manual_evaluator` (~119). Dense logic, so do each with targeted tests first.
 - [ ] **CQ-8: Handle `SIGTERM` in-process for graceful shutdown.** The convention may
   belong upstream in AgentConfig.
 

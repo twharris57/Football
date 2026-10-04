@@ -27,7 +27,10 @@ stateDiagram-v2
   reuses the last generated snapshot (values and timestamps). It computes fresh picks
   only if none exist. If odds are missing and there's nothing to reuse, the week stays
   open with a warning. A fresh lock computed after a kickoff stores a `lock_warning`.
-- **Locked:** read-only. Record your actual submission, then the pool's reported score.
+- **Locked:** read-only. The view reorders by phase (`week_phase()`):
+  - no game final → picks and the actual-submission form;
+  - games in progress → live score and game-by-game first, then picks;
+  - all final → reported-score entry first, then the result, then picks.
 
 ## Game selection (bylaws rule 14)
 

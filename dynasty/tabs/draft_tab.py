@@ -35,19 +35,15 @@ def render_draft_tab(state: dict) -> None:
     st.subheader("Rookie big board")
     with st.expander("How this works"):
         st.caption(
-            "The whole rookie class — drafted players stay listed instead of disappearing.\n"
-            "- **Rank** — value order across the whole class, drafted and undrafted together.\n"
-            "- **Drafted Round / Drafted By** — blank if still undrafted.\n"
-            "- **Adj. Value** — FantasyCalc's market value, corrected for this league's real "
-            "scoring rules (see the Draft Plan tab's methodology); determines sort order and "
-            "Rank. The only value column shown here — see the Glossary for how it relates to "
-            "FantasyCalc's raw number.\n"
-            "- **Tier** — FantasyCalc's own global tier across *all* players, not rookie-specific "
-            "and not adjusted; gaps in the sequence are veterans/other rookies not shown here.\n"
-            "- **Fits Need** — flags a currently-thin position on your roster.\n"
-            "- **Handcuff To** — this rookie backs up one of your own RB starters. Expect this to "
-            "be sparse pre-season: `nfl_data_py`'s player-ID crosswalk hasn't caught up with most "
-            "of this year's incoming class yet — not a bug, should fill in later in the year."
+            (
+                'The whole rookie class; drafted players stay listed.\n- **Rank** — by Adj. '
+                'Value across the class.\n- **Drafted Round / By** — blank if still '
+                'available.\n- **Adj. Value** — FantasyCalc value corrected for this '
+                "league's scoring (see the Glossary).\n- **Tier** — FantasyCalc's tier "
+                'across all players, so gaps are normal.\n- **Fits Need** — a thin position '
+                'on your roster.\n- **Handcuff To** — backs up one of your RB starters. '
+                'Sparse before the season, until the ID crosswalk catches up.'
+            )
         )
     board = state["big_board"]
     if board.empty:

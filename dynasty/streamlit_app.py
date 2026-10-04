@@ -45,9 +45,10 @@ if "force_scoring_pending" not in st.session_state:
 refresh = st.sidebar.button("Refresh")
 with st.sidebar.expander("Advanced refresh"):
     st.caption(
-        "Force-bust caches instead of waiting for their normal TTL. The scoring-multiplier "
-        "prewarm takes 1-2 minutes (re-imports 3 seasons of weekly + play-by-play data) - do "
-        "this ahead of draft day, not while on the clock."
+        (
+            'Bypass caches now. Recomputing scoring multipliers takes 1-2 minutes; do '
+            'it before draft day, not on the clock.'
+        )
     )
     refresh_players = st.checkbox("Players + market values (fast)", value=True)
     refresh_scoring = st.checkbox("Recompute scoring multipliers (slow, 1-2 min)")
@@ -138,9 +139,10 @@ def _render_lineup_tab() -> None:
     )
     if mode == "By value (dynasty)":
         st.caption(
-            "Optimal lineup by long-run dynasty trade value — the same ranking trade, drop, and "
-            "draft-plan decisions use elsewhere in this app. Doesn't account for byes or injuries "
-            "when deciding who starts; switch to the other mode for a this-week points view instead."
+            (
+                'Best lineup by dynasty value, the value trade and drop decisions use. '
+                'Ignores byes and injuries.'
+            )
         )
         starters, bench, taxi, ir = (
             state["lineup_starters"],
@@ -152,15 +154,17 @@ def _render_lineup_tab() -> None:
     else:
         if not state["projections"]:
             st.info(
-                "This week's player projections are unavailable this refresh — see the warning "
-                "above. Try the \"By value\" mode instead, or hit Refresh to retry."
+                (
+                    'This week\'s projections are unavailable (see the warning above). Use "By '
+                    'value" or Refresh to retry.'
+                )
             )
             return
         st.caption(
-            "Optimal lineup by this week's projected points — Sleeper's own weekly per-player "
-            "projections, scored against this league's real scoring settings. A different question "
-            "than dynasty value: who wins you the most points this week, not who's the better "
-            "long-run asset (trade/drop decisions still use the value-based mode)."
+            (
+                "Best lineup by this week's Sleeper projections, scored with this league's "
+                'settings. For start/sit, not trade value.'
+            )
         )
         starters, bench, taxi, ir = (
             state["weekly_lineup_starters"],

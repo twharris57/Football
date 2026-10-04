@@ -12,34 +12,17 @@ from .components import cols
 def render_plan_tab(state: dict) -> None:
     with st.expander("How this works"):
         st.caption(
-            "Picks are ranked by season-average **marginal** starting-lineup value, not raw trade "
-            "value — for each candidate, this simulates adding them (+ the resulting drop) and "
-            "measures how much your roster's season-average starting value goes up. A modest "
-            "player at a weak position can beat a highly-valued one who wouldn't crack your "
-            "lineup.\n"
-            "- **✅** — a round Sleeper has already recorded, scored the same way retroactively.\n"
-            "- **🔜** — a round that's simulated, assuming no other team's picks happen in "
-            "between (\"if these were your only remaining picks, back to back, on the board "
-            "right now\").\n"
-            "- **⚠️** — the suggested drop is a current starter.\n"
-            "- **Drop status** for a completed round — **✅ DROPPED** is a real drop, recovered by "
-            "checking your roster across refreshes; a plain **DROP** with no checkmark is still a "
-            "live guess (nothing's been checked yet); **❓ drop unclear** means more than one of your "
-            "picks completed between refreshes, so which real drop paired with which pick can't be "
-            "isolated; no drop text at all means it's confirmed none was needed. For rounds where the "
-            "roster wasn't checked between your picks, this still has to guess.\n"
-            "- **Bye weeks** are folded into the season average, not handled separately.\n"
-            "- **Nothing here refreshes on its own** — no polling, no auto-refresh. "
-            "Hit the sidebar's Refresh button right before your own pick, not just "
-            "after one lands elsewhere — otherwise this plan simulates as if no other team has "
-            "picked in between, which can be wrong the moment your turn actually comes up.\n"
-            "- Each pick is collapsed by default — expand one for the full reasoning and any "
-            "backup options.\n"
-            "- **Player projection lookup** — every candidate considered for that pick, not just "
-            "the top few, is one dropdown click away. Its marginal value uses the same quick "
-            "drop heuristic as the ranking above (lowest-value bench player) — the best drop "
-            "shown below it is searched specifically for that candidate instead, among players "
-            "who share a slot type with them, so it can actually differ pick to pick."
+            (
+                'Picks are ranked by how much each raises your season-average starting '
+                'lineup (after any forced drop), not by trade value.\n- **✅** recorded pick '
+                '· **🔜** simulated pick, assuming nobody else picks in between · **⚠️** the '
+                'drop is a starter.\n- **Drops:** ✅ DROPPED = confirmed; plain DROP = a '
+                'guess; ❓ = unclear (several of your picks between refreshes); none shown = '
+                'no drop needed.\n- Byes are built into the season average.\n- **Refresh '
+                'right before your pick.** Nothing updates on its own.\n- **Player lookup** '
+                'lists every candidate. Its best drop is searched for that player '
+                'specifically, so it can differ from the quick estimate.'
+            )
         )
     plan = state["multi_round_plan"]
     rounds = plan["rounds"]
@@ -74,8 +57,10 @@ def render_plan_tab(state: dict) -> None:
                 st.write(row["reason"])
                 if drop_status == "ambiguous":
                     st.info(
-                        "More than one of your picks completed between refreshes, so which real drop "
-                        "paired with which pick can't be isolated — this is still a guess."
+                        (
+                            'Several of your picks completed between refreshes, so this drop is still a '
+                            'guess.'
+                        )
                     )
                 if row["drop_is_starter"]:
                     st.warning(f"{row['drop_name']} is a current starter.")
@@ -136,10 +121,8 @@ def render_plan_tab(state: dict) -> None:
                     )
                     if best_drop is not None:
                         st.caption(
-                            f"Marginal value with this specific drop: {best_drop['marginal_value']:+.1f} — "
-                            "searched only among players sharing a slot type with this candidate (own "
-                            "position, FLEX, or SUPER_FLEX as applicable), so it can differ from the "
-                            "estimate above."
+                            f"Marginal value with this drop: {best_drop['marginal_value']:+.1f} (searched for this "
+                            "player, so it can differ from the estimate above)."
                         )
 
     st.subheader("Weekly gap impact")

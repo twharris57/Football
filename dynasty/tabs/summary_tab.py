@@ -23,19 +23,12 @@ _CATEGORY_HEADERS = {
 def render_summary_tab(state: dict) -> None:
     with st.expander("How this works"):
         st.caption(
-            "A short digest pulled from data the other tabs already compute — no new "
-            "signals, just a capped top few per category so you don't have to scroll "
-            "every tab to see what's worth a look.\n"
-            "- Draft-pick timing and any data warnings aren't repeated here — see the "
-            "'On the clock' banner and any warning banners above, always visible "
-            "regardless of tab.\n"
-            "- **🔔 Pickup alerts** — a free agent whose NFL team, depth-chart order, or "
-            "active status improved since the last refresh, and who'd add real value to "
-            "your lineup right now. Tracked week-over-week (not a fresh snapshot like "
-            "every other category here) — the very first refresh after this shipped "
-            "always shows none, since there's nothing yet to compare against.\n"
-            "- Deliberately capped and not ranked across categories — a category is "
-            "simply left out if it has nothing to show."
+            (
+                'The top few items per category from the other tabs. Empty categories are '
+                'hidden; pick timing and data warnings stay in the banners above.\n- **🔔 '
+                'Pickup alerts** — free agents whose NFL team, depth-chart spot, or active '
+                "status improved since the last refresh and who'd help your lineup now."
+            )
         )
 
     digest = state["attention_digest"]

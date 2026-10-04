@@ -820,6 +820,22 @@ class TestScorePicks:
         assert score.results[0].decided is False
 
 
+class TestWeekPhase:
+    """Which part of a locked week matters most right now."""
+
+    def _score(self, decided, total):
+        return pc.WeekScore(total_points=0, games_decided=decided, games_total=total, results=[])
+
+    def test_no_game_final_is_picks(self):
+        assert pc.week_phase(self._score(0, 14)) == "picks"
+
+    def test_some_games_final_is_in_progress(self):
+        assert pc.week_phase(self._score(5, 14)) == "in_progress"
+
+    def test_every_game_final_is_final(self):
+        assert pc.week_phase(self._score(14, 14)) == "final"
+
+
 class TestCheckReportedScore:
     """Cross-checking the pool's reported score against our computed total."""
 
