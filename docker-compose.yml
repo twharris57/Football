@@ -7,6 +7,9 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8501:8501"
+    env_file:
+      - path: ./football.secrets.env
+        required: false  # without the token, the scout API answers 503
     volumes:
       - nfl_data_cache:/app/.cache
       - dynasty_data:/app/dynasty_data
@@ -22,21 +25,7 @@ services:
       - confidence_pool_data:/app/confidence_pool_data
     restart: unless-stopped
 
-  # Batch job that exits when done, so no restart policy (it would loop).
-  # Run with: docker compose run --rm scout-api
-  scout-api:
-    build:
-      context: .
-      dockerfile: dynasty/Dockerfile.scout-api
-    profiles: ["cron"]
-    env_file:
-      - path: ./football.secrets.env
-        required: false  # the token is optional
-    volumes:
-      - scout_data:/app/scout_data
-
 volumes:
   nfl_data_cache:
   dynasty_data:
   confidence_pool_data:
-  scout_data:

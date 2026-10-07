@@ -11,7 +11,7 @@ Personal tools for an NFL confidence pool and a Sleeper dynasty league.
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-streamlit run dynasty/streamlit_app.py
+streamlit run dynasty/server.py
 ```
 
 More: [`CLAUDE.md`](CLAUDE.md) (architecture and commands), [`docs/`](docs/README.md)

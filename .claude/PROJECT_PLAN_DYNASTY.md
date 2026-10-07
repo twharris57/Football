@@ -47,16 +47,13 @@ sees. Egress IPs vary, so authenticate by token, not IP.
 **Build order:** `SC-20` (skeleton) → `SC-1` → `SC-21` → `SC-3` → `SC-5` → `SC-6` →
 `RT-21` → `SC-7` → `SC-8`/`SC-9` → `SC-10`.
 
-- [ ] **SC-20: NAS API.** Serve `/api/*` from the dynasty app via Streamlit's `st.App`
-  custom routes (Starlette, already installed), calling `trade_block_store` and
-  `dynasty_core` directly. Start with `/api/health` and the trade block, then add
-  endpoints as `SC-21`/`SC-6` need them. Bearer token from `football.secrets.env`; cap
-  request bodies. Reuse `finding_schema.py`/`run_record_schema.py` for write validation.
-  Retire the `scout-api` image and the `scout-data` branch path: `sync.py`, the
-  `scout_data_files` mirror table, and their references in `CLAUDE.md`, compose, and CI.
-  Deploy: a `fantasytools.` subdomain rule in the DSM reverse proxy → 8501 and the
-  router's 443 forward (removed after the connectivity test). Deployment files change —
-  flag the `nas-configs` re-sync in the PR.
+- [ ] **SC-20: NAS API.** `dynasty/api.py` serves `/api/health` and `/api/trade-block`.
+  Deploy: set `SCOUT_API_TOKEN`, a `fantasytools.` subdomain rule in the DSM reverse
+  proxy → 8501, the router's 443 forward, and the same token as a network secret on the
+  scout's environment; curl it from a cloud session. Remaining, with `SC-21`/`SC-6`:
+  `/api/state`, and append-only `POST` runs/findings with a request-body cap. Write
+  validation reuses `finding_schema.py`/`run_record_schema.py`, which are still keyed on
+  the retired `scout-data` branch's file paths — re-key them and add tables then.
 - [ ] **SC-21: Collector.** Grow `daily_check.py`'s snapshot into a collector script that
   writes to SQLite: league state, pickup snapshots, `RT-21`'s log, and tier-1 candidates
   from existing gates. Stamps `collected_at`. Runs as its own long-lived `collector`
@@ -90,8 +87,7 @@ sees. Egress IPs vary, so authenticate by token, not IP.
 - [ ] **SC-9: Season-aware cadence.** Fixed daily cron gated on Sleeper's
   `league["status"]`/`settings.leg`. Needed before summer 2027, not first release.
 - [ ] **SC-10: Docs.** Write `docs/dynasty-daily-scout.md` as pieces land, including
-  the three-part design and the cloud → NAS setup above. Confirm the `scout_data`
-  volume is in NAS backups.
+  the three-part design and the cloud → NAS setup above.
 
 ## Roster & trade tooling
 

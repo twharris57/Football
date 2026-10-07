@@ -7,6 +7,9 @@ services:
     pull_policy: always
     ports:
       - "${DYNASTY_HOST_PORT:-8501}:8501"
+    env_file:
+      - path: ./football.secrets.env
+        required: false  # without the token, the scout API answers 503
     volumes:
       - nfl_data_cache:/app/.cache
       - dynasty_data:/app/dynasty_data
@@ -21,21 +24,8 @@ services:
       - confidence_pool_data:/app/confidence_pool_data
     restart: unless-stopped
 
-  # Scheduled batch job (Synology Task Scheduler), not a service:
-  #   docker compose -f docker-compose.deploy.yml run --rm scout-api
-  scout-api:
-    image: ghcr.io/twharris57/football-scout-api:latest
-    pull_policy: always
-    profiles: ["cron"]
-    env_file:
-      - path: ./football.secrets.env
-        required: false  # the token is optional
-    volumes:
-      - scout_data:/app/scout_data
-
 volumes:
   nfl_data_cache:
-  # The next three hold user data; include them in NAS backups.
+  # The next two hold user data; include them in NAS backups.
   dynasty_data:
   confidence_pool_data:
-  scout_data:
