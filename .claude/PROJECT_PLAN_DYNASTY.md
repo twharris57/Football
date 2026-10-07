@@ -6,7 +6,7 @@ decisions go in `docs/` or `valuation_principles.md`.
 **IDs:** each item has a permanent `<PREFIX>-<n>` tag; never reuse or renumber.
 Cross-reference by tag, never by position. Prefixes: `SC` scout, `RT` roster & trade,
 `VA` valuation, `CQ` code quality, `DL` deferred. Last assigned: `NB-2`, `RT-33`,
-`VA-9`, `CQ-14`, `DL-10`, `SC-19`.
+`VA-9`, `CQ-14`, `DL-11`, `SC-21`.
 
 ## Current branch — fix before merge
 
@@ -23,52 +23,75 @@ scout watches for opportunities and tells the user what to do: pickups, trade ta
 and offers, taxi moves (stash or promote), and players to unload (drop or trade). Stay
 quiet when nothing is worth acting on.
 
-**Design:** one nightly cloud `/schedule` routine gathers state, researches, applies
-materiality, notifies via `PushNotification`, and commits its state to the `scout-data`
-branch (its only memory). A NAS job mirrors that branch into SQLite for a future
-dashboard; it's off the notify path. Inbound calls from the cloud sandbox to the NAS
-failed in earlier testing; `SC-19` re-checks whether sandbox configuration caused that,
-since the scout will need some way to coordinate with NAS-side state.
+**Design:** three parts, with SQLite on the NAS as the single store.
 
-**Build order:** `SC-19` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9` → `SC-10`.
-`SC-15`'s NAS deploy and `SC-16`'s staleness banner wait for a scout dashboard.
+- **Collector** (NAS container, ~7:30pm): pulls Sleeper, FantasyCalc, and `nfl_data_py`
+  into SQLite and runs the cheap structured diffs (tier 1). No AI.
+- **API** (`/api` routes in the dynasty Streamlit app): token-protected. Reads: league
+  state and tier-1 candidates, the trade block, recent runs and findings, and the
+  collector's `collected_at`. Writes are append-only (`POST` run records and findings),
+  validated by the existing strict schemas. Nothing updates or deletes.
+- **Scout** (cloud `/schedule` routine, ~8pm): reads the API, researches only what was
+  flagged (tier 2), applies materiality, notifies via `PushNotification`, and `POST`s
+  its run record and findings. Needs only `curl`/stdlib Python, no packages.
 
-- [ ] **SC-19: Re-test cloud-to-NAS connectivity.** Rule out sandbox configuration
-  (network allowlist, proxy, egress settings) as the cause of the earlier inbound
-  failures. First confirm the sandbox reaches a known public test service; then use the
-  same setup against a test endpoint on the Synology. The outcome decides how the scout
-  reads NAS-side state like the trade block (see `SC-3`).
-- [ ] **SC-1: Cloud environment setup.** `daily_check.py` works; still needs the
-  network allowlist set on claude.ai (`api.sleeper.app`, `api.fantasycalc.com`,
-  `github.com`, `raw.githubusercontent.com`). `nfl_data_py` cold-fetches every run
-  (~1–2 min) — decide whether to accept that or skip bye/scoring enrichment nightly.
-- [ ] **SC-3: Scout research pass.** Tier 1: cheap daily diff of structured data
-  (pickup snapshots, `RT-21`'s log). Tier 2: research only what tier 1, existing
-  candidate pools, or the trade block flagged — never a blind sweep. Write findings in
+The NAS is on the notify path, so the scout must notify when the API is unreachable or
+`collected_at` is stale, then stop — never a silent night.
+
+**Cloud → NAS calls work** (verified from a routine, curl and Python): HTTPS on 443 to a
+subdomain of the NAS's DDNS host behind the DSM reverse proxy, with a wildcard cert
+assigned only to that rule. The host goes on the environment's **Custom** allowlist; the
+bearer token is a **network secret**, which the proxy attaches and the session never
+sees. Egress IPs vary, so authenticate by token, not IP.
+
+**Build order:** `SC-20` (skeleton) → `SC-1` → `SC-21` → `SC-3` → `SC-5` → `SC-6` →
+`RT-21` → `SC-7` → `SC-8`/`SC-9` → `SC-10`.
+
+- [ ] **SC-20: NAS API.** Serve `/api/*` from the dynasty app via Streamlit's `st.App`
+  custom routes (Starlette, already installed), calling `trade_block_store` and
+  `dynasty_core` directly. Start with `/api/health` and the trade block, then add
+  endpoints as `SC-21`/`SC-6` need them. Bearer token from `football.secrets.env`; cap
+  request bodies. Reuse `finding_schema.py`/`run_record_schema.py` for write validation.
+  Retire the `scout-api` image and the `scout-data` branch path: `sync.py`, the
+  `scout_data_files` mirror table, and their references in `CLAUDE.md`, compose, and CI.
+  Deploy: a `fantasytools.` subdomain rule in the DSM reverse proxy → 8501 and the
+  router's 443 forward (removed after the connectivity test). Deployment files change —
+  flag the `nas-configs` re-sync in the PR.
+- [ ] **SC-21: Collector.** Grow `daily_check.py`'s snapshot into a collector script that
+  writes to SQLite: league state, pickup snapshots, `RT-21`'s log, and tier-1 candidates
+  from existing gates. Stamps `collected_at`. Runs as its own long-lived `collector`
+  service on the dynasty image (compose `command:` override, shared `dynasty_data`
+  volume), scheduled in-process with APScheduler, like `finance-dashboards`' `ingest`
+  service: catch-up run on startup, then nightly. A collection must be idempotent per
+  day, since restarts re-run it. Failure alerting is the scout's staleness check.
+  `nfl_data_py`'s 1–2 min fetch is fine here.
+- [ ] **SC-1: Scout cloud environment.** Custom allowlist with the API host, the token as
+  a network secret, no setup script. Verify the research tools (web search/fetch) work
+  under the Custom allowlist. If a package is ever needed: pip can't reach PyPI from
+  the VM (`from versions: none`; `pypi.org` is on `NO_PROXY`), the setup script runs
+  before the repo is cloned, and the VM runs Python 3.11.
+- [ ] **SC-3: Scout research pass.** Tier 2 only: research what the collector flagged,
+  existing candidate pools, or the trade block — never a blind sweep. Write findings in
   the finding schema (whose categories are still first guesses). Build `SC-8`'s
-  corroboration in from the start. **Open question:** the trade block lives in NAS
-  SQLite; how the cloud routine reads it depends on `SC-19`.
-- [ ] **SC-5: Materiality thresholds.** Deterministic lane reuses existing gates
-  (`free_agent_board()`'s `> 0`, `suggested_trades()`'s tolerance) and inherits the FAAB
-  thin-sample caveat. A quantitative signal and a scout finding agreeing is its own
-  higher-confidence category, not a blended score. Build alongside `SC-3`/`SC-6`.
-- [ ] **SC-6: Nightly orchestrator.** Wire `SC-1` → `SC-3` → materiality → `SC-7` →
-  notify → commit + prune (`SC-16`), writing a run record each night. Must distinguish
-  "checked, nothing new" from "check failed." 8pm local, in season.
+  corroboration in from the start.
+- [ ] **SC-5: Materiality thresholds.** Deterministic lane runs in the collector and
+  reuses existing gates (`free_agent_board()`'s `> 0`, `suggested_trades()`'s tolerance),
+  inheriting the FAAB thin-sample caveat. A quantitative signal and a scout finding
+  agreeing is its own higher-confidence category, not a blended score.
+- [ ] **SC-6: Nightly scout routine.** Health/staleness check → read state → `SC-3` →
+  materiality → `SC-7` → notify → `POST` the run record. Must distinguish "checked,
+  nothing new" from "check failed." In season.
 - [ ] **SC-7: Self-reflection.** Diff recent run records against `RT-21`'s transaction
   log; on a miss, open a deduped GitHub issue (never a commit/PR). If GitHub is
-  unreachable, write the pending issue to `scout-data`. Blocked on `RT-21`.
+  unreachable, save the pending issue through the API. Blocked on `RT-21`.
 - [ ] **SC-8: Prompt-injection defense.** The fixed-field finding schema is the
   structural half. Remaining: an independent corroboration search before writing any
   borderline or high-stakes finding.
 - [ ] **SC-9: Season-aware cadence.** Fixed daily cron gated on Sleeper's
   `league["status"]`/`settings.leg`. Needed before summer 2027, not first release.
-- [ ] **SC-10: Docs.** Write `docs/dynasty-daily-scout.md` as pieces land.
-- [ ] **SC-15: Deploy the NAS-side sync.** `sync.py` is built, not deployed. When a
-  scout dashboard is started: GitHub PAT, Task Scheduler entry with failure alerts,
-  confirm the `scout_data` volume is backed up.
-- [ ] **SC-16: 30-day pruning + staleness signal.** Pruning ships in `SC-6` (keeps
-  `scout-data` under GitHub's 1,000-entry listing cap); staleness banner waits for a UI.
+- [ ] **SC-10: Docs.** Write `docs/dynasty-daily-scout.md` as pieces land, including
+  the three-part design and the cloud → NAS setup above. Confirm the `scout_data`
+  volume is in NAS backups.
 
 ## Roster & trade tooling
 
@@ -76,8 +99,8 @@ since the scout will need some way to coordinate with NAS-side state.
 offer); pick ownership beyond next season (`FUTURE_PICK_YEARS_AHEAD = 1`).
 
 - [ ] **RT-21: Sleeper transaction log.** `/league/{id}/transactions/{leg}` records
-  every move leaguewide with timestamps — ground truth for `SC-7`, and a fix for the
-  draft plan's "ambiguous drop" state. Verify live first: whether draft-day cuts are
+  every move leaguewide with timestamps — collected by `SC-21`, ground truth for
+  `SC-7`, and a fix for the draft plan's "ambiguous drop" state. Verify live first: whether draft-day cuts are
   always `type: "free_agent"`, and how `leg` buckets across a season.
 - [ ] **RT-30: `PHASE_THRESHOLDS` now gates recommendations.** The ±0.3 cutoffs were
   tuned for a display label but now switch `need`, drop notes, and draft-plan reasoning.
@@ -138,3 +161,6 @@ Revisit only if the underlying assumption changes.
   bug; consolidate if a new raw-`players` consumer appears.
 - [ ] **DL-10:** auto-detect the trade block from Sleeper's web UI. Needs a private,
   authenticated endpoint — fragile. Only worth it if manual entry becomes a burden.
+- [ ] **DL-11:** login for the Streamlit UIs (e.g. `st.login`). Both are public with no
+  auth, accepted as low value; note that the confidence-pool UI can edit saved picks,
+  which the deadline lock submits.
