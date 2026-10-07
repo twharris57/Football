@@ -1,4 +1,4 @@
-"""Migration runner for the scout-data mirror. Nested in `scout_api` so it can't clash with `confidence_pool/db_schema`."""
+"""Migration runner for the trade-block store. Not named `db_schema`: it would clash with `confidence_pool/db_schema` on a shared `sys.path`."""
 
 from __future__ import annotations
 

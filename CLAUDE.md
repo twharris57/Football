@@ -27,15 +27,18 @@ Design docs: `docs/` (index in `docs/README.md`).
 - **The two subsystems share no code** and never import each other.
 - **No packaging.** Modules import each other as flat siblings via `sys.path` (the
   script's own directory; `conftest.py` for pytest). Only `dynasty_core/`, `tabs/`,
-  `panels/`, and `scout_api/` are packages.
-- **Three images** (all `python:3.12-slim` — `nfl_data_py`'s parquet deps lack musl
+  `panels/`, `scout_api/`, and `trade_block_migrations/` are packages.
+- **Two images** (both `python:3.12-slim` — `nfl_data_py`'s parquet deps lack musl
   wheels), built and pushed to GHCR on every push to `main`:
 
   | App | Entry point | Port | Version file |
   |---|---|---|---|
-  | Dynasty | `dynasty/streamlit_app.py` (root `Dockerfile`) | 8501 | `dynasty/VERSION` |
+  | Dynasty | `dynasty/server.py` (root `Dockerfile`) | 8501 | `dynasty/VERSION` |
   | Confidence pool | `confidence_pool/streamlit_app.py` | 8502 | `confidence_pool/VERSION` |
-  | Scout sync | `dynasty/scout_api/sync.py` (runs on a schedule) | — | `dynasty/scout_api/VERSION` |
+
+- **Dynasty serves the scout's JSON API** (`dynasty/api.py`, under `/api`) beside the UI,
+  through Streamlit's `st.App` custom routes. `server.py` wires them; the UI itself
+  stays in `streamlit_app.py`.
 
 - `docker-compose.deploy.yml`, `.env.example`, and `football.secrets.env.example` are the
   deployment reference; the deployment repo is `../nas-configs`.
@@ -48,10 +51,9 @@ Design docs: `docs/` (index in `docs/README.md`).
 ```
 pip install -r requirements.txt
 pytest tests/ -v                                   # runs in CI on every PR
-streamlit run dynasty/streamlit_app.py             # :8501
+streamlit run dynasty/server.py                    # :8501, UI + /api
 streamlit run confidence_pool/streamlit_app.py     # :8502
 python dynasty/scripts/daily_check.py              # scout routine's league snapshot (JSON)
-cd dynasty && python -m scout_api.sync             # pull scout-data branch into SQLite
 docker compose up --build                          # all apps locally
 ```
 

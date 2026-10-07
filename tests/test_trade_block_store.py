@@ -19,7 +19,11 @@ from dynasty_core.trade_block import TradeBlockEntry
 
 @pytest.fixture
 def conn():
-    return trade_block_store.connect(":memory:")
+    """A store emptied of the seed migration's rows."""
+    conn = trade_block_store.connect(":memory:")
+    with conn:
+        conn.execute("DELETE FROM trade_block")
+    return conn
 
 
 class TestGetTradeBlock:

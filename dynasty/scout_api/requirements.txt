@@ -1,2 +1,0 @@
-# Keep requests in sync with the root requirements.txt (used to run the tests).
-requests==2.32.3
