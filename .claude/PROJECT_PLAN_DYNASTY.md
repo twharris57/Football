@@ -28,9 +28,9 @@ quiet when nothing is worth acting on.
 - **Collector** (NAS, scheduled ~7:30pm): pulls Sleeper, FantasyCalc, and `nfl_data_py`
   into SQLite and runs the cheap structured diffs (tier 1). No AI.
 - **API** (`/api` routes in the dynasty Streamlit app): token-protected. Reads: league
-  state and tier-1 candidates, the trade block, recent runs and findings, and the collector's `collected_at`. Writes
-  are append-only (`POST` run records and findings), validated by the existing strict
-  schemas. Nothing updates or deletes.
+  state and tier-1 candidates, the trade block, recent runs and findings, and the
+  collector's `collected_at`. Writes are append-only (`POST` run records and findings),
+  validated by the existing strict schemas. Nothing updates or deletes.
 - **Scout** (cloud `/schedule` routine, ~8pm): reads the API, researches only what was
   flagged (tier 2), applies materiality, notifies via `PushNotification`, and `POST`s
   its run record and findings. Needs only `curl`/stdlib Python, no packages.
