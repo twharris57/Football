@@ -17,7 +17,14 @@ TOKEN = "test-token"
 
 @pytest.fixture
 def db_path(tmp_path):
-    return tmp_path / "dynasty_data" / "trade_block.db"
+    """A store file emptied of the seed migration's rows."""
+    path = tmp_path / "dynasty_data" / "trade_block.db"
+    path.parent.mkdir()
+    conn = trade_block_store.connect(str(path))
+    with conn:
+        conn.execute("DELETE FROM trade_block")
+    conn.close()
+    return path
 
 
 def _client(db_path, token: str | None = TOKEN) -> TestClient:
@@ -76,7 +83,6 @@ class TestTradeBlockData:
         assert response.json() == {"entries": []}
 
     def test_trade_block_returns_entries_newest_first(self, db_path):
-        db_path.parent.mkdir(parents=True)
         conn = trade_block_store.connect(str(db_path))
         trade_block_store.add_trade_block_entry(conn, "5927", 2, "2026-09-20")
         trade_block_store.add_trade_block_entry(conn, "7523", 1, "2026-09-22")

@@ -1,7 +1,8 @@
 """SQLite store for the user-entered trade block (Sleeper has no trade-block API).
 
 Not named `store.py` — it would collide with `confidence_pool/store.py` on a shared
-`sys.path`. Stores only IDs; callers resolve names live.
+`sys.path`. Stores only IDs; callers resolve names live. Schema and seed data:
+`trade_block_migrations/migrations/`.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import trade_block_migrations
 from dynasty_core.trade_block import TradeBlockEntry
 
 DATA_DIR = Path(__file__).parent.parent / "dynasty_data"
@@ -16,20 +18,12 @@ DB_PATH = DATA_DIR / "trade_block.db"
 
 
 def connect(db_path: str) -> sqlite3.Connection:
-    """Open the store, creating the table if needed. Shared across threads, like `confidence_pool.store.connect`."""
+    """Open the store, applying pending migrations. Shared across threads, like `confidence_pool.store.connect`."""
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 10000")
     conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS trade_block (
-            sleeper_id TEXT PRIMARY KEY,
-            roster_id INTEGER NOT NULL,
-            added_date TEXT NOT NULL
-        )
-        """
-    )
+    trade_block_migrations.apply_migrations(conn)
     return conn
 
 

@@ -27,7 +27,7 @@ Design docs: `docs/` (index in `docs/README.md`).
 - **The two subsystems share no code** and never import each other.
 - **No packaging.** Modules import each other as flat siblings via `sys.path` (the
   script's own directory; `conftest.py` for pytest). Only `dynasty_core/`, `tabs/`,
-  `panels/`, and `scout_api/` are packages.
+  `panels/`, `scout_api/`, and `trade_block_migrations/` are packages.
 - **Two images** (both `python:3.12-slim` — `nfl_data_py`'s parquet deps lack musl
   wheels), built and pushed to GHCR on every push to `main`:
 
