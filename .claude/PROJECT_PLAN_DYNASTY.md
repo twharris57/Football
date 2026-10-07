@@ -25,7 +25,7 @@ quiet when nothing is worth acting on.
 
 **Design:** three parts, with SQLite on the NAS as the single store.
 
-- **Collector** (NAS, scheduled ~7:30pm): pulls Sleeper, FantasyCalc, and `nfl_data_py`
+- **Collector** (NAS container, ~7:30pm): pulls Sleeper, FantasyCalc, and `nfl_data_py`
   into SQLite and runs the cheap structured diffs (tier 1). No AI.
 - **API** (`/api` routes in the dynasty Streamlit app): token-protected. Reads: league
   state and tier-1 candidates, the trade block, recent runs and findings, and the
@@ -59,9 +59,12 @@ sees. Egress IPs vary, so authenticate by token, not IP.
   flag the `nas-configs` re-sync in the PR.
 - [ ] **SC-21: Collector.** Grow `daily_check.py`'s snapshot into a collector script that
   writes to SQLite: league state, pickup snapshots, `RT-21`'s log, and tier-1 candidates
-  from existing gates. Stamps `collected_at`. Runs inside the dynasty container from
-  Synology Task Scheduler (`docker exec`), which emails on failure. `nfl_data_py`'s
-  1–2 min fetch is fine here.
+  from existing gates. Stamps `collected_at`. Runs as its own long-lived `collector`
+  service on the dynasty image (compose `command:` override, shared `dynasty_data`
+  volume), scheduled in-process with APScheduler, like `finance-dashboards`' `ingest`
+  service: catch-up run on startup, then nightly. A collection must be idempotent per
+  day, since restarts re-run it. Failure alerting is the scout's staleness check.
+  `nfl_data_py`'s 1–2 min fetch is fine here.
 - [ ] **SC-1: Scout cloud environment.** Custom allowlist with the API host, the token as
   a network secret, no setup script. Verify the research tools (web search/fetch) work
   under the Custom allowlist. If a package is ever needed: pip can't reach PyPI from
