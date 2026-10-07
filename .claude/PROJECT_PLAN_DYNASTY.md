@@ -26,28 +26,31 @@ quiet when nothing is worth acting on.
 **Design:** one nightly cloud `/schedule` routine gathers state, researches, applies
 materiality, notifies via `PushNotification`, and commits its state to the `scout-data`
 branch (its only memory). A NAS job mirrors that branch into SQLite for a future
-dashboard; it's off the notify path. Inbound calls from the cloud sandbox to the NAS
-failed in earlier testing; `SC-19` re-checks whether sandbox configuration caused that,
-since the scout will need some way to coordinate with NAS-side state.
+dashboard; it's off the notify path.
 
-**Build order:** `SC-19` → `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9` → `SC-10`.
+**Cloud → NAS calls work** (verified from a routine, curl and Python): HTTPS on 443 to a
+subdomain of the NAS's DDNS host behind the DSM reverse proxy, with a wildcard cert
+assigned only to that rule. The host goes on the environment's **Custom** allowlist; the
+bearer token is a **network secret**, which the proxy attaches and the session never
+sees. Egress IPs vary, so authenticate by token, not IP.
+
+**Build order:** `SC-3` → `SC-6` → `RT-21` → `SC-7` → `SC-8`/`SC-9` → `SC-10`.
 `SC-15`'s NAS deploy and `SC-16`'s staleness banner wait for a scout dashboard.
 
-- [ ] **SC-19: Re-test cloud-to-NAS connectivity.** Rule out sandbox configuration
-  (network allowlist, proxy, egress settings) as the cause of the earlier inbound
-  failures. First confirm the sandbox reaches a known public test service; then use the
-  same setup against a test endpoint on the Synology. The outcome decides how the scout
-  reads NAS-side state like the trade block (see `SC-3`).
 - [ ] **SC-1: Cloud environment setup.** `daily_check.py` works; still needs the
   network allowlist set on claude.ai (`api.sleeper.app`, `api.fantasycalc.com`,
   `github.com`, `raw.githubusercontent.com`). `nfl_data_py` cold-fetches every run
   (~1–2 min) — decide whether to accept that or skip bye/scoring enrichment nightly.
+  **Blocker:** pip can't reach PyPI from the VM (`from versions: none`; `pypi.org` is on
+  `NO_PROXY`, so pip skips the proxy). Diagnose with and without `NO_PROXY`, then retest
+  in the setup script, which runs before the repo is cloned (no `requirements.txt`). The
+  VM runs Python 3.11; the images run 3.12.
 - [ ] **SC-3: Scout research pass.** Tier 1: cheap daily diff of structured data
   (pickup snapshots, `RT-21`'s log). Tier 2: research only what tier 1, existing
   candidate pools, or the trade block flagged — never a blind sweep. Write findings in
   the finding schema (whose categories are still first guesses). Build `SC-8`'s
-  corroboration in from the start. **Open question:** the trade block lives in NAS
-  SQLite; how the cloud routine reads it depends on `SC-19`.
+  corroboration in from the start. The trade block lives in NAS SQLite; the routine
+  reads it over HTTPS (see the design note above).
 - [ ] **SC-5: Materiality thresholds.** Deterministic lane reuses existing gates
   (`free_agent_board()`'s `> 0`, `suggested_trades()`'s tolerance) and inherits the FAAB
   thin-sample caveat. A quantitative signal and a scout finding agreeing is its own
@@ -63,7 +66,8 @@ since the scout will need some way to coordinate with NAS-side state.
   borderline or high-stakes finding.
 - [ ] **SC-9: Season-aware cadence.** Fixed daily cron gated on Sleeper's
   `league["status"]`/`settings.leg`. Needed before summer 2027, not first release.
-- [ ] **SC-10: Docs.** Write `docs/dynasty-daily-scout.md` as pieces land.
+- [ ] **SC-10: Docs.** Write `docs/dynasty-daily-scout.md` as pieces land, including
+  the cloud → NAS setup above.
 - [ ] **SC-15: Deploy the NAS-side sync.** `sync.py` is built, not deployed. When a
   scout dashboard is started: GitHub PAT, Task Scheduler entry with failure alerts,
   confirm the `scout_data` volume is backed up.
