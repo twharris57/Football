@@ -6,7 +6,7 @@ decisions go in `docs/` or `valuation_principles.md`.
 **IDs:** each item has a permanent `<PREFIX>-<n>` tag; never reuse or renumber.
 Cross-reference by tag, never by position. Prefixes: `SC` scout, `RT` roster & trade,
 `VA` valuation, `CQ` code quality, `DL` deferred. Last assigned: `NB-2`, `RT-33`,
-`VA-9`, `CQ-14`, `DL-10`, `SC-21`.
+`VA-9`, `CQ-14`, `DL-11`, `SC-21`.
 
 ## Current branch — fix before merge
 
@@ -27,8 +27,8 @@ quiet when nothing is worth acting on.
 
 - **Collector** (NAS, scheduled ~7:30pm): pulls Sleeper, FantasyCalc, and `nfl_data_py`
   into SQLite and runs the cheap structured diffs (tier 1). No AI.
-- **API** (NAS, always on): token-protected. Reads: league state and tier-1 candidates,
-  the trade block, recent runs and findings, and the collector's `collected_at`. Writes
+- **API** (`/api` routes in the dynasty Streamlit app): token-protected. Reads: league
+  state and tier-1 candidates, the trade block, recent runs and findings, and the collector's `collected_at`. Writes
   are append-only (`POST` run records and findings), validated by the existing strict
   schemas. Nothing updates or deletes.
 - **Scout** (cloud `/schedule` routine, ~8pm): reads the API, researches only what was
@@ -47,19 +47,21 @@ sees. Egress IPs vary, so authenticate by token, not IP.
 **Build order:** `SC-20` (skeleton) → `SC-1` → `SC-21` → `SC-3` → `SC-5` → `SC-6` →
 `RT-21` → `SC-7` → `SC-8`/`SC-9` → `SC-10`.
 
-- [ ] **SC-20: NAS API.** Repurpose the `scout-api` image (stdlib-only, already
-  minimal): replace `sync.py` with a small HTTP server; mount `dynasty_data` read-only
-  and `scout_data` read-write. Start with `/health` and the trade block, then add
+- [ ] **SC-20: NAS API.** Serve `/api/*` from the dynasty app via Streamlit's `st.App`
+  custom routes (Starlette, already installed), calling `trade_block_store` and
+  `dynasty_core` directly. Start with `/api/health` and the trade block, then add
   endpoints as `SC-21`/`SC-6` need them. Bearer token from `football.secrets.env`; cap
-  request bodies; `HEALTHCHECK`. Retire the `scout-data` branch path: `sync.py`, the
-  `scout_data_files` mirror table, and its references in `CLAUDE.md`, compose, and CI.
-  Deploy: a `scout.` subdomain rule in the DSM reverse proxy and the router's 443 forward
-  (removed after the connectivity test). Deployment files change — flag the
-  `nas-configs` re-sync in the PR.
-- [ ] **SC-21: Collector.** Grow `daily_check.py`'s snapshot into a scheduled NAS job
-  (dynasty image, Task Scheduler with failure alerts) that writes to SQLite: league
-  state, pickup snapshots, `RT-21`'s log, and tier-1 candidates from existing gates.
-  Stamps `collected_at`. `nfl_data_py`'s 1–2 min fetch is fine here.
+  request bodies. Reuse `finding_schema.py`/`run_record_schema.py` for write validation.
+  Retire the `scout-api` image and the `scout-data` branch path: `sync.py`, the
+  `scout_data_files` mirror table, and their references in `CLAUDE.md`, compose, and CI.
+  Deploy: a `fantasytools.` subdomain rule in the DSM reverse proxy → 8501 and the
+  router's 443 forward (removed after the connectivity test). Deployment files change —
+  flag the `nas-configs` re-sync in the PR.
+- [ ] **SC-21: Collector.** Grow `daily_check.py`'s snapshot into a collector script that
+  writes to SQLite: league state, pickup snapshots, `RT-21`'s log, and tier-1 candidates
+  from existing gates. Stamps `collected_at`. Runs inside the dynasty container from
+  Synology Task Scheduler (`docker exec`), which emails on failure. `nfl_data_py`'s
+  1–2 min fetch is fine here.
 - [ ] **SC-1: Scout cloud environment.** Custom allowlist with the API host, the token as
   a network secret, no setup script. Verify the research tools (web search/fetch) work
   under the Custom allowlist. If a package is ever needed: pip can't reach PyPI from
@@ -156,3 +158,6 @@ Revisit only if the underlying assumption changes.
   bug; consolidate if a new raw-`players` consumer appears.
 - [ ] **DL-10:** auto-detect the trade block from Sleeper's web UI. Needs a private,
   authenticated endpoint — fragile. Only worth it if manual entry becomes a burden.
+- [ ] **DL-11:** login for the Streamlit UIs (e.g. `st.login`). Both are public with no
+  auth, accepted as low value; note that the confidence-pool UI can edit saved picks,
+  which the deadline lock submits.
