@@ -24,7 +24,7 @@ from tabs.trade_tab import render_trade_tab
 APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
 APP_SEMVER = (Path(__file__).parent / "VERSION").read_text().strip()
 
-st.set_page_config(page_title="Dynasty Rookie Draft", layout="centered")
+st.set_page_config(page_title="Fantasy Tools", layout="centered")
 
 if "league_name" not in st.session_state:
     st.session_state.league_name = "League"
@@ -80,7 +80,7 @@ def load_state(
 
 title_col, glossary_col = st.columns([5, 1])
 with title_col:
-    st.title("Dynasty Rookie Draft")
+    st.title("Fantasy Tools")
 with glossary_col:
     st.write("")  # nudge the button down to roughly vertically center with the title
     if st.button("❓ Glossary", help="What VOR, power score, and other terms mean"):
@@ -206,4 +206,4 @@ for tab, (_, render_fn) in zip(tabs, tab_specs):
         render_fn()
 
 st.divider()
-st.caption(f"Dynasty Rookie Draft · v{APP_SEMVER} · build {APP_VERSION}")
+st.caption(f"Fantasy Tools · v{APP_SEMVER} · build {APP_VERSION}")

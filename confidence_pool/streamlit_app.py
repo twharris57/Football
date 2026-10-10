@@ -21,7 +21,7 @@ import store
 APP_VERSION = os.environ.get("GIT_SHA", "dev")[:7]
 APP_SEMVER = (Path(__file__).parent / "VERSION").read_text().strip()
 
-st.set_page_config(page_title="Confidence Pool", layout="centered")
+st.set_page_config(page_title="Legion Pool", layout="centered")
 
 
 @st.cache_resource(show_spinner=False)
@@ -40,7 +40,7 @@ conn = _get_connection()
 today = datetime.now(ET).date()
 active_season = store.get_active_season(conn) or default_season_year(today)
 
-st.title("Legion Confidence Pool")
+st.title("Legion Pool")
 st.caption(f"{active_season} season")
 
 tab_picks, tab_settings = st.tabs(["Picks", "Settings"])
@@ -50,4 +50,4 @@ with tab_settings:
     render_settings_tab(conn, active_season, today)
 
 st.divider()
-st.caption(f"Legion Confidence Pool · v{APP_SEMVER} · build {APP_VERSION}")
+st.caption(f"Legion Pool · v{APP_SEMVER} · build {APP_VERSION}")
