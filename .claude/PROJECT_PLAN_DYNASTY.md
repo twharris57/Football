@@ -10,14 +10,7 @@ Cross-reference by tag, never by position. Prefixes: `SC` scout, `RT` roster & t
 
 ## Current branch — fix before merge
 
-Branch `feature/rename-legionpool-fantasytools`, opened early; implementation waits until
-the NAS hostname setup is finished.
-
-- [ ] **Rename "dynasty" to "fantasy tools"** to match its public hostname
-  (`fantasytools.`). Paired with the confidence pool → "Legion pool" rename (see that
-  plan). Agree on scope first: UI titles, compose service and image names, `VERSION` tag
-  prefixes, and whether directories/modules move. New image names change the deploy
-  reference, so `nas-configs` needs a re-sync.
+Empty.
 
 ## Now — blocking
 

@@ -1,4 +1,4 @@
-# Dynasty Web App
+# Fantasy Tools Web App
 
 Streamlit UI over `dynasty_core.gather_state()`, built to be usable from a phone during
 a live draft. Methodology is in `dynasty-methodology.md`; caching in

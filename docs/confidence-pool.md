@@ -1,4 +1,4 @@
-# Confidence Pool
+# Legion Pool
 
 A web app that generates each week's Legion pool picks, so a missed check-in (say,
 while traveling) still produces the tool's own picks. Ranking reuses the math from the

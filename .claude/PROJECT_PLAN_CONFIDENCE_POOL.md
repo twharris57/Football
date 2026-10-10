@@ -7,14 +7,7 @@ decisions go in `docs/` or `confidence_pool_principles.md`.
 
 ## Current branch — fix before merge
 
-Branch `feature/rename-legionpool-fantasytools`, opened early; implementation waits until
-the NAS hostname setup is finished.
-
-- [ ] **Rename "confidence pool" to "Legion pool"** to match its public hostname
-  (`legionpool.`). Paired with the dynasty → "fantasy tools" rename (see the dynasty
-  plan). Agree on scope first: UI titles, compose service and image names, `VERSION` tag
-  prefixes, and whether directories/modules move. New image names change the deploy
-  reference, so `nas-configs` needs a re-sync.
+Empty.
 
 ## Now — blocking
 

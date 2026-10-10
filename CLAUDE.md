@@ -2,10 +2,10 @@
 
 Personal tools, deployed as Docker containers on the user's NAS:
 
-- **Confidence pool** (`confidence_pool/`) — ranks each week's NFL games by Vegas
-  odds to assign confidence points for the "Legion pool."
-- **Dynasty** (`dynasty/`) — Sleeper dynasty-league dashboard: rookie draft, roster,
-  trades, free agents, plus a nightly scout routine.
+- **Legion Pool** (`confidence_pool/`) — ranks each week's NFL games by Vegas
+  odds to assign confidence points for the Legion pool.
+- **Fantasy Tools** (`dynasty/`) — Sleeper dynasty-league dashboard: rookie draft,
+  roster, trades, free agents, plus a nightly scout routine.
 
 ## Conventions
 
@@ -33,8 +33,16 @@ Design docs: `docs/` (index in `docs/README.md`).
 
   | App | Entry point | Port | Version file |
   |---|---|---|---|
-  | Dynasty | `dynasty/server.py` (root `Dockerfile`) | 8501 | `dynasty/VERSION` |
-  | Confidence pool | `confidence_pool/streamlit_app.py` | 8502 | `confidence_pool/VERSION` |
+  | Fantasy Tools | `dynasty/server.py` (root `Dockerfile`) | 8501 | `dynasty/VERSION` |
+  | Legion Pool | `confidence_pool/streamlit_app.py` | 8502 | `confidence_pool/VERSION` |
+
+- **Display names differ from identifiers, on purpose.** "Fantasy Tools" and "Legion
+  Pool" (matching the `fantasytools.`/`legionpool.` hostnames) appear only in the UI
+  and docs. Images, compose services, volumes, tag prefixes, `VERSION` files, and
+  directories keep the `dynasty`/`confidence_pool` names: renaming an image breaks the
+  NAS's pulls until `nas-configs` follows, and renaming a volume silently starts the
+  app on a new, empty one (losing the trade block or saved picks). In code, "dynasty"
+  and "confidence pool" stay as the domain terms they are.
 
 - **Dynasty serves the scout's JSON API** (`dynasty/api.py`, under `/api`) beside the UI,
   through Streamlit's `st.App` custom routes. `server.py` wires them; the UI itself
